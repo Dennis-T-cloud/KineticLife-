@@ -1,0 +1,28 @@
+{
+  "Request_Frontend_to_Backend": {
+    "session_id": "string (UUID, used to distinguish different training sessions)",
+    "timestamp_ms": "integer (Unix timestamp in milliseconds)",
+    "exercise_intent": "string (enum: 'squat', 'curl', used to drive high-level logic expectations)",
+    "rep_count": "integer (current repetition count in progress)",
+    "payload": {
+      "keypoints": [
+        {
+          "id": "integer (0-32, corresponds to MediaPipe skeletal topology)",
+          "x": "float (normalized coordinate 0.0 - 1.0)",
+          "y": "float (normalized coordinate 0.0 - 1.0)",
+          "z": "float (depth estimation, relative to hip joint)",
+          "visibility": "float (0.0 - 1.0, confidence score; values below 0.5 should be discarded)"
+        }
+      ]
+    }
+  },
+  "Response_Backend_to_Frontend": {
+    "status": "string ('success', 'processing', 'error')",
+    "analysis": {
+      "is_valid": "boolean (whether the current pose frame is acceptable)",
+      "score": "float (0-100, movement quality score)",
+      "error_code": "string (enum: 'KNEE_VALGUS', 'BACK_ROUNDED', 'NONE')",
+      "coaching_text": "string (specific AI-generated corrective feedback for UI display)"
+    }
+  }
+}
