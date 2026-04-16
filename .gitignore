@@ -1,0 +1,41 @@
+# =========================
+# OS & Editor (macOS, Windows, IDEs)
+# =========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# =========================
+# Hardware (ESP-IDF / C++)
+# =========================
+hardware/build/
+hardware/managed_components/
+hardware/dependencies.lock
+hardware/sdkconfig.old
+*.bin
+*.elf
+*.map
+
+# =========================
+# Frontend (React / Node.js)
+# =========================
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.env
+frontend/.env.*
+frontend/npm-debug.log*
+frontend/yarn-error.log*
+
+# =========================
+# Backend (Python / FastAPI)
+# =========================
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/venv/
+backend/env/
+backend/.env
+backend/.pytest_cache/
