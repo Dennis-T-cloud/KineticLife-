@@ -25,7 +25,8 @@ KineTrak/
 │   └── requirements.txt
 ├── docs/              # API contracts, system architecture diagrams, BOM list
 └── README.md          # Project overview, setup guide, and API documentation
----
+```
+
 
 ## 🛠 Development Context & Strict System Constraints
 
