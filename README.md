@@ -11,7 +11,7 @@ KineTrak is a hybrid IoT and WebAI system designed to provide real-time biomecha
 3. **Cloud Backend (FastAPI + fastdtw):** Receives the JSON sequence, compares it against standard templates using Dynamic Time Warping, and returns actionable form correction data.
 
 ### Project Structure
-
+```bash
 KineTrak/
 ├── hardware/          # ESP-IDF C/C++ source code (Member 1 workspace)
 │   ├── main/
