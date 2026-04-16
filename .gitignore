@@ -8,7 +8,7 @@ Thumbs.db
 *.log
 
 # =========================
-# Hardware (ESP-IDF / C++)
+# Hardware (ESP-IDF / C++
 # =========================
 hardware/build/
 hardware/managed_components/
