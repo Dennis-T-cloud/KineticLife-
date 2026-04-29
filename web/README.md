@@ -9,4 +9,16 @@ npm install
 npm run dev
 ```
 
-The app entry point is `src/main.tsx`.
+For static hardware testing, use:
+
+- `pair.html`: generate WiFi QR and open the camera page.
+- `cam.html`: consume the ESP32 `/stream` MJPEG feed, run MediaPipe pose extraction, display 14-D joint angles, poll `/status`, and call `/end` when the user finishes.
+- `debug.html?legacy=1`: old combined pose debug page.
+
+The QR pages generate compact WiFi QR payloads in the current contract format:
+
+```text
+K1:<TYPE_CODE>:<SSID_LEN>:<SSID><PASSWORD>
+```
+
+The Vite app entry point is `src/main.tsx`.

@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>
+    if (!new URLSearchParams(location.search).has("legacy")) {
+      location.replace("./pair.html");
+    }
+  </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>KineticLife — Pose Debug</title>
+  <script src="./vendor/qrcode.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #ccc; font: 13px/1.5 monospace;
+           display: flex; flex-direction: column; align-items: center; min-height: 100dvh; }
+    #canvas { width: min(100vw, 60dvh); height: min(100vw, 60dvh); display: block; }
+    #bar { padding: 6px 12px; width: 100%; background: #1e1e1e;
+           display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    label { cursor: pointer; user-select: none; }
+    button { padding: 4px 12px; border: 1px solid #555; background: #2a2a2a;
+             color: #ccc; cursor: pointer; border-radius: 3px; font: inherit; }
+    button.recording { border-color: #f44; color: #f44; }
+    input, select { border: 1px solid #555; background: #202020; color: #ddd;
+                    border-radius: 3px; padding: 4px 6px; font: inherit; }
+    input#camUrl { min-width: min(420px, 100%); }
+    details { width: 100%; background: #171717; border-bottom: 1px solid #2b2b2b; }
+    summary { cursor: pointer; padding: 8px 12px; color: #eee; user-select: none; }
+    #pairPanel { padding: 0 12px 12px; display: grid; grid-template-columns: repeat(4, minmax(0, auto));
+                 align-items: end; gap: 8px; }
+    #pairPanel label { display: grid; gap: 4px; color: #aaa; }
+    #pairQrWrap { width: 148px; min-height: 148px; display: grid; place-items: center;
+                  background: #fff; border-radius: 4px; padding: 8px; }
+    #pairQr { width: 132px; height: 132px; display: grid; place-items: center; color: #555; text-align: center; }
+    #pairQr canvas, #pairQr img { width: 132px; height: 132px; display: block; }
+    #pairHint { grid-column: 1 / -1; color: #999; }
+    #pairPayload { grid-column: 1 / -1; white-space: pre-wrap; word-break: break-all;
+                   color: #6ee7a8; background: #101010; padding: 6px; border-radius: 3px; }
+    .warn { color: #ffd166; }
+    #angles { width: 100%; padding: 8px 12px; display: grid;
+              grid-template-columns: repeat(2, 1fr); gap: 2px 24px; background: #181818; }
+    .angle-row { display: flex; justify-content: space-between; }
+    .angle-name { color: #888; }
+    .angle-val  { color: #0f0; min-width: 50px; text-align: right; }
+    .angle-val.null { color: #555; }
+    @media (max-width: 720px) {
+      #pairPanel { grid-template-columns: 1fr; }
+      #pairQrWrap { width: 100%; min-height: 240px; }
+      #pairQr { width: 220px; height: 220px; }
+      #pairQr canvas, #pairQr img { width: 220px; height: 220px; }
+    }
+  </style>
+</head>
+<body>
+
+<details open>
+  <summary>WiFi QR pairing</summary>
+  <div id="pairPanel">
+    <label>SSID
+      <input id="wifiSsid" placeholder="Phone-hotspot-name" autocomplete="off">
+    </label>
+    <label>Security
+      <select id="wifiType">
+        <option value="WPA">WPA/WPA2</option>
+        <option value="WEP">WEP</option>
+        <option value="nopass">No password</option>
+      </select>
+    </label>
+    <label>Password
+      <input id="wifiPass" placeholder="Hotspot password" autocomplete="off" type="password">
+    </label>
+    <div id="pairQrWrap"><div id="pairQr">Enter SSID</div></div>
+    <div id="pairHint">Max compatibility: use a 2.4 GHz hotspot, avoid spaces in the SSID, set screen brightness to 100%, and hold the phone about 30 cm from the ESP32 camera.</div>
+    <pre id="pairPayload">K1:W:&lt;SSID_LEN&gt;:&lt;SSID&gt;&lt;PASSWORD&gt;</pre>
+  </div>
+</details>
+
+<canvas id="canvas" width="240" height="240"></canvas>
+
+<div id="bar">
+  <label><input type="checkbox" id="showVideo" checked> raw video</label>
+  <label>cam <input id="camUrl" placeholder="http://192.168.x.x"></label>
+  <button id="camApply">Apply</button>
+  <button id="recBtn">⏺ Record</button>
+  <span id="recCount"></span>
+  <span id="status">loading…</span>
+</div>
+
+<div id="angles"></div>
+
+<img id="mjpeg" crossorigin="anonymous" style="display:none" alt="">
+
+<script>
+const wifiSsid  = document.getElementById("wifiSsid");
+const wifiType  = document.getElementById("wifiType");
+const wifiPass  = document.getElementById("wifiPass");
+const pairQr    = document.getElementById("pairQr");
+const pairHint  = document.getElementById("pairHint");
+const pairPayload = document.getElementById("pairPayload");
+let activeQr = null;
+
+function compactTypeCode(type) {
+  if (type === "nopass") return "N";
+  if (type === "WEP") return "E";
+  return "W";
+}
+
+function buildWifiQrPayload(ssid, password, type) {
+  const compactSsid = ssid.trim();
+  const compactPassword = type === "nopass" ? "" : password;
+  return `K1:${compactTypeCode(type)}:${compactSsid.length}:${compactSsid}${compactPassword}`;
+}
+
+function updateWifiQr() {
+  const ssid = wifiSsid.value;
+  const type = wifiType.value;
+  const payload = buildWifiQrPayload(ssid, wifiPass.value, type);
+  pairPayload.textContent = ssid.trim() ? payload : "K1:W:<SSID_LEN>:<SSID><PASSWORD>";
+  wifiPass.disabled = type === "nopass";
+
+  const notes = [
+    "Max compatibility: use a 2.4 GHz hotspot, avoid spaces in the SSID, set screen brightness to 100%, and hold the phone about 30 cm from the ESP32 camera."
+  ];
+  if (/[^\x20-\x7e]/.test(ssid + wifiPass.value)) notes.push("Use ASCII-only SSID/password for the compact QR format.");
+  if (/\s/.test(ssid.trim())) notes.push("SSID contains a space; pairing is more reliable after renaming the hotspot without spaces.");
+  if (type === "WPA" && wifiPass.value.length > 0 && wifiPass.value.length < 8) notes.push("WPA passwords are usually 8 characters or longer.");
+  pairHint.innerHTML = notes.map((note, index) => index === 0 ? note : `<span class="warn">${note}</span>`).join("<br>");
+
+  pairQr.innerHTML = "";
+  activeQr = null;
+
+  if (!ssid.trim()) {
+    pairQr.textContent = "Enter SSID";
+    return;
+  }
+
+  if (!window.QRCode) {
+    pairQr.textContent = "QR library failed to load";
+    pairHint.innerHTML += `<br><span class="warn">Refresh the page. If this stays visible, confirm web/vendor/qrcode.min.js is served by the laptop.</span>`;
+    return;
+  }
+
+  const size = window.matchMedia("(max-width: 720px)").matches ? 220 : 132;
+  activeQr = new window.QRCode(pairQr, {
+    text: payload,
+    width: size,
+    height: size,
+    colorDark: "#111111",
+    colorLight: "#ffffff",
+    correctLevel: window.QRCode.CorrectLevel.L
+  });
+}
+
+[wifiSsid, wifiType, wifiPass].forEach((el) => el.addEventListener("input", updateWifiQr));
+updateWifiQr();
+</script>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver, DrawingUtils }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+// Override via ?cam=http://192.168.x.x if mDNS fails
+const params  = new URLSearchParams(location.search);
+const DEFAULT_CAM_URL = "http://fitcam-d37d7c.local";
+let camUrl = params.get("cam") || localStorage.getItem("kineticlife.camUrl") || DEFAULT_CAM_URL;
+
+const img       = document.getElementById("mjpeg");
+const canvas    = document.getElementById("canvas");
+const ctx       = canvas.getContext("2d");
+const statusEl  = document.getElementById("status");
+const showVideo = document.getElementById("showVideo");
+const camUrlEl  = document.getElementById("camUrl");
+const camApply  = document.getElementById("camApply");
+const recBtn    = document.getElementById("recBtn");
+const recCount  = document.getElementById("recCount");
+const anglesEl  = document.getElementById("angles");
+
+function normalizeCamUrl(value) {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  if (!trimmed) return DEFAULT_CAM_URL;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `http://${trimmed}`;
+}
+
+function setCameraUrl(value) {
+  camUrl = normalizeCamUrl(value);
+  camUrlEl.value = camUrl;
+  localStorage.setItem("kineticlife.camUrl", camUrl);
+  img.src = camUrl + "/stream?ts=" + Date.now();
+  statusEl.textContent = `connecting camera ${camUrl}`;
+}
+
+camUrlEl.value = camUrl;
+camApply.addEventListener("click", () => setCameraUrl(camUrlEl.value));
+camUrlEl.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") setCameraUrl(camUrlEl.value);
+});
+img.addEventListener("error", () => {
+  statusEl.textContent = `camera stream failed: ${camUrl}`;
+});
+setCameraUrl(camUrl);
+
+// --- Joint angle names (contract §5, indices 0-13) ---
+const ANGLE_NAMES = [
+  "left_knee","right_knee","left_elbow","right_elbow",
+  "left_hip","right_hip","left_shoulder","right_shoulder",
+  "left_ankle","right_ankle","left_wrist","right_wrist",
+  "trunk_lean","pelvis_tilt"
+];
+
+// Build angle display rows
+ANGLE_NAMES.forEach((name, i) => {
+  const row = document.createElement("div");
+  row.className = "angle-row";
+  row.innerHTML = `<span class="angle-name">${i.toString().padStart(2,"0")} ${name}</span>`
+                + `<span class="angle-val null" id="av${i}">—</span>`;
+  anglesEl.appendChild(row);
+});
+
+// --- Joint angle math (contract §5) ---
+const VIS = 0.3;
+
+function sub(a, b) { return { x: b.x-a.x, y: b.y-a.y, z: b.z-a.z }; }
+function dot(u, v)  { return u.x*v.x + u.y*v.y + u.z*v.z; }
+function mag(v)     { return Math.sqrt(dot(v,v)); }
+
+function angleDeg(u, v) {
+  const m = mag(u) * mag(v);
+  if (m < 1e-9) return NaN;
+  return Math.acos(Math.max(-1, Math.min(1, dot(u,v)/m))) * 180 / Math.PI;
+}
+
+// angle at joint b, bones a→b and b→c
+function jAngle(wl, a, b, c) {
+  if (wl[a].visibility < VIS || wl[b].visibility < VIS || wl[c].visibility < VIS) return NaN;
+  return angleDeg(sub(wl[b], wl[a]), sub(wl[b], wl[c]));
+}
+
+function computeAngles(wl) {
+  const [LS,RS,LE,RE,LW,RW] = [11,12,13,14,15,16];
+  const [LI,RI]              = [19,20];
+  const [LH,RH,LK,RK,LA,RA] = [23,24,25,26,27,28];
+  const [LF,RF]              = [31,32];
+
+  const a = new Array(14).fill(NaN);
+  a[0]  = jAngle(wl, LH, LK, LA);
+  a[1]  = jAngle(wl, RH, RK, RA);
+  a[2]  = jAngle(wl, LS, LE, LW);
+  a[3]  = jAngle(wl, RS, RE, RW);
+  a[4]  = jAngle(wl, LS, LH, LK);
+  a[5]  = jAngle(wl, RS, RH, RK);
+  a[6]  = jAngle(wl, LH, LS, LE);
+  a[7]  = jAngle(wl, RH, RS, RE);
+  a[8]  = jAngle(wl, LK, LA, LF);
+  a[9]  = jAngle(wl, RK, RA, RF);
+  a[10] = jAngle(wl, LE, LW, LI);
+  a[11] = jAngle(wl, RE, RW, RI);
+
+  // trunk_lean: spine vector vs world up [0,-1,0] (MediaPipe y+ is down)
+  if ([LH,RH,LS,RS].every(i => wl[i].visibility >= VIS)) {
+    const mHip = { x:(wl[LH].x+wl[RH].x)/2, y:(wl[LH].y+wl[RH].y)/2, z:(wl[LH].z+wl[RH].z)/2 };
+    const mSho = { x:(wl[LS].x+wl[RS].x)/2, y:(wl[LS].y+wl[RS].y)/2, z:(wl[LS].z+wl[RS].z)/2 };
+    a[12] = angleDeg(sub(mHip, mSho), { x:0, y:-1, z:0 });
+  }
+
+  // pelvis_tilt: L_HIP→R_HIP vs horizontal [1,0,0]
+  if (wl[LH].visibility >= VIS && wl[RH].visibility >= VIS) {
+    a[13] = Math.min(45, angleDeg(sub(wl[LH], wl[RH]), { x:1, y:0, z:0 }));
+  }
+
+  return a.map(v => isNaN(v) ? null : parseFloat(v.toFixed(1)));
+}
+
+// --- Recording ---
+let recording = false;
+let frames    = [];
+let frameId   = 0;
+
+recBtn.addEventListener("click", () => {
+  if (!recording) {
+    frames    = [];
+    frameId   = 0;
+    recording = true;
+    recBtn.textContent = "⏹ Stop & Save";
+    recBtn.classList.add("recording");
+    recCount.textContent = "0 frames";
+  } else {
+    recording = false;
+    recBtn.textContent = "⏺ Record";
+    recBtn.classList.remove("recording");
+    recCount.textContent = "";
+    download(frames);
+  }
+});
+
+function download(data) {
+  const ts   = new Date().toISOString().replace(/[:.]/g,"-");
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type:"application/json" });
+  const a    = document.createElement("a");
+  a.href     = URL.createObjectURL(blob);
+  a.download = `recording_${ts}.json`;
+  a.click();
+}
+
+// --- MediaPipe init ---
+let landmarker, drawing;
+
+async function init() {
+  statusEl.textContent = "loading model…";
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  const modelAssetPath =
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+  const makeOptions = (delegate) => ({
+    baseOptions: { modelAssetPath, delegate },
+    runningMode: "IMAGE",
+    numPoses: 1
+  });
+  try {
+    landmarker = await PoseLandmarker.createFromOptions(vision, makeOptions("GPU"));
+  } catch (_) {
+    statusEl.textContent = "GPU unavailable, falling back to CPU…";
+    landmarker = await PoseLandmarker.createFromOptions(vision, makeOptions("CPU"));
+  }
+  drawing = new DrawingUtils(ctx);
+  statusEl.textContent = "ready — point camera at a person";
+  requestAnimationFrame(tick);
+}
+
+// Cap processing at ~12 fps (MJPEG is 15 fps; avoids redundant work)
+let lastTick = 0;
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (now - lastTick < 80) return;
+  lastTick = now;
+  if (!img.complete || img.naturalWidth === 0 || !landmarker) return;
+
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const result = landmarker.detect(canvas);
+
+  if (!showVideo.checked) {
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  if (result.landmarks.length > 0) {
+    drawing.drawConnectors(result.landmarks[0], PoseLandmarker.POSE_CONNECTIONS,
+                           { color: "#00ff88", lineWidth: 2 });
+    drawing.drawLandmarks(result.landmarks[0], { color: "#ff4466", radius: 3 });
+
+    const angles = computeAngles(result.worldLandmarks[0]);
+    statusEl.textContent = `pose ✓`;
+
+    // Update angle display
+    angles.forEach((val, i) => {
+      const el = document.getElementById(`av${i}`);
+      if (val === null) { el.textContent = "—";        el.className = "angle-val null"; }
+      else              { el.textContent = val + "°";  el.className = "angle-val"; }
+    });
+
+    // Record frame
+    if (recording) {
+      frames.push({ frame_id: frameId++, ts_ms: Math.round(now), joint_angles: angles });
+      recCount.textContent = `${frames.length} frames`;
+    }
+  } else {
+    statusEl.textContent = "no pose in frame";
+  }
+}
+
+init().catch(e => { statusEl.textContent = "error: " + e.message; console.error(e); });
+</script>
+</body>
+</html>

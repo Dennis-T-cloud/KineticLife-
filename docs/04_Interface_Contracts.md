@@ -49,7 +49,15 @@ Role docs (01/02/03) **do not redefine any format** — they only reference this
 
 ### 2.1 WiFi QR string format (Phone → ESP32, one-shot pairing)
 
-**Format**: industry-standard WiFi QR string
+**Primary format**: compact KineticLife v1 WiFi QR string, optimized for reliable ESP32 camera decoding.
+
+```
+K1:<TYPE_CODE>:<SSID_LEN>:<SSID><PASSWORD>
+```
+
+`TYPE_CODE` values: `W` = WPA/WPA2, `E` = WEP, `N` = no password.
+
+**Compatibility format**: firmware also accepts the industry-standard WiFi QR string.
 
 ```
 WIFI:S:<SSID>;T:<TYPE>;P:<PASSWORD>;;
@@ -63,8 +71,9 @@ WIFI:S:<SSID>;T:<TYPE>;P:<PASSWORD>;;
 | `T` | yes | `WPA` / `WEP` / `nopass` | Encryption type |
 | `P` | omit if `T=nopass` | string | Password |
 
-**Example**:
+**Examples**:
 ```
+K1:W:13:DennisPhone5Gmy_pass_123
 WIFI:S:DennisPhone-5G;T:WPA;P:my_pass_123;;
 ```
 
@@ -100,6 +109,7 @@ Web tries to resolve on launch; falls back to manual IP entry on failure.
   "mac": "aa:bb:cc:a1:b2:c3",
   "board_model": "Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B",
   "cam_model": "OV2640",
+  "state": "ready",
   "supported_resolutions": ["160x120@20", "240x240@15", "320x240@10"],
   "default_resolution": "240x240@15",
   "uptime_s": 42,
@@ -111,7 +121,37 @@ Web tries to resolve on launch; falls back to manual IP entry on failure.
 
 **Errors**: connection failure → Web shows "device not found"; any non-200 = pairing incomplete.
 
-### 2.4 MJPEG stream `/stream`
+### 2.4 HTTP status `/status`
+
+**Request**: `GET http://fitcam-<mac6>.local/status`
+**Timeout**: 2 s
+
+**Response**: `200 OK`, `Content-Type: application/json`
+
+```json
+{
+  "state": "ready",
+  "device_id": "a1b2c3",
+  "fw_version": "0.3.0",
+  "board_model": "Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B",
+  "cam_model": "OV2640",
+  "camera_mode": "stream",
+  "pixel_format": "JPEG",
+  "frame_size": "240x240",
+  "jpeg_quality": 12,
+  "ip": "192.168.1.23",
+  "rssi_dbm": -42,
+  "wifi_status": 3,
+  "stream_count": 1,
+  "uptime_s": 42,
+  "free_heap_kb": 240,
+  "free_psram_kb": 2048
+}
+```
+
+`state` values: `boot`, `pairing`, `connecting`, `ready`, `streaming`, `error`, `fatal`.
+
+### 2.5 MJPEG stream `/stream`
 
 **Request**: `GET http://fitcam-<mac6>.local/stream?res=240x240@15`
 
@@ -141,7 +181,22 @@ X-Timestamp-Ms: <int64>\r\n
 - Max JPEG size 128 KB (drops oversized frames)
 - ESP32 stops encoding after 5 s of no client read (power saving)
 
-### 2.5 `/ctrl` parameter adjustment (placeholder, not in v0.3)
+### 2.6 End session `/end`
+
+**Request**: `POST http://fitcam-<mac6>.local/end`
+
+**Response**: `200 OK`, `Content-Type: application/json`
+
+```json
+{
+  "ok": true,
+  "action": "clear_wifi_and_reboot"
+}
+```
+
+ESP32 clears the temporary WiFi session in NVS and reboots into QR pairing mode. Web should navigate back to `pair.html` after calling this endpoint.
+
+### 2.7 `/ctrl` parameter adjustment (placeholder, not in v0.3)
 
 `POST /ctrl` body `{"brightness": 0.6}` etc. **Reserved, not implemented**.
 

@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KineticLife Camera</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100dvh; background: #101418; color: #d7e0ea;
+           font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(1040px, 100%); margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+    .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    input { min-width: min(320px, 100%); flex: 1; border: 1px solid #475569;
+            background: #17202b; color: #d7e0ea; padding: 8px 12px; border-radius: 6px; font: inherit; }
+    button { border: 0; padding: 8px 14px; background: #2f6f56; color: #fff;
+             font-weight: 600; cursor: pointer; border-radius: 6px; font: inherit; white-space: nowrap; }
+    button.end { background: #9f2f3f; }
+    button.secondary { background: #334155; }
+    button.recording { outline: 2px solid #f87171; outline-offset: 1px; }
+    .controls { display: flex; gap: 16px; flex-wrap: wrap; background: #151c25;
+                border: 1px solid #263241; border-radius: 8px; padding: 10px 14px; }
+    .ctrl-group { display: flex; align-items: center; gap: 5px; flex-wrap: nowrap; }
+    .ctrl-label { color: #94a3b8; font-size: 12px; margin-right: 3px; white-space: nowrap; }
+    .ctrl-group button { background: #263241; font-size: 12px; padding: 5px 10px;
+                         font-weight: 500; border-radius: 5px; }
+    .ctrl-group button.active { background: #1f4e3d; outline: 2px solid #34d399; outline-offset: 1px; }
+    .viewport { position: relative; width: min(100%, 720px); margin: 0 auto;
+                background: #05070a; border: 1px solid #263241; border-radius: 8px;
+                min-height: 240px; overflow: hidden; display: grid; place-items: center; }
+    #canvas { width: min(100%, 70dvh); height: auto; display: block; image-rendering: pixelated; }
+    #mjpeg { display: none; }
+    #fps { position: absolute; top: 8px; right: 10px; background: rgba(0,0,0,0.6);
+           color: #34d399; font-size: 12px; padding: 2px 8px; border-radius: 4px;
+           font-variant-numeric: tabular-nums; }
+    #status { white-space: pre-wrap; word-break: break-word; border: 1px solid #263241;
+              border-radius: 8px; padding: 12px; background: #151c25; color: #b8c7d8; font-size: 13px; }
+    #angles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 3px 18px; border: 1px solid #263241; border-radius: 8px;
+              background: #151c25; padding: 12px; }
+    .angle-row { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+    .angle-name { color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .angle-val { color: #34d399; min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+    .angle-val.null { color: #64748b; }
+    @media (max-width: 640px) {
+      main { padding: 10px; }
+      .controls { gap: 10px; }
+      .ctrl-group { width: 100%; flex-wrap: wrap; }
+      #angles { grid-template-columns: 1fr; }
+      #canvas { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="bar">
+      <input id="camUrl" placeholder="http://192.168.x.x  or  fitcam-xxxxxx.local">
+      <button id="apply">Apply</button>
+      <button class="secondary" id="pair">Pair Page</button>
+      <button class="secondary" id="rec">Record</button>
+      <button class="end" id="end">End Session</button>
+    </div>
+
+    <div class="controls">
+      <div class="ctrl-group">
+        <span class="ctrl-label">Resolution</span>
+        <button class="res-btn" data-res="160x120">160x120</button>
+        <button class="res-btn active" data-res="240x240">240x240</button>
+        <button class="res-btn" data-res="320x240">320x240</button>
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">Quality</span>
+        <button class="q-btn" data-q="30">Fast</button>
+        <button class="q-btn active" data-q="15">Balanced</button>
+        <button class="q-btn" data-q="8">HD</button>
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">Brightness</span>
+        <button class="br-btn" data-b="-2">--</button>
+        <button class="br-btn" data-b="-1">-</button>
+        <button class="br-btn active" data-b="0">0</button>
+        <button class="br-btn" data-b="1">+</button>
+        <button class="br-btn" data-b="2">++</button>
+      </div>
+      <div class="ctrl-group">
+        <label><input type="checkbox" id="showVideo" checked> raw video</label>
+      </div>
+    </div>
+
+    <div class="viewport">
+      <canvas id="canvas" width="240" height="240"></canvas>
+      <span id="fps">-- fps</span>
+    </div>
+
+    <div id="status">Loading MediaPipe...</div>
+    <div id="angles"></div>
+    <img id="mjpeg" crossorigin="anonymous" alt="">
+  </main>
+
+  <script type="module">
+    import { PoseLandmarker, FilesetResolver, DrawingUtils }
+      from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+    const qp       = new URLSearchParams(location.search);
+    const camUrlEl = document.getElementById("camUrl");
+    const img      = document.getElementById("mjpeg");
+    const canvas   = document.getElementById("canvas");
+    const ctx      = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const fpsEl    = document.getElementById("fps");
+    const anglesEl = document.getElementById("angles");
+    const showVideo = document.getElementById("showVideo");
+    const recBtn   = document.getElementById("rec");
+
+    const DEFAULT_CAM_URL = "http://fitcam-d37d7c.local";
+    let camUrl = qp.get("cam") || localStorage.getItem("kineticlife.camUrl") || DEFAULT_CAM_URL;
+    let statusTimer = null;
+    let landmarker = null;
+    let drawing = null;
+    let lastTick = 0;
+    let streaming = false;
+    let recording = false;
+    let frameId = 0;
+    let frames = [];
+
+    const ANGLE_NAMES = [
+      "left_knee", "right_knee", "left_elbow", "right_elbow",
+      "left_hip", "right_hip", "left_shoulder", "right_shoulder",
+      "left_ankle", "right_ankle", "left_wrist", "right_wrist",
+      "trunk_lean", "pelvis_tilt"
+    ];
+
+    ANGLE_NAMES.forEach((name, i) => {
+      const row = document.createElement("div");
+      row.className = "angle-row";
+      row.innerHTML =
+        `<span class="angle-name">${String(i).padStart(2, "0")} ${name}</span>` +
+        `<span class="angle-val null" id="av${i}">--</span>`;
+      anglesEl.appendChild(row);
+    });
+
+    const fpsHistory = [];
+    function trackFps(now) {
+      fpsHistory.push(now);
+      while (fpsHistory.length > 0 && fpsHistory[0] < now - 3000) fpsHistory.shift();
+      fpsEl.textContent = (fpsHistory.length / 3).toFixed(1) + " fps";
+    }
+
+    function normalizeCamUrl(value) {
+      const trimmed = value.trim().replace(/\/+$/, "");
+      if (!trimmed) return DEFAULT_CAM_URL;
+      return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+    }
+
+    function setStatus(message) {
+      statusEl.textContent = message;
+    }
+
+    function startStream(value) {
+      camUrl = normalizeCamUrl(value);
+      camUrlEl.value = camUrl;
+      localStorage.setItem("kineticlife.camUrl", camUrl);
+      fpsHistory.length = 0;
+      fpsEl.textContent = "-- fps";
+      streaming = true;
+      img.src = "";
+      img.src = `${camUrl}/stream?ts=${Date.now()}`;
+      pollStatus();
+      if (statusTimer) clearInterval(statusTimer);
+      statusTimer = setInterval(pollStatus, 10000);
+      setStatus(`connecting camera ${camUrl}`);
+    }
+
+    function stopStream() {
+      streaming = false;
+      img.src = "";
+    }
+
+    async function pollStatus() {
+      try {
+        const r = await fetch(`${camUrl}/status?t=${Date.now()}`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(4000)
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        const modeLine = `camera: ${d.camera_mode} ${d.pixel_format} ${d.frame_size} q=${d.jpeg_quality}`;
+        const netLine = `state: ${d.state}   ip: ${d.ip}   rssi: ${d.rssi_dbm} dBm`;
+        const memLine = `uptime: ${d.uptime_s}s   heap: ${d.free_heap_kb} KB   psram: ${d.free_psram_kb} KB`;
+        if (!landmarker) setStatus(`${netLine}\n${modeLine}\n${memLine}\nloading model...`);
+        else setStatus(`${netLine}\n${modeLine}\n${memLine}`);
+      } catch (e) {
+        setStatus(`device offline: ${camUrl}\n${e.message}`);
+      }
+    }
+
+    async function sendCamConfig(queryStr) {
+      try {
+        await fetch(`${camUrl}/cam?${queryStr}`, {
+          method: "POST",
+          mode: "cors",
+          signal: AbortSignal.timeout(3000)
+        });
+        setTimeout(() => startStream(camUrl), 400);
+      } catch (e) {
+        setStatus(`cam config failed: ${e.message}`);
+      }
+    }
+
+    function setActive(selector, activeButton) {
+      document.querySelectorAll(selector).forEach((button) => button.classList.remove("active"));
+      activeButton.classList.add("active");
+    }
+
+    document.querySelectorAll(".res-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setActive(".res-btn", btn);
+        sendCamConfig(`res=${btn.dataset.res}`);
+      });
+    });
+
+    document.querySelectorAll(".q-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setActive(".q-btn", btn);
+        sendCamConfig(`q=${btn.dataset.q}`);
+      });
+    });
+
+    document.querySelectorAll(".br-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setActive(".br-btn", btn);
+        sendCamConfig(`brightness=${btn.dataset.b}`);
+      });
+    });
+
+    img.addEventListener("error", () => {
+      setStatus(`camera stream failed: ${camUrl}`);
+    });
+
+    async function endSession() {
+      setStatus("Ending session. ESP32 will reboot to pairing mode...");
+      stopStream();
+      if (statusTimer) {
+        clearInterval(statusTimer);
+        statusTimer = null;
+      }
+      try {
+        await fetch(`${camUrl}/end`, {
+          method: "POST",
+          mode: "cors",
+          signal: AbortSignal.timeout(3000)
+        });
+      } catch (_) {
+        // The device often reboots before the response is fully delivered.
+      }
+      localStorage.removeItem("kineticlife.camUrl");
+      setTimeout(() => { location.href = "./pair.html"; }, 1000);
+    }
+
+    recBtn.addEventListener("click", () => {
+      if (!recording) {
+        frames = [];
+        frameId = 0;
+        recording = true;
+        recBtn.textContent = "Stop & Save";
+        recBtn.classList.add("recording");
+      } else {
+        recording = false;
+        recBtn.textContent = "Record";
+        recBtn.classList.remove("recording");
+        download(frames);
+      }
+    });
+
+    function download(data) {
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      a.href = url;
+      a.download = `recording_${ts}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    const VIS = 0.3;
+    function sub(a, b) { return { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z }; }
+    function dot(u, v) { return u.x * v.x + u.y * v.y + u.z * v.z; }
+    function mag(v) { return Math.sqrt(dot(v, v)); }
+    function angleDeg(u, v) {
+      const m = mag(u) * mag(v);
+      if (m < 1e-9) return NaN;
+      return Math.acos(Math.max(-1, Math.min(1, dot(u, v) / m))) * 180 / Math.PI;
+    }
+    function jAngle(wl, a, b, c) {
+      if (wl[a].visibility < VIS || wl[b].visibility < VIS || wl[c].visibility < VIS) return NaN;
+      return angleDeg(sub(wl[b], wl[a]), sub(wl[b], wl[c]));
+    }
+    function computeAngles(wl) {
+      const [LS, RS, LE, RE, LW, RW] = [11, 12, 13, 14, 15, 16];
+      const [LI, RI] = [19, 20];
+      const [LH, RH, LK, RK, LA, RA] = [23, 24, 25, 26, 27, 28];
+      const [LF, RF] = [31, 32];
+      const a = new Array(14).fill(NaN);
+      a[0] = jAngle(wl, LH, LK, LA);
+      a[1] = jAngle(wl, RH, RK, RA);
+      a[2] = jAngle(wl, LS, LE, LW);
+      a[3] = jAngle(wl, RS, RE, RW);
+      a[4] = jAngle(wl, LS, LH, LK);
+      a[5] = jAngle(wl, RS, RH, RK);
+      a[6] = jAngle(wl, LH, LS, LE);
+      a[7] = jAngle(wl, RH, RS, RE);
+      a[8] = jAngle(wl, LK, LA, LF);
+      a[9] = jAngle(wl, RK, RA, RF);
+      a[10] = jAngle(wl, LE, LW, LI);
+      a[11] = jAngle(wl, RE, RW, RI);
+      if ([LH, RH, LS, RS].every((i) => wl[i].visibility >= VIS)) {
+        const mHip = { x: (wl[LH].x + wl[RH].x) / 2, y: (wl[LH].y + wl[RH].y) / 2, z: (wl[LH].z + wl[RH].z) / 2 };
+        const mSho = { x: (wl[LS].x + wl[RS].x) / 2, y: (wl[LS].y + wl[RS].y) / 2, z: (wl[LS].z + wl[RS].z) / 2 };
+        a[12] = angleDeg(sub(mHip, mSho), { x: 0, y: -1, z: 0 });
+      }
+      if (wl[LH].visibility >= VIS && wl[RH].visibility >= VIS) {
+        a[13] = Math.min(45, angleDeg(sub(wl[LH], wl[RH]), { x: 1, y: 0, z: 0 }));
+      }
+      return a.map((v) => Number.isNaN(v) ? null : Number(v.toFixed(1)));
+    }
+
+    function updateAngles(angles) {
+      angles.forEach((val, i) => {
+        const el = document.getElementById(`av${i}`);
+        if (val === null) {
+          el.textContent = "--";
+          el.className = "angle-val null";
+        } else {
+          el.textContent = `${val} deg`;
+          el.className = "angle-val";
+        }
+      });
+    }
+
+    function clearAngles() {
+      ANGLE_NAMES.forEach((_, i) => {
+        const el = document.getElementById(`av${i}`);
+        el.textContent = "--";
+        el.className = "angle-val null";
+      });
+    }
+
+    function resizeCanvasToImage() {
+      const w = img.naturalWidth || 240;
+      const h = img.naturalHeight || 240;
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        drawing = new DrawingUtils(ctx);
+      }
+    }
+
+    function tick(now) {
+      requestAnimationFrame(tick);
+      if (!streaming || img.naturalWidth === 0) return;
+      if (now - lastTick < 80) return;
+      lastTick = now;
+
+      resizeCanvasToImage();
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      if (!landmarker) {
+        trackFps(now);
+        return;
+      }
+
+      const result = landmarker.detect(canvas);
+
+      if (!showVideo.checked) {
+        ctx.fillStyle = "#101418";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      if (result.landmarks.length > 0 && result.worldLandmarks.length > 0) {
+        drawing.drawConnectors(result.landmarks[0], PoseLandmarker.POSE_CONNECTIONS,
+                               { color: "#34d399", lineWidth: 2 });
+        drawing.drawLandmarks(result.landmarks[0], { color: "#f43f5e", radius: 3 });
+        const angles = computeAngles(result.worldLandmarks[0]);
+        updateAngles(angles);
+        if (recording) {
+          frames.push({ frame_id: frameId++, ts_ms: Math.round(Date.now()), joint_angles: angles });
+        }
+      } else {
+        clearAngles();
+      }
+
+      trackFps(now);
+    }
+
+    async function initMediaPipe() {
+      setStatus("loading MediaPipe model...");
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+      );
+      const modelAssetPath =
+        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+      const makeOptions = (delegate) => ({
+        baseOptions: { modelAssetPath, delegate },
+        runningMode: "IMAGE",
+        numPoses: 1
+      });
+      try {
+        landmarker = await PoseLandmarker.createFromOptions(vision, makeOptions("GPU"));
+      } catch (_) {
+        landmarker = await PoseLandmarker.createFromOptions(vision, makeOptions("CPU"));
+      }
+      drawing = new DrawingUtils(ctx);
+      startStream(camUrl);
+    }
+
+    document.getElementById("apply").addEventListener("click", () => startStream(camUrlEl.value));
+    camUrlEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") startStream(camUrlEl.value);
+    });
+    document.getElementById("pair").addEventListener("click", () => { location.href = "./pair.html"; });
+    document.getElementById("end").addEventListener("click", endSession);
+
+    camUrlEl.value = camUrl;
+    requestAnimationFrame(tick);
+    initMediaPipe().catch((e) => {
+      setStatus(`MediaPipe failed to load: ${e.message}`);
+      startStream(camUrl);
+    });
+  </script>
+</body>
+</html>

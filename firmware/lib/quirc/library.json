@@ -1,0 +1,9 @@
+{
+  "name": "quirc",
+  "version": "1.0.0-local",
+  "description": "Vendored quirc core QR decoder files only; demo tools are intentionally excluded.",
+  "build": {
+    "srcDir": "src",
+    "includeDir": "src"
+  }
+}

@@ -85,16 +85,17 @@ firmware/
 ```mermaid
 stateDiagram-v2
     [*] --> BootCheck: Power on
-    BootCheck --> StreamMode: NVS has WiFi creds
-    BootCheck --> PairMode: NVS empty
+    BootCheck --> StreamMode: NVS has active session WiFi creds
+    BootCheck --> PairMode: NVS active session empty
 
     PairMode --> ScanQR: Camera continuous refresh
-    ScanQR --> Connecting: Parsed WIFI:S:...;
-    Connecting --> StreamMode: WiFi OK + NVS write
+    ScanQR --> Connecting: Parsed K1 or WIFI QR
+    Connecting --> StreamMode: WiFi OK + temporary NVS session write
     Connecting --> PairFailed: 3 retries failed
     PairFailed --> PairMode: Retry after 1s
 
     StreamMode --> StreamMode: Push MJPEG
+    StreamMode --> PairMode: Web End button calls /end
     StreamMode --> PairMode: Long-press RESET 5s
     StreamMode --> Disconnected: WiFi lost 5s
     Disconnected --> StreamMode: WiFi recovered
@@ -112,6 +113,8 @@ stateDiagram-v2
 | Green | Fast blink (4Hz) | Client is pulling stream |
 | Red | Blink (1Hz) | Connection failed |
 | Red | Solid | Fatal error (e.g. camera init failure) |
+
+Current firmware maps the RGB status LED to `STATUS_RGB_PIN=48` in `platformio.ini`. If the Freenove board revision uses a different onboard RGB pin, update that build flag.
 
 ---
 
@@ -135,7 +138,9 @@ config.fb_location = CAMERA_FB_IN_PSRAM; // MUST use PSRAM
 | Path | Method | Purpose | Contract |
 |-----|------|------|---------|
 | `/hello` | GET | device_id / fw_version / capabilities | [04 §2.3](./04_Interface_Contracts.md#23-http-handshake-hello) |
+| `/status` | GET | current state, WiFi RSSI/IP, camera mode/settings, memory | Debug/status |
 | `/stream` | GET | multipart MJPEG; per-frame `X-Frame-Id` + `X-Timestamp-Ms` | [04 §2.4](./04_Interface_Contracts.md#24-mjpeg-stream-stream) |
+| `/end` | POST/GET | clear temporary WiFi session in NVS and reboot to QR pairing | Demo session lifecycle |
 | `/ctrl` | POST | placeholder, not in v0.3 | — |
 
 **MJPEG framing** (simplified pseudocode):
@@ -175,7 +180,7 @@ void streamHandler(WebServer& server) {
 
 ## §6 WiFi QR Pairing
 
-**QR format**: `WIFI:S:<ssid>;T:<WPA|WEP|nopass>;P:<pass>;;` (see [04 §2.1](./04_Interface_Contracts.md#21-wifi-qr-string-format-phone--esp32-one-shot-pairing))
+**QR format**: current web uses compact `K1:<type>:<ssid_len>:<ssid><pass>` payloads; firmware also accepts `WIFI:S:<ssid>;T:<WPA|WEP|nopass>;P:<pass>;;` for compatibility (see [04 §2.1](./04_Interface_Contracts.md#21-wifi-qr-string-format-phone--esp32-one-shot-pairing)).
 
 **Implementation flow**:
 
@@ -184,9 +189,10 @@ flowchart LR
     A[Grab a frame] --> B[Convert to grayscale]
     B --> C[quirc_decode]
     C -->|fail| A
-    C -->|success| D[Regex parse<br/>WIFI:S:ssid;T:type;P:pass]
-    D --> E[Preferences.putString<br/>SSID/Password/Type]
-    E --> F[ESP.restart()]
+    C -->|success| D[Parse compact K1<br/>or WIFI:S fallback]
+    D --> E[Connect WiFi]
+    E --> F[Temporary Preferences.putString<br/>SSID/Password/Type]
+    F --> G[ESP.restart into camera mode]
 ```
 
 **quirc integration notes**:
@@ -196,7 +202,8 @@ flowchart LR
 
 **Security considerations**:
 - Write password directly to NVS, never log to serial
-- Store via `Preferences.putString("wifi", ssid+"\0"+pass)`, no plaintext concatenation
+- Store SSID/password/type in the `wifi` NVS namespace only for the active demo session
+- Web Camera page must call `/end` when the user finishes; ESP32 clears the NVS session and reboots to QR pairing mode
 
 **Reset entry**:
 - Long-press GPIO button 5s → `Preferences.clear()` → reboot into pairing mode
