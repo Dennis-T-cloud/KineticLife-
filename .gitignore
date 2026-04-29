@@ -1,5 +1,5 @@
 # =========================
-# OS & Editor (macOS, Windows, IDEs)
+# OS & Editor
 # =========================
 .DS_Store
 Thumbs.db
@@ -8,34 +8,74 @@ Thumbs.db
 *.log
 
 # =========================
-# Hardware (ESP-IDF / C++
+# Environment & Secrets
 # =========================
-hardware/build/
-hardware/managed_components/
-hardware/dependencies.lock
-hardware/sdkconfig.old
+.env
+.env.*
+!.env.example
+
+# =========================
+# Firmware (PlatformIO / ESP32)
+# =========================
+firmware/.pio/
+firmware/.vscode/
+firmware/build/
+firmware/.sconsign*.dblite
+firmware/compile_commands.json
 *.bin
 *.elf
 *.map
 
+# Legacy firmware workspace
+hardware/build/
+hardware/managed_components/
+hardware/dependencies.lock
+hardware/sdkconfig.old
+
 # =========================
-# Frontend (React / Node.js)
+# Web (React / Vite / Node)
 # =========================
+web/node_modules/
+web/dist/
+web/build/
+web/.vite/
+web/npm-debug.log*
+web/yarn-debug.log*
+web/yarn-error.log*
+web/pnpm-debug.log*
+
+# Legacy frontend workspace
 frontend/node_modules/
 frontend/dist/
 frontend/build/
-frontend/.env
-frontend/.env.*
-frontend/npm-debug.log*
-frontend/yarn-error.log*
 
 # =========================
-# Backend (Python / FastAPI)
+# Server (Python / FastAPI)
 # =========================
-backend/__pycache__/
-backend/*.py[cod]
-backend/*$py.class
+server/.venv/
+server/venv/
+server/env/
+server/__pycache__/
+server/**/*.py[cod]
+server/**/__pycache__/
+server/.pytest_cache/
+server/.mypy_cache/
+server/.ruff_cache/
+server/.coverage
+server/htmlcov/
+
+# Legacy backend workspace
 backend/venv/
 backend/env/
-backend/.env
+backend/__pycache__/
+backend/**/*.py[cod]
 backend/.pytest_cache/
+
+# =========================
+# Data
+# =========================
+data/templates/*
+!data/templates/.gitkeep
+data/recordings/
+*.sqlite
+*.db

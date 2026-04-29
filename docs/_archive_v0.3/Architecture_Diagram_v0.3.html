@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>KineticLife Motion Accuracy System · Architecture Diagrams v0.3</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0; padding: 0;
+    background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+    color: #1f2937; line-height: 1.6;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 40px 24px 80px; }
+  header { text-align: center; margin-bottom: 40px; }
+  h1 { font-size: 30px; margin: 0 0 8px; color: #0f172a; letter-spacing: -0.5px; }
+  .version { display: inline-block; background: #dc2626; color: white;
+    padding: 2px 10px; border-radius: 12px; font-size: 12px; margin-left: 8px; font-weight: 600; }
+  .subtitle { color: #64748b; font-size: 15px; }
+  .subtitle strong { color: #dc2626; }
+  .badges { margin-top: 14px; }
+  .badge { display: inline-block; padding: 4px 10px; margin: 0 4px;
+    border-radius: 12px; font-size: 12px; font-weight: 500; }
+  .b-edge { background: #e3f2fd; color: #1565c0; }
+  .b-cloud { background: #fff3e0; color: #e65100; }
+  .b-home { background: #f3e5f5; color: #6a1b9a; }
+  .b-advice { background: #e8f5e9; color: #2e7d32; }
+  .b-demo { background: #fef3c7; color: #92400e; }
+  .lang-toggle { position: absolute; top: 20px; right: 20px; font-size: 13px; }
+  .lang-toggle a { color: #0369a1; text-decoration: none; }
+  .lang-toggle a:hover { text-decoration: underline; }
+
+  section {
+    background: white; border-radius: 14px;
+    padding: 26px 30px; margin-bottom: 26px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+    border: 1px solid #e2e8f0;
+  }
+  section.highlight { border-left: 4px solid #dc2626; background: linear-gradient(90deg, #fef2f2 0%, white 20%); }
+  section h2 { margin: 0 0 8px; font-size: 20px; color: #0f172a;
+    display: flex; align-items: center; gap: 10px; }
+  .num { display: inline-flex; width: 28px; height: 28px;
+    border-radius: 50%; background: #0f172a; color: white;
+    align-items: center; justify-content: center; font-size: 14px; font-weight: 600; }
+  .num.demo { background: #dc2626; }
+  .desc { color: #64748b; font-size: 14px; margin: 0 0 18px; }
+  .desc strong { color: #0f172a; }
+
+  .mermaid { text-align: center; background: #fafbfc;
+    padding: 20px; border-radius: 8px;
+    border: 1px dashed #cbd5e1; overflow-x: auto; }
+
+  .kv-grid { display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px; margin-top: 20px; }
+  .kv { background: #f8fafc; border: 1px solid #e2e8f0;
+    border-radius: 8px; padding: 12px 14px; }
+  .kv .k { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+  .kv .v { font-size: 15px; color: #0f172a; margin-top: 4px; font-weight: 500; }
+  .kv.accent { background: #fef2f2; border-color: #fca5a5; }
+  .kv.accent .v { color: #dc2626; }
+
+  .booth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .booth { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px 18px; }
+  .booth h3 { margin: 0 0 8px; font-size: 16px; color: #0f172a; }
+  .booth .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 8px; margin-right: 6px; font-weight: 500; }
+  .booth-a { border-top: 3px solid #1976D2; }
+  .booth-b { border-top: 3px solid #dc2626; }
+  .booth ul { margin: 8px 0 0; padding-left: 20px; font-size: 14px; color: #475569; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 14px; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+  th { background: #f1f5f9; color: #475569; font-weight: 600; font-size: 13px; }
+  tr.highlight { background: #fef2f2; }
+  tr.highlight td { font-weight: 600; color: #dc2626; }
+
+  footer { text-align: center; color: #94a3b8; font-size: 13px; margin-top: 40px; }
+
+  @media (max-width: 700px) { .booth-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>KineticLife Motion Accuracy System · Architecture<span class="version">v0.3 · Demo Day</span></h1>
+  <div class="subtitle"><strong>6-week Demo Day is the primary goal</strong> · Dual booths · Gesture control · Auto-set detection</div>
+  <div class="badges">
+    <span class="badge b-home">Home</span>
+    <span class="badge b-edge">Phone edge</span>
+    <span class="badge b-cloud">Cloud</span>
+    <span class="badge b-advice">Advice async</span>
+    <span class="badge b-demo">Demo Day</span>
+  </div>
+</header>
+
+<section class="highlight">
+  <h2><span class="num demo">D</span>Demo Day · Dual-Booth Setup</h2>
+  <p class="desc"><strong>Demo Day in 6 weeks</strong> is the primary milestone. Two independent booths run in parallel with different focuses.</p>
+  <div class="booth-grid">
+    <div class="booth booth-a">
+      <h3>Booth A · Phone Full-Experience</h3>
+      <span class="tag b-edge">User flow</span>
+      <span class="tag b-edge">Gamification</span>
+      <ul>
+        <li>ESP32 #1 + demo phone (visitors can BYOD via QR)</li>
+        <li>Duolingo guided flow + QR pairing + Streak/XP</li>
+        <li>Visitors try 30s of squats themselves</li>
+      </ul>
+    </div>
+    <div class="booth booth-b">
+      <h3>Booth B · iPad Main-Function</h3>
+      <span class="tag b-demo">Demo Mode</span>
+      <span class="tag b-demo">High latency OK</span>
+      <ul>
+        <li>ESP32 #2 + iPad (landscape, big display)</li>
+        <li>Skeleton + FX only — <strong>no video on screen</strong></li>
+        <li>Shows privacy + DTW accuracy + multi-angle robustness</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">1</span>Component Architecture (v0.3)</h2>
+  <p class="desc">Added: <strong>Gesture detector</strong> + <strong>auto rep/set state machine</strong>. Both reuse the existing Pose keypoints — zero extra CPU cost.</p>
+  <div class="mermaid">
+flowchart TB
+    subgraph Home["User's home"]
+        ESP["Freenove ESP32-S3-WROOM N16R8<br/>FNK0085 B + OV2640"]
+        Phone["Phone/iPad<br/>(hotspot + browser)"]
+        ESP -- "WiFi hotspot<br/>MJPEG / HTTP" --> Phone
+        Phone -. "First-time: WiFi QR" .-> ESP
+    end
+
+    subgraph PhoneWeb["Phone Web (PWA)"]
+        direction TB
+        Entry{{"Entry selector"}}
+        Entry --> Jump["Jump-in<br/>zero config"]
+        Entry --> Duo["Duolingo<br/>courses+gamification"]
+        Entry --> Demo["Demo Mode<br/>skeleton+FX"]
+
+        Core["Main pipeline<br/>Stream→MP 3D→segment→edge"]
+        Jump --> Core
+        Duo --> Core
+        Demo -. "reuses skeleton" .-> Core
+
+        Gesture["Gesture detector<br/>(reuses Pose kps)"]
+        AutoSet["Auto rep/set state<br/>(peak detection)"]
+        Core --> Gesture
+        Core --> AutoSet
+
+        ClsAdapter["Classifier adapter"]
+        Core --> ClsAdapter
+        Buffer["Local IndexedDB"]
+        Core --> Buffer
+    end
+
+    subgraph Cloud["Cloud main path"]
+        GW["API Gateway"]
+        Cls["Pluggable classifier<br/>SVM→CNN→..."]
+        DTW["DTW engine<br/>3D angles"]
+        User["User / gamification"]
+        DB[("PG + Redis")]
+        GW --> Cls --> DTW
+        GW --> User --> DB
+        DTW --> DB
+    end
+
+    subgraph AdviceCloud["Advice async"]
+        Advice["Coaching advice service"]
+    end
+
+    ClsAdapter -- "keypoints JSON" --> GW
+    GW -- "≤400ms" --> PhoneWeb
+    User -. "trigger" .-> Advice
+    Advice -. "summary" .-> PhoneWeb
+
+    classDef edge fill:#E3F2FD,stroke:#1976D2
+    classDef cloud fill:#FFF3E0,stroke:#F57C00
+    classDef home fill:#F3E5F5,stroke:#7B1FA2
+    classDef advice fill:#E8F5E9,stroke:#2E7D32
+    classDef new fill:#FFF9C4,stroke:#F57F17,stroke-width:2px
+    class ESP,Phone home
+    class Entry,Jump,Duo,Demo,Core,ClsAdapter,Buffer edge
+    class Gesture,AutoSet new
+    class GW,Cls,DTW,User,DB cloud
+    class Advice advice
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">2</span>Body-Pose Gestures (new in v0.3)</h2>
+  <p class="desc">Synthesized from the existing 33 Pose keypoints. <strong>No Hand Landmarker</strong> (extra CPU not worth it).</p>
+  <table>
+    <thead><tr><th>Gesture</th><th>Definition</th><th>Trigger</th></tr></thead>
+    <tbody>
+      <tr><td>Both hands overhead (1.5s)</td><td>Both <code>wrist.y &lt; nose.y</code></td><td>Start / confirm</td></tr>
+      <tr><td>Arms crossed in front (1.5s)</td><td>Wrists cross to opposite shoulder, y ~chest</td><td>End current set</td></tr>
+      <tr><td>One hand overhead</td><td>One-sided <code>wrist.y &lt; nose.y</code></td><td>Pause / resume</td></tr>
+      <tr><td>T-Pose (2s)</td><td>Wrists level with shoulders, spread &gt; 1.5× shoulder width</td><td>Calibrate / reset</td></tr>
+      <tr><td>Point at camera (1s)</td><td><code>wrist.z - shoulder.z &lt; ε</code></td><td>Cycle display</td></tr>
+    </tbody>
+  </table>
+  <p class="desc" style="margin-top:14px;"><strong>Demo Day moment</strong>: presenter raises hands → system starts; crosses arms → system ends. Zero-touch. Expected >98% accuracy, <2% false triggers.</p>
+</section>
+
+<section>
+  <h2><span class="num">3</span>Automatic Rep / Set Detection (new in v0.3)</h2>
+  <p class="desc">Each exercise defines a <strong>key indicator</strong>; we detect periodic extrema to count reps.</p>
+  <div class="mermaid">
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> DetectingStart: "Ready pose" held 1.5s
+    DetectingStart --> InProgress: Indicator starts moving
+    InProgress --> InProgress: Each full period → rep+1
+    InProgress --> Resting: <3s no significant motion
+    Resting --> InProgress: Motion resumes within 5s (same set)
+    Resting --> SetComplete: >5s or end gesture
+    SetComplete --> Idle: Show set summary
+  </div>
+  <table>
+    <thead><tr><th>Exercise</th><th>Key indicator</th><th>One complete rep</th></tr></thead>
+    <tbody>
+      <tr><td>Squat</td><td>Hip midpoint y (3D)</td><td>Low → back to start</td></tr>
+      <tr><td>Pushup</td><td>Chest midpoint y (3D)</td><td>Low → back to start</td></tr>
+      <tr><td>Plank</td><td>(Stable duration)</td><td>Hold ≥ 30s</td></tr>
+      <tr><td>Bicep curl</td><td>Elbow angle</td><td>Extended → flexed → extended</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">4</span>Main-Path Latency (P95 ≤ 400ms)</h2>
+  <p class="desc">Advice generation is not on the main path; it runs async on login / set_end / day_end.</p>
+  <table>
+    <thead><tr><th>Stage</th><th>Budget</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>ESP32 → Phone</td><td>50 ms</td><td>WiFi MJPEG</td></tr>
+      <tr><td>MediaPipe 3D</td><td>30–60 ms</td><td>worldLandmarks</td></tr>
+      <tr><td>Segmentation</td><td>10 ms</td><td>peak detection</td></tr>
+      <tr><td>Phone → Cloud</td><td>80–150 ms</td><td>4G/WiFi</td></tr>
+      <tr><td>Classify + DTW</td><td>80–120 ms</td><td>Classify first, then DTW</td></tr>
+      <tr><td>Cloud → Phone</td><td>80–150 ms</td><td>Same</td></tr>
+      <tr class="highlight"><td>P95 total</td><td>~350 ms</td><td>Safely under 400ms</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">5</span>6-Week Demo Day Sprint</h2>
+  <div class="mermaid">
+gantt
+    title 6-Week Demo Day Sprint (v0.3)
+    dateFormat  YYYY-MM-DD
+    section W1 HW+Pairing
+    ESP32 MJPEG          :a1, 2026-05-01, 5d
+    QR pairing           :a2, after a1, 5d
+    section W2 Edge+Visual
+    MediaPipe 3D         :b1, after a2, 3d
+    Skeleton+templates   :b2, after b1, 4d
+    Demo Mode FX         :b3, after b2, 3d
+    section W3 Core
+    Segment+edge DTW     :c1, after b3, 4d
+    FastAPI+3D-DTW       :c2, after c1, 5d
+    SVM (3 actions)      :c3, after c2, 3d
+    section W4 Interaction
+    Gestures          :d1, after c3, 4d
+    Auto rep/set      :d2, after d1, 4d
+    Jump-in              :d3, after d2, 3d
+    section W5 Duolingo
+    Duolingo UI lite     :e1, after d3, 5d
+    Advice triggers:e2, after e1, 3d
+    English UI           :e3, after e2, 2d
+    section W6 Integration
+    Dual ESP32+iPad      :f1, after e3, 3d
+    Script+backup        :f2, after f1, 2d
+    Rehearsal+bugfix     :f3, after f2, 5d
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">6</span>Key Numbers at a Glance (v0.3)</h2>
+  <div class="kv-grid">
+    <div class="kv accent"><div class="k">Primary goal</div><div class="v">Demo Day in 6 weeks</div></div>
+    <div class="kv accent"><div class="k">Booths</div><div class="v">2 (phone + iPad)</div></div>
+    <div class="kv"><div class="k">Main-path latency</div><div class="v">≤ 400ms (P95)</div></div>
+    <div class="kv"><div class="k">Gestures</div><div class="v">5 (Pose-based)</div></div>
+    <div class="kv"><div class="k">Auto rep count</div><div class="v">peak detection Yes</div></div>
+    <div class="kv"><div class="k">Face recognition</div><div class="v">Not before demo</div></div>
+    <div class="kv"><div class="k">ESP32 load</div><div class="v">MJPEG only</div></div>
+    <div class="kv"><div class="k">DTW input</div><div class="v">14-dim 3D angles</div></div>
+    <div class="kv"><div class="k">View tolerance</div><div class="v">0–45° (single template)</div></div>
+    <div class="kv"><div class="k">Cloud monthly cost</div><div class="v">&lt; $30</div></div>
+    <div class="kv"><div class="k">Scale reserved</div><div class="v">10 → 1000 users</div></div>
+    <div class="kv"><div class="k">Docs</div><div class="v">Canonical KineticLife docs</div></div>
+  </div>
+</section>
+
+<footer>
+  Companion to Architecture_Design_v0.3.md<br>
+  Current KineticLife archive diagram
+</footer>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif',
+      primaryColor: '#e0f2fe',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0284c7',
+      lineColor: '#64748b'
+    },
+    flowchart: { curve: 'basis', padding: 15 },
+    sequence: { actorMargin: 60, boxMargin: 10 }
+  });
+</script>
+</body>
+</html>
