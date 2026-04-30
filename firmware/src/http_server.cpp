@@ -6,7 +6,9 @@
 #include <esp_mac.h>
 #include <Arduino.h>
 #include <WiFi.h>
+#include <lwip/sockets.h>
 #include "camera_init.h"
+#include "debug_log.h"
 #include "status_led.h"
 #include "wifi_qr.h"
 
@@ -64,7 +66,7 @@ static void stream_perf_reset(StreamPerfStats* stats, uint32_t now_ms) {
 
 static void stream_perf_log(StreamPerfStats* stats, const WiFiClient& client,
                             uint32_t now_ms, bool force, bool enabled) {
-    if (!enabled) return;
+    (void)enabled; // always log — perf window is the primary diagnostic tool
     const uint32_t elapsed_ms = now_ms - stats->window_start_ms;
     if (!force && elapsed_ms < STREAM_PERF_LOG_MS) return;
     if (elapsed_ms == 0) return;
@@ -312,6 +314,21 @@ static void handle_stream() {
     s_streaming = true;
     WiFiClient client = server.client();
     client.setNoDelay(true);
+
+    // Prevent client.write() from blocking indefinitely when the browser's TCP
+    // receive buffer is full (e.g. MediaPipe occupying the main thread).
+    // With SO_SNDTIMEO, write() returns after 2s instead of sleeping forever.
+    const int sock_fd = client.fd();
+    if (sock_fd >= 0) {
+        const struct timeval snd_to = { .tv_sec = 2, .tv_usec = 0 };
+        const int r = setsockopt(sock_fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
+        kl_logf("[stream] sndtimeo fd=%d setsockopt_ret=%d\n", sock_fd, r);
+    } else {
+        kl_logln("[stream] sndtimeo_skip fd=-1 — SO_SNDTIMEO not set");
+    }
+    // Arduino-native write timeout as belt-and-suspenders
+    client.setTimeout(2000);
+
     s_stream_count++;
     const bool perf_enabled = server.hasArg("perf") && server.arg("perf") != "0";
     const String remote_ip = client.remoteIP().toString();
@@ -423,11 +440,17 @@ static void handle_stream() {
         if (capture_ms >= STREAM_SLOW_CAPTURE_MS) perf.slow_capture++;
         if (write_ms >= STREAM_SLOW_WRITE_MS) perf.slow_write++;
 
-        // Always warn on slow/short write — TCP backpressure from browser being busy
-        if (write_ms >= STREAM_SLOW_WRITE_MS ||
-            written_header != (size_t)hlen ||
-            written_frame != frame_len ||
-            written_tail != 2) {
+        // Distinguish TCP stall (wrote 0 bytes) from backpressure (slow partial write)
+        if (written_frame == 0) {
+            Serial.printf("[warn] write_stall frame=%lu write_ms=%lu jpeg=%u rssi=%d — TCP buffer full or connection dying\n",
+                          (unsigned long)(frame_id - 1),
+                          (unsigned long)write_ms,
+                          (unsigned)frame_len,
+                          WiFi.RSSI());
+        } else if (write_ms >= STREAM_SLOW_WRITE_MS ||
+                   written_header != (size_t)hlen ||
+                   written_frame != frame_len ||
+                   written_tail != 2) {
             Serial.printf("[warn] write_slow frame=%lu write_ms=%lu jpeg=%u wrote=%u rssi=%d heap_kb=%lu\n",
                           (unsigned long)(frame_id - 1),
                           (unsigned long)write_ms,
