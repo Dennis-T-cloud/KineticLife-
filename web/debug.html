@@ -93,8 +93,7 @@
 <!-- joint angles (14-D per §5) -->
 <div id="angles"></div>
 
-<!-- hidden MJPEG source; canvas reads frames from it -->
-<img id="mjpeg" crossorigin="anonymous" style="display:none" alt="">
+<!-- WebSocket video stream — no img element needed -->
 
 <script type="module">
 import { PoseLandmarker, FilesetResolver, DrawingUtils }
@@ -103,14 +102,12 @@ import { PoseLandmarker, FilesetResolver, DrawingUtils }
 // ── State ──────────────────────────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
 const DEFAULT_URL = "http://fitcam-d37d7c.local";
-let camUrl    = params.get("cam") || localStorage.getItem("kineticlife.camUrl") || DEFAULT_URL;
+let camUrl     = params.get("cam") || localStorage.getItem("kineticlife.camUrl") || DEFAULT_URL;
 let retryTimer = null;
-let streamReady = false;
-// 1×1 transparent GIF — clean disconnect without triggering error event
-const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+let wsConn     = null;        // active WebSocket connection
+let latestBitmap = null;      // most recently decoded ImageBitmap (or null before first frame)
 
 // ── Elements ───────────────────────────────────────────────────────────────
-const img       = document.getElementById("mjpeg");
 const canvas    = document.getElementById("canvas");
 const ctx       = canvas.getContext("2d");
 const statusEl  = document.getElementById("status");
@@ -129,23 +126,66 @@ function tickFps(now) {
   fpsEl.textContent = (fpsHist.length / 3).toFixed(1) + " fps";
 }
 
-// ── Stream control ─────────────────────────────────────────────────────────
+// ── Stream control (WebSocket) ─────────────────────────────────────────────
 function normalizeCamUrl(v) {
   const t = v.trim().replace(/\/+$/, "");
   if (!t) return DEFAULT_URL;
   return /^https?:\/\//i.test(t) ? t : `http://${t}`;
 }
 
+function wsUrl(httpUrl) {
+  return httpUrl.replace(/^http:\/\//i, "ws://") + "/ws";
+}
+
+function openWs() {
+  const url = wsUrl(camUrl);
+  const sock = new WebSocket(url);
+  wsConn = sock;
+  sock.binaryType = "arraybuffer"; // avoid Blob wrapper overhead
+
+  sock.onopen = () => {
+    console.log(`[ws] connected ${url}`);
+    statusEl.textContent = "connected";
+  };
+
+  // Each message is one complete JPEG frame (binary).
+  // createImageBitmap decodes off the main thread → no GC pressure on MediaPipe.
+  sock.onmessage = ({ data }) => {
+    createImageBitmap(new Blob([data], { type: "image/jpeg" })).then(bmp => {
+      if (latestBitmap) latestBitmap.close(); // release GPU-backed memory of previous frame
+      latestBitmap = bmp;
+      tickFps(performance.now());
+    });
+  };
+
+  sock.onclose = () => {
+    if (wsConn !== sock) return; // stale — a newer connect() already took over
+    wsConn = null;
+    console.warn("[ws] closed — retrying in 2 s");
+    statusEl.textContent = "stream closed — retrying in 2 s";
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = setTimeout(applyStream, 2000);
+  };
+
+  sock.onerror = () => {
+    console.error("[ws] error");
+    statusEl.textContent = "WebSocket error";
+  };
+}
+
 function applyStream() {
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-  streamReady = false;
-  img.src = BLANK;           // valid URL → no error event; cancels old stream
+  // Close any existing connection before opening a new one
+  if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
   fpsHist.length = 0;
   fpsEl.textContent = "— fps";
-  setTimeout(() => {
-    streamReady = true;
-    img.src = `${camUrl}/stream?res=320x240&q=20&brightness=0&ts=${Date.now()}`;
-  }, 450);
+
+  // Configure camera first, then open WebSocket.
+  // Errors are silently ignored — if the device is unreachable, the WS will
+  // fail to connect and trigger the retry path via onclose.
+  fetch(`${camUrl}/cam?res=320x240&q=20&brightness=0`, { signal: AbortSignal.timeout(3000) })
+    .catch(() => {})
+    .finally(() => openWs());
 }
 
 function connect(value) {
@@ -156,26 +196,18 @@ function connect(value) {
   applyStream();
 }
 
-img.addEventListener("error", () => {
-  const now = performance.now();
-  console.warn(`[stream] disconnected at ${(now/1000).toFixed(1)}s — retrying in 2s`);
-  statusEl.textContent = `stream failed — retrying in 2 s`;
-  if (retryTimer) clearTimeout(retryTimer);
-  retryTimer = setTimeout(applyStream, 2000);
-});
-
 // ── Camera controls ────────────────────────────────────────────────────────
 document.getElementById("camApply").addEventListener("click", () => connect(camUrlEl.value));
 camUrlEl.addEventListener("keydown", e => { if (e.key === "Enter") connect(camUrlEl.value); });
 
 // ── Navigation ─────────────────────────────────────────────────────────────
 document.getElementById("btnPair").addEventListener("click", () => {
-  img.src = BLANK;
+  if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
   location.href = "./pair.html";
 });
 
 document.getElementById("btnEnd").addEventListener("click", async () => {
-  img.src = BLANK;
+  if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
   statusEl.textContent = "ending session — ESP32 rebooting…";
   try {
     await fetch(`${camUrl}/end`, { method: "POST", mode: "cors", signal: AbortSignal.timeout(3000) });
@@ -444,13 +476,14 @@ function tick(now) {
   const minInterval = Math.max(50, lastDetectMs + 30);
   if (now - lastTick < minInterval) { tickSkipped++; return; }
   lastTick = now;
-  if (!streamReady || !img.complete || img.naturalWidth === 0 || !landmarker) return;
+  if (!latestBitmap || !landmarker) return;
 
-  // Inference canvas always gets the rotated frame
+  // Inference canvas: rotate 90° CW — camera sends 320×240 landscape,
+  // inferCanvas is 120×160 portrait (same 3:4 aspect, scaled down).
   inferCtx.save();
   inferCtx.translate(inferCanvas.width, 0);
   inferCtx.rotate(Math.PI / 2);
-  inferCtx.drawImage(img, 0, 0, inferCanvas.height, inferCanvas.width);
+  inferCtx.drawImage(latestBitmap, 0, 0, inferCanvas.height, inferCanvas.width);
   inferCtx.restore();
 
   // Display canvas: skip drawImage when raw is off (save GPU blit)
@@ -458,7 +491,7 @@ function tick(now) {
     ctx.save();
     ctx.translate(canvas.width, 0);
     ctx.rotate(Math.PI / 2);
-    ctx.drawImage(img, 0, 0, canvas.height, canvas.width);
+    ctx.drawImage(latestBitmap, 0, 0, canvas.height, canvas.width);
     ctx.restore();
   } else {
     ctx.clearRect(0, 0, canvas.width, canvas.height);

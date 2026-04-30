@@ -281,6 +281,7 @@ void setup() {
 
 void loop() {
     http_server_handle();
+    http_server_push_frame();
     status_led_handle();
 
     static unsigned long last_status_ms = 0;
