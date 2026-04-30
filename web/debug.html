@@ -49,6 +49,9 @@
     .an { color: #888; }
     .av { color: #0f0; min-width: 50px; text-align: right; font-variant-numeric: tabular-nums; }
     .av.null { color: #555; }
+    .av.ok   { color: #34d399; }
+    .av.warn { color: #f59e0b; }
+    .av.bad  { color: #f44636; }
 
     @media (max-width: 500px) {
       .bar input { min-width: 120px; }
@@ -69,6 +72,9 @@
   <span id="fps">— fps</span>
   <button id="recBtn">⏺ Record</button>
   <span id="recCount"></span>
+  <button id="loadRefBtn">📂 Ref</button>
+  <input type="file" id="loadRefInput" accept=".json" style="display:none">
+  <span id="refName" style="color:#64748b;font-size:11px;white-space:nowrap">no ref</span>
   <span id="status">loading…</span>
   <button id="btnPair" class="nav">← Pair</button>
   <button id="btnEnd"  class="end">End Session</button>
@@ -81,6 +87,7 @@
   <span class="m"><span class="ml">vis </span><span class="mv" id="mVis">—</span></span>
   <span class="m"><span class="ml">skip </span><span class="mv" id="mSkip">—</span></span>
   <span class="m"><span class="ml">mode </span><span class="mv" id="mMode" style="color:#34d399">COLOR</span></span>
+  <span class="m"><span class="ml">match </span><span class="mv" id="mMatch" style="color:#f59e0b">—</span></span>
 </div>
 
 <!-- joint angles (14-D per §5) -->
@@ -137,7 +144,7 @@ function applyStream() {
   fpsEl.textContent = "— fps";
   setTimeout(() => {
     streamReady = true;
-    img.src = `${camUrl}/stream?res=320x240&q=12&brightness=0&ts=${Date.now()}`;
+    img.src = `${camUrl}/stream?res=320x240&q=20&brightness=0&ts=${Date.now()}`;
   }, 450);
 }
 
@@ -150,6 +157,8 @@ function connect(value) {
 }
 
 img.addEventListener("error", () => {
+  const now = performance.now();
+  console.warn(`[stream] disconnected at ${(now/1000).toFixed(1)}s — retrying in 2s`);
   statusEl.textContent = `stream failed — retrying in 2 s`;
   if (retryTimer) clearTimeout(retryTimer);
   retryTimer = setTimeout(applyStream, 2000);
@@ -269,6 +278,117 @@ recBtn.addEventListener("click", () => {
   }
 });
 
+// ── DTW comparison module ──────────────────────────────────────────────────
+// Extension points for future server-side DTW:
+//   - Replace dtw1d() with a fetch() to /api/dtw
+//   - Replace comparePoseSeries() with a server call that returns the same shape
+//   - DTW_CFG thresholds are tunable without touching logic
+
+const DTW_CFG = {
+  BUFFER_FRAMES: 150,   // rolling live buffer (~10 s @ 15 fps); grows to match ref length
+  COMPARE_EVERY:  20,   // run comparison every N new detected frames
+  GOOD_DEG:        8,   // per-joint avg DTW distance → green
+  WARN_DEG:       18,   // per-joint avg DTW distance → yellow (above = red)
+  SCORE_MAX_DEG:  30,   // distance at which overall score reaches 0 %
+};
+
+let refFrames       = null;               // loaded reference sequence
+let liveBufMax      = DTW_CFG.BUFFER_FRAMES;
+let liveBuffer      = [];                 // rolling buffer of live frames
+let lastJointScores = new Array(14).fill(null); // per-joint DTW distance (°)
+let lastMatchScore  = null;               // 0–100
+let compareTick     = 0;                  // counts frames since last comparison
+
+// 1-D DTW — returns total_path_cost / path_length (normalised, in original units).
+// Uses a flat Float32Array for efficiency; O(n·m) time and space.
+function dtw1d(s, t) {
+  const n = s.length, m = t.length;
+  const W = m + 1;
+  const dp = new Float32Array((n + 1) * W).fill(Infinity);
+  dp[0] = 0;
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      const cost = Math.abs(s[i - 1] - t[j - 1]);
+      dp[i * W + j] = cost + Math.min(
+        dp[(i - 1) * W + j],       // insertion
+        dp[i       * W + j - 1],   // deletion
+        dp[(i - 1) * W + j - 1],   // match
+      );
+    }
+  }
+  // Traceback — count path length for normalisation
+  let i = n, j = m, pathLen = 0;
+  while (i > 0 && j > 0) {
+    pathLen++;
+    const a = dp[(i - 1) * W + j];
+    const b = dp[i       * W + j - 1];
+    const c = dp[(i - 1) * W + j - 1];
+    if (c <= a && c <= b) { i--; j--; }
+    else if (a <= b)       { i--; }
+    else                   { j--; }
+  }
+  return dp[n * W + m] / Math.max(1, pathLen);
+}
+
+// Compare full pose series.
+// ref / query: Array of { joint_angles: number|null[] }
+// Returns { score: 0–100|null, jointDists: (number|null)[], validJoints: number }
+function comparePoseSeries(ref, query) {
+  const N = 14;
+  const jointDists = new Array(N).fill(null);
+  let totalDist = 0, validJoints = 0;
+
+  for (let j = 0; j < N; j++) {
+    const rs = ref  .map(f => f.joint_angles[j]).filter(v => v !== null);
+    const qs = query.map(f => f.joint_angles[j]).filter(v => v !== null);
+    if (rs.length < 4 || qs.length < 4) continue;
+    const d = dtw1d(rs, qs);
+    jointDists[j] = d;
+    totalDist += d;
+    validJoints++;
+  }
+
+  const avgDist = validJoints > 0 ? totalDist / validJoints : Infinity;
+  const score   = validJoints > 0
+    ? Math.max(0, Math.round(100 * (1 - avgDist / DTW_CFG.SCORE_MAX_DEG)))
+    : null;
+
+  return { score, jointDists, validJoints };
+}
+
+// Load reference JSON
+const loadRefBtn   = document.getElementById("loadRefBtn");
+const loadRefInput = document.getElementById("loadRefInput");
+const refNameEl    = document.getElementById("refName");
+const mMatchEl     = document.getElementById("mMatch");
+
+loadRefBtn.addEventListener("click", () => loadRefInput.click());
+loadRefInput.addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!Array.isArray(data) || !data[0]?.joint_angles) throw new Error("bad format");
+      refFrames       = data;
+      liveBufMax      = Math.max(DTW_CFG.BUFFER_FRAMES, Math.round(data.length * 1.3));
+      liveBuffer      = [];
+      lastJointScores = new Array(14).fill(null);
+      lastMatchScore  = null;
+      refNameEl.textContent = `${file.name} (${data.length}f)`;
+      refNameEl.style.color = "#34d399";
+      mMatchEl.textContent  = "—";
+      mMatchEl.style.color  = "#f59e0b";
+    } catch (_) {
+      refNameEl.textContent = "invalid JSON";
+      refNameEl.style.color = "#f44";
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+});
+
 // ── MediaPipe init ─────────────────────────────────────────────────────────
 let landmarker, drawing;
 let lastTick = 0;
@@ -366,8 +486,17 @@ function tick(now) {
     const angles = computeAngles(result.worldLandmarks[0]);
     angles.forEach((val, i) => {
       const el = document.getElementById(`av${i}`);
-      if (val === null) { el.textContent = "—";       el.className = "av null"; }
-      else              { el.textContent = val + "°"; el.className = "av"; }
+      if (val === null) {
+        el.textContent = "—";
+        el.className = "av null";
+      } else {
+        el.textContent = val + "°";
+        const d = lastJointScores[i];
+        if (d === null)                    el.className = "av";
+        else if (d < DTW_CFG.GOOD_DEG)    el.className = "av ok";
+        else if (d < DTW_CFG.WARN_DEG)    el.className = "av warn";
+        else                              el.className = "av bad";
+      }
     });
 
     const skipPct = tickTotal > 0 ? Math.round(tickSkipped / tickTotal * 100) : 0;
@@ -379,6 +508,25 @@ function tick(now) {
     if (recording) {
       frames.push({ frame_id: frameId++, ts_ms: Math.round(now), joint_angles: angles });
       recCount.textContent = `${frames.length} frames`;
+    }
+
+    // Accumulate live buffer for DTW (always, independent of recording)
+    liveBuffer.push({ ts_ms: Math.round(now), joint_angles: angles });
+    if (liveBuffer.length > liveBufMax) liveBuffer.shift();
+
+    // Run comparison every COMPARE_EVERY frames (only when ref is loaded)
+    if (refFrames && ++compareTick >= DTW_CFG.COMPARE_EVERY) {
+      compareTick = 0;
+      const { score, jointDists } = comparePoseSeries(refFrames, liveBuffer);
+      lastMatchScore  = score;
+      lastJointScores = jointDists;
+      if (score === null) {
+        mMatchEl.textContent = "—";
+        mMatchEl.style.color = "#f59e0b";
+      } else {
+        mMatchEl.textContent = score + "%";
+        mMatchEl.style.color = score >= 70 ? "#34d399" : score >= 40 ? "#f59e0b" : "#f44636";
+      }
     }
   } else {
     const skipPct = tickTotal > 0 ? Math.round(tickSkipped / tickTotal * 100) : 0;
