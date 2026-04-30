@@ -13,10 +13,14 @@
            font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     main { width: min(960px, 100%); margin: 0 auto; padding: 24px 16px 40px;
            display: grid; gap: 20px; }
-    h1 { margin: 0; font-size: 34px; line-height: 1.05; letter-spacing: 0; }
+    h1 { margin: 0; font-size: 34px; line-height: 1.05; }
     p { margin: 0; color: #50617c; }
     .version { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px;
                padding: 4px 9px; background: #dff7ed; color: #176043; font-weight: 800; font-size: 12px; }
+    .tabs { display: flex; gap: 4px; border-bottom: 2px solid #dde4ef; }
+    .tab { border: 0; border-bottom: 2px solid transparent; margin-bottom: -2px; background: transparent;
+           padding: 10px 18px; font: inherit; font-weight: 700; color: #50617c; cursor: pointer; }
+    .tab.active { color: #1f6f52; border-bottom-color: #1f6f52; }
     .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 460px); gap: 22px; align-items: start; }
     .form { display: grid; gap: 14px; }
     label { display: grid; gap: 6px; font-weight: 700; color: #2a3953; }
@@ -26,10 +30,13 @@
     button { border: 0; border-radius: 6px; padding: 12px 14px; color: #fff;
              background: #1f6f52; font-weight: 800; cursor: pointer; }
     button.secondary { background: #24324a; }
+    button.outline { background: transparent; border: 1.5px solid #1f6f52; color: #1f6f52; }
     .notice { border: 1px solid #b8d6c8; background: #eef8f3; color: #1f5c43;
               border-radius: 6px; padding: 12px; }
     .warning { border: 1px solid #ead292; background: #fff8e4; color: #76590d;
                border-radius: 6px; padding: 10px; }
+    .error { border: 1px solid #f0a0a0; background: #fff0f0; color: #7a1010;
+             border-radius: 6px; padding: 10px; }
     .qrBox { min-height: 460px; border: 1px solid #dde4ef; border-radius: 8px;
              background: #fff; display: grid; place-items: center; padding: 20px;
              box-shadow: 0 18px 40px rgba(33, 49, 77, 0.12); }
@@ -38,10 +45,19 @@
     pre { margin: 0; white-space: pre-wrap; word-break: break-all; background: #172033;
           color: #dbe7f6; border-radius: 6px; padding: 12px; font-size: 12px; }
     .actions { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+    .direct-card { border: 1px solid #dde4ef; border-radius: 8px; background: #fff;
+                   padding: 24px; max-width: 480px; display: grid; gap: 14px;
+                   box-shadow: 0 4px 16px rgba(33, 49, 77, 0.07); }
+    .probe-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+    .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+                  background: #bac6d8; margin-right: 6px; vertical-align: middle; }
+    .status-dot.ok { background: #1f6f52; }
+    .status-dot.err { background: #c0392b; }
     @media (max-width: 760px) {
       .grid { grid-template-columns: 1fr; }
       .actions { grid-template-columns: 1fr; }
       #qr, #qr canvas, #qr img { width: min(420px, 92vw); height: min(420px, 92vw); }
+      .probe-row { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -49,11 +65,18 @@
   <main>
     <header>
       <p>KineticLife session setup</p>
-      <h1>Pair ESP32 by WiFi QR</h1>
+      <h1>Connect to ESP32</h1>
       <div class="version">Compact QR v3</div>
     </header>
 
-    <section class="grid">
+    <div class="tabs">
+      <button class="tab active" id="tabQr"     onclick="switchTab('qr')">QR Pair</button>
+      <button class="tab"        id="tabConfig"  onclick="switchTab('config')">Config Networks</button>
+      <button class="tab"        id="tabDirect"  onclick="switchTab('direct')">Direct Connect</button>
+    </div>
+
+    <!-- QR Pair tab -->
+    <section id="sectionQr" class="grid">
       <div class="form">
         <label>Hotspot SSID
           <input id="ssid" placeholder="Phone-hotspot-name" autocomplete="off">
@@ -89,21 +112,81 @@
         <div id="qr">Enter SSID</div>
       </div>
     </section>
+
+    <!-- Config Networks tab -->
+    <section id="sectionConfig" style="display:none">
+      <div class="direct-card" style="max-width:560px">
+        <div>
+          <p style="color:#172033; font-weight:700; font-size:16px; margin-bottom:6px">Connect via preset networks</p>
+          <p>ESP32 is in pairing mode. Connect this device to <b>KineticLife-Setup</b> (password: <code>kineticlife</code>), then load the preset networks below.</p>
+        </div>
+
+        <div class="notice" style="font-size:13px">
+          AP address: <code>http://192.168.4.1</code> — or use the buttons below if already on that network.<br>
+          Edit <code>firmware/src/config.h</code> to add more networks, then re-flash.
+        </div>
+
+        <button class="outline" id="cfgLoadBtn">Load preset networks from ESP32</button>
+        <div id="cfgNets" style="display:none; display:grid; gap:8px"></div>
+        <div id="cfgStatus" style="display:none"></div>
+      </div>
+    </section>
+
+    <!-- Direct Connect tab -->
+    <section id="sectionDirect" style="display:none">
+      <div class="direct-card">
+        <div>
+          <p style="color:#172033; font-weight:700; font-size:16px; margin-bottom:6px">ESP32 already on WiFi?</p>
+          <p>Enter its IP or mDNS address and open the camera directly.</p>
+        </div>
+
+        <label>Camera address
+          <div class="probe-row">
+            <input id="directUrl" placeholder="http://fitcam-xxxxxx.local or http://192.168.x.x" autocomplete="off">
+            <button class="outline" id="probeBtn" style="white-space:nowrap">Check</button>
+          </div>
+        </label>
+
+        <div id="probeStatus" style="display:none"></div>
+
+        <div class="notice" style="font-size:13px">
+          mDNS on same network: <code>http://fitcam-d37d7c.local</code><br>
+          IP address: check serial monitor or router DHCP table for <code>80:b5:4e:d3:7d:7c</code>
+        </div>
+
+        <button id="directOpen">Open Camera</button>
+      </div>
+    </section>
   </main>
 
   <script>
-    const ssidEl = document.getElementById("ssid");
-    const typeEl = document.getElementById("type");
-    const passwordEl = document.getElementById("password");
-    const payloadEl = document.getElementById("payload");
-    const warningsEl = document.getElementById("warnings");
-    const qrEl = document.getElementById("qr");
-    const camUrlEl = document.getElementById("camUrl");
+    // ── Tab switching ──────────────────────────────────────────────
+    function switchTab(tab) {
+      document.getElementById("sectionQr").style.display     = tab === "qr"     ? "" : "none";
+      document.getElementById("sectionConfig").style.display = tab === "config"  ? "" : "none";
+      document.getElementById("sectionDirect").style.display = tab === "direct"  ? "" : "none";
+      document.getElementById("tabQr").classList.toggle("active",     tab === "qr");
+      document.getElementById("tabConfig").classList.toggle("active",  tab === "config");
+      document.getElementById("tabDirect").classList.toggle("active",  tab === "direct");
+      localStorage.setItem("kineticlife.pair.tab", tab);
+    }
 
-    ssidEl.value = localStorage.getItem("kineticlife.pair.ssid") || "";
-    typeEl.value = localStorage.getItem("kineticlife.pair.type") || "WPA";
+    const savedTab = localStorage.getItem("kineticlife.pair.tab") || "qr";
+    switchTab(savedTab);
+
+    // ── QR Pair tab ────────────────────────────────────────────────
+    const ssidEl     = document.getElementById("ssid");
+    const typeEl     = document.getElementById("type");
+    const passwordEl = document.getElementById("password");
+    const payloadEl  = document.getElementById("payload");
+    const warningsEl = document.getElementById("warnings");
+    const qrEl       = document.getElementById("qr");
+    const camUrlEl   = document.getElementById("camUrl");
+
+    ssidEl.value    = localStorage.getItem("kineticlife.pair.ssid") || "";
+    typeEl.value    = localStorage.getItem("kineticlife.pair.type") || "WPA";
     passwordEl.value = localStorage.getItem("kineticlife.pair.password") || "";
-    camUrlEl.value = localStorage.getItem("kineticlife.camUrl") || "http://fitcam-d37d7c.local";
+    camUrlEl.value  = localStorage.getItem("kineticlife.camUrl") || "http://fitcam-d37d7c.local";
 
     function compactTypeCode(type) {
       if (type === "nopass") return "N";
@@ -141,14 +224,8 @@
       warningsEl.innerHTML = warnings.map((item) => `<div class="warning">${item}</div>`).join("");
 
       qrEl.innerHTML = "";
-      if (!ssid) {
-        qrEl.textContent = "Enter SSID";
-        return;
-      }
-      if (!window.QRCode) {
-        qrEl.textContent = "QR library failed to load";
-        return;
-      }
+      if (!ssid) { qrEl.textContent = "Enter SSID"; return; }
+      if (!window.QRCode) { qrEl.textContent = "QR library failed to load"; return; }
       new window.QRCode(qrEl, {
         text: payload,
         width: 420,
@@ -167,6 +244,101 @@
       location.href = `./debug.html?cam=${encodeURIComponent(camUrl)}`;
     });
     updateQr();
+
+    // ── Config Networks tab ────────────────────────────────────────
+    const AP_BASE = "http://192.168.4.1";
+    const cfgNetsEl   = document.getElementById("cfgNets");
+    const cfgStatusEl = document.getElementById("cfgStatus");
+
+    function cfgShow(cls, html) {
+      cfgStatusEl.style.display = "";
+      cfgStatusEl.className = cls;
+      cfgStatusEl.innerHTML = html;
+    }
+
+    document.getElementById("cfgLoadBtn").addEventListener("click", async () => {
+      cfgShow("notice", "Contacting ESP32 at 192.168.4.1…");
+      try {
+        const nets = await fetch(AP_BASE + "/config-networks", { signal: AbortSignal.timeout(4000) })
+                           .then(r => r.json());
+        cfgNetsEl.style.display = "grid";
+        cfgNetsEl.innerHTML = nets.map((n, i) =>
+          `<div style="border:1.5px solid #dde4ef;border-radius:7px;padding:11px 14px;
+                       display:flex;justify-content:space-between;align-items:center;gap:10px">
+             <div>
+               <span style="font-weight:700">${n.ssid}</span>
+               <span style="color:#697891;font-size:12px;margin-left:8px">${n.auth}</span>
+             </div>
+             <button onclick="cfgTry(${i},'${n.ssid.replace(/'/g,"\\'")}')"
+                     style="border:0;border-radius:6px;padding:8px 14px;background:#1f6f52;
+                            color:#fff;font:inherit;font-weight:800;cursor:pointer;font-size:13px">
+               Connect
+             </button>
+           </div>`
+        ).join("");
+        cfgShow("notice", `${nets.length} preset network${nets.length !== 1 ? "s" : ""} loaded. Click Connect to use one.`);
+      } catch (e) {
+        cfgShow("warning", "Could not reach 192.168.4.1 — make sure this device is connected to <b>KineticLife-Setup</b>.");
+      }
+    });
+
+    async function cfgTry(idx, ssid) {
+      cfgShow("notice", `Connecting ESP32 to "<b>${ssid}</b>"…`);
+      try {
+        const r = await fetch(`${AP_BASE}/try-config?idx=${idx}`, { signal: AbortSignal.timeout(5000) })
+                        .then(x => x.json());
+        if (!r.ok) { cfgShow("warning", r.error || "Request failed"); return; }
+        cfgPoll();
+      } catch(e) {
+        cfgShow("warning", "Request failed — ESP32 may have already rebooted.");
+      }
+    }
+
+    function cfgPoll() {
+      fetch(`${AP_BASE}/config-status`, { signal: AbortSignal.timeout(3000) })
+        .then(r => r.json())
+        .then(d => {
+          cfgShow(d.state === "connected" ? "notice" : d.state === "failed" ? "warning" : "notice", d.msg);
+          if (d.state === "connecting") setTimeout(cfgPoll, 1200);
+        })
+        .catch(() => {
+          cfgShow("notice", "ESP32 rebooting — reconnect this device to your WiFi network, then use Direct Connect or QR Pair.");
+        });
+    }
+
+    // expose for inline onclick
+    window.cfgTry = cfgTry;
+
+    // ── Direct Connect tab ─────────────────────────────────────────
+    const directUrlEl    = document.getElementById("directUrl");
+    const probeStatusEl  = document.getElementById("probeStatus");
+
+    directUrlEl.value = localStorage.getItem("kineticlife.camUrl") || "http://fitcam-d37d7c.local";
+
+    document.getElementById("probeBtn").addEventListener("click", async () => {
+      const url = normalizeCamUrl(directUrlEl.value);
+      probeStatusEl.style.display = "";
+      probeStatusEl.innerHTML = `<span class="status-dot"></span>Checking ${url} …`;
+      try {
+        const r = await fetch(url + "/hello", { signal: AbortSignal.timeout(4000) });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const d = await r.json();
+        probeStatusEl.innerHTML =
+          `<div class="notice"><span class="status-dot ok"></span>` +
+          `Connected · device <b>${d.device_id}</b> · ${d.cam_model || "camera"} · fw ${d.fw_version}</div>`;
+        localStorage.setItem("kineticlife.camUrl", url);
+      } catch (e) {
+        probeStatusEl.innerHTML =
+          `<div class="error"><span class="status-dot err"></span>` +
+          `No response from <b>${url}</b> — make sure this device is on the same WiFi network and ESP32 is in READY state.</div>`;
+      }
+    });
+
+    document.getElementById("directOpen").addEventListener("click", () => {
+      const url = normalizeCamUrl(directUrlEl.value);
+      localStorage.setItem("kineticlife.camUrl", url);
+      location.href = `./debug.html?cam=${encodeURIComponent(url)}`;
+    });
   </script>
 </body>
 </html>

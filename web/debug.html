@@ -11,7 +11,8 @@
 
     #canvas { display: block; background: #000;
               width: min(100vw, calc(80dvh * 3 / 4));
-              aspect-ratio: 3 / 4; }
+              aspect-ratio: 3 / 4;
+              }
 
     /* ── top bar ── */
     .bar { padding: 5px 10px; width: 100%; background: #1e1e1e;
@@ -30,8 +31,15 @@
     button.end { border-color: #c0392b; color: #c0392b; }
     #fps      { color: #34d399; font-size: 11px; white-space: nowrap; }
     #recCount { color: #f59e0b; font-size: 11px; }
-    #status   { color: #94a3b8; font-size: 11px; white-space: nowrap;
-                flex: 1; overflow: hidden; text-overflow: ellipsis; }
+    #status   { display: none; } /* moved to #metrics */
+
+    /* ── metrics bar ── */
+    #metrics { width: 100%; padding: 5px 10px; background: #161616;
+               border-bottom: 1px solid #2b2b2b;
+               display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
+    .m  { font-size: 12px; white-space: nowrap; }
+    .ml { color: #64748b; }
+    .mv { color: #e2e8f0; font-weight: bold; }
 
     /* ── joint angles ── */
     #angles { width: 100%; padding: 6px 10px; display: grid;
@@ -64,6 +72,15 @@
   <span id="status">loading…</span>
   <button id="btnPair" class="nav">← Pair</button>
   <button id="btnEnd"  class="end">End Session</button>
+</div>
+
+<!-- metrics bar -->
+<div id="metrics">
+  <span class="m"><span class="ml">detect </span><span class="mv" id="mDetect">—</span></span>
+  <span class="m"><span class="ml">avg </span><span class="mv" id="mAvg">—</span></span>
+  <span class="m"><span class="ml">vis </span><span class="mv" id="mVis">—</span></span>
+  <span class="m"><span class="ml">skip </span><span class="mv" id="mSkip">—</span></span>
+  <span class="m"><span class="ml">mode </span><span class="mv" id="mMode" style="color:#34d399">COLOR</span></span>
 </div>
 
 <!-- joint angles (14-D per §5) -->
@@ -309,18 +326,23 @@ function tick(now) {
   lastTick = now;
   if (!streamReady || !img.complete || img.naturalWidth === 0 || !landmarker) return;
 
-  // Rotate 90° CW: landscape 320×240 from camera → portrait 240×320 display
-  ctx.save();
-  ctx.translate(canvas.width, 0);
-  ctx.rotate(Math.PI / 2);
-  ctx.drawImage(img, 0, 0, canvas.height, canvas.width);
-  ctx.restore();
-
+  // Inference canvas always gets the rotated frame
   inferCtx.save();
   inferCtx.translate(inferCanvas.width, 0);
   inferCtx.rotate(Math.PI / 2);
   inferCtx.drawImage(img, 0, 0, inferCanvas.height, inferCanvas.width);
   inferCtx.restore();
+
+  // Display canvas: skip drawImage when raw is off (save GPU blit)
+  if (showVideo.checked) {
+    ctx.save();
+    ctx.translate(canvas.width, 0);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(img, 0, 0, canvas.height, canvas.width);
+    ctx.restore();
+  } else {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
 
   const t0 = performance.now();
   const result = landmarker.detectForVideo(inferCanvas, t0);
@@ -330,11 +352,6 @@ function tick(now) {
   detectHist.push(lastDetectMs);
   if (detectHist.length > 20) detectHist.shift();
   const detectAvg = Math.round(detectHist.reduce((a, b) => a + b, 0) / detectHist.length);
-
-  if (!showVideo.checked) {
-    ctx.fillStyle = "#111";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
 
   tickFps(now);
 
@@ -354,7 +371,10 @@ function tick(now) {
     });
 
     const skipPct = tickTotal > 0 ? Math.round(tickSkipped / tickTotal * 100) : 0;
-    statusEl.textContent = `pose ✓  ${lastDetectMs}ms avg:${detectAvg}ms  vis:${visCount}/33  skip:${skipPct}%`;
+    document.getElementById("mDetect").textContent = lastDetectMs + "ms";
+    document.getElementById("mAvg").textContent    = detectAvg + "ms";
+    document.getElementById("mVis").textContent    = visCount + "/33";
+    document.getElementById("mSkip").textContent   = skipPct + "%";
 
     if (recording) {
       frames.push({ frame_id: frameId++, ts_ms: Math.round(now), joint_angles: angles });
@@ -362,7 +382,10 @@ function tick(now) {
     }
   } else {
     const skipPct = tickTotal > 0 ? Math.round(tickSkipped / tickTotal * 100) : 0;
-    statusEl.textContent = `no pose  ${lastDetectMs}ms avg:${detectAvg}ms  skip:${skipPct}%`;
+    document.getElementById("mDetect").textContent = lastDetectMs + "ms";
+    document.getElementById("mAvg").textContent    = detectAvg + "ms";
+    document.getElementById("mVis").textContent    = "—";
+    document.getElementById("mSkip").textContent   = skipPct + "%";
   }
 }
 

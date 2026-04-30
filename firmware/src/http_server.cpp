@@ -453,10 +453,10 @@ static void handle_stream() {
         status_led_handle();
         stream_perf_log(&perf, client, millis(), false, perf_enabled);
 
-        // Target 50ms/frame (20fps). Web adaptive tick (max(50, detectMs+30)) keeps
-        // TCP buffer drained — if detect spikes, tick backs off automatically.
+        // Target 67ms/frame (15fps). Lower rate reduces TCP pressure and gives the
+        // WiFi stack more airtime — MediaPipe is still smooth at 15fps.
         const uint32_t loop_elapsed_ms = millis() - loop_start_ms;
-        const uint32_t target_ms = 50;
+        const uint32_t target_ms = 67;
         delay(loop_elapsed_ms < target_ms ? target_ms - loop_elapsed_ms : 10);
     }
 

@@ -6,6 +6,7 @@
 #include "debug_log.h"
 #include "http_server.h"
 #include "status_led.h"
+#include "wifi_ap_config.h"
 #include "wifi_qr.h"
 
 #ifndef KINETICLIFE_FW_VERSION
@@ -70,6 +71,7 @@ static bool connect_wifi(const WifiCredentials& creds) {
             creds.auth_type.c_str());
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(false);
+    WiFi.setTxPower(WIFI_POWER_19_5dBm); // max TX power for 2m+ range stability
     WiFi.disconnect(false);
     delay(500);
     // Scan removed: iOS hides hotspot SSID when screen is off, causing
@@ -137,7 +139,11 @@ static bool connect_wifi(const WifiCredentials& creds) {
 static void run_pairing_mode() {
     status_led_set(DEVICE_STATE_PAIRING);
     kl_logln("[state] pairing reason=no_active_session");
-    kl_logln("[pair] show pair.html QR to camera; adjust distance until span_px is roughly 100-200");
+
+    // Start soft AP so pair.html Config tab can connect without QR scan
+    wifi_ap_config_start();
+    kl_logf("[pair] options: (1) show QR to camera  (2) connect to '%s'/kineticlife -> open http://192.168.4.1\n",
+            wifi_ap_config_ssid());
 
     const unsigned long qr_camera_start_ms = millis();
     if (!camera_init_qr()) {
@@ -155,29 +161,51 @@ static void run_pairing_mode() {
 
     while (true) {
         status_led_handle();
-        WifiCredentials scanned;
-        if (!wifi_scan_qr_once(&scanned)) {
+        wifi_ap_config_poll();
+
+        // Config-network path: user selected a network in pair.html
+        WifiCredentials cfg_creds;
+        if (wifi_ap_config_get_credentials(&cfg_creds)) {
+            wifi_ap_config_stop();
+            kl_logf("[pair] config_connect ssid=\"%s\"\n", cfg_creds.ssid.c_str());
+            if (wifi_save_credentials(cfg_creds)) {
+                kl_logln("[session] active_session_saved action=reboot_to_camera");
+                delay(500);
+                ESP.restart();
+            } else {
+                kl_logln("[pair] nvs_save_failed action=resume");
+                status_led_set(DEVICE_STATE_ERROR);
+                delay(2000);
+                wifi_ap_config_start();
+                status_led_set(DEVICE_STATE_PAIRING);
+            }
             continue;
         }
 
+        // QR path: skip camera scan while config is actively connecting
+        if (wifi_ap_config_is_connecting()) continue;
+
+        WifiCredentials scanned;
+        if (!wifi_scan_qr_once(&scanned)) continue;
+
         kl_logf("[pair] qr_parsed ssid=\"%s\" auth=%s\n",
-                scanned.ssid.c_str(),
-                scanned.auth_type.c_str());
+                scanned.ssid.c_str(), scanned.auth_type.c_str());
+        wifi_ap_config_stop();
         if (!connect_wifi(scanned)) {
             kl_logln("[pair] connect_failed action=resume_scanning");
             delay(2000);
+            wifi_ap_config_start();
             status_led_set(DEVICE_STATE_PAIRING);
             continue;
         }
-
         if (!wifi_save_credentials(scanned)) {
             kl_logln("[pair] nvs_save_failed action=resume_scanning");
             status_led_set(DEVICE_STATE_ERROR);
             delay(2000);
+            wifi_ap_config_start();
             status_led_set(DEVICE_STATE_PAIRING);
             continue;
         }
-
         kl_logln("[session] active_session_saved action=reboot_to_camera");
         delay(1000);
         ESP.restart();
