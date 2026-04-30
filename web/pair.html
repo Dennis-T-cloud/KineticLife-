@@ -164,7 +164,7 @@
     document.getElementById("openCam").addEventListener("click", () => {
       const camUrl = normalizeCamUrl(camUrlEl.value);
       localStorage.setItem("kineticlife.camUrl", camUrl);
-      location.href = `./cam.html?cam=${encodeURIComponent(camUrl)}`;
+      location.href = `./debug.html?cam=${encodeURIComponent(camUrl)}`;
     });
     updateQr();
   </script>

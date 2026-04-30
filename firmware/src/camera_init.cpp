@@ -48,6 +48,7 @@ static const char* pixel_format_name(pixformat_t pixel_format) {
 static bool camera_init_with(pixformat_t pixel_format, framesize_t frame_size,
                              int jpeg_quality, int fb_count,
                              camera_fb_location_t fb_location) {
+    const unsigned long init_start_ms = millis();
     camera_config_t config;
     config.ledc_channel = LEDC_CHANNEL_0;
     config.ledc_timer   = LEDC_TIMER_0;
@@ -99,13 +100,17 @@ static bool camera_init_with(pixformat_t pixel_format, framesize_t frame_size,
     s_pixel_format = pixel_format;
     s_jpeg_quality = jpeg_quality;
 
-    kl_logf("[camera] mode=%s format=%s frame=%s quality=%d fb_count=%d fb=%s\n",
+    kl_logf("[camera] mode=%s format=%s frame=%s quality=%d fb_count=%d fb=%s init_ms=%lu heap_kb=%lu psram_free_kb=%lu psram_size_kb=%lu\n",
             s_camera_mode,
             pixel_format_name(pixel_format),
             frame_size_name(frame_size),
             jpeg_quality,
             fb_count,
-            fb_location == CAMERA_FB_IN_PSRAM ? "PSRAM" : "DRAM");
+            fb_location == CAMERA_FB_IN_PSRAM ? "PSRAM" : "DRAM",
+            millis() - init_start_ms,
+            (unsigned long)(ESP.getFreeHeap() / 1024),
+            (unsigned long)(ESP.getFreePsram() / 1024),
+            (unsigned long)(ESP.getPsramSize() / 1024));
     return true;
 }
 
@@ -117,6 +122,7 @@ bool camera_set_framesize(const char* size_str) {
     else if (strcmp(size_str, "240x240") == 0) fs = FRAMESIZE_240X240;
     else if (strcmp(size_str, "320x240") == 0) fs = FRAMESIZE_QVGA;
     if (fs == FRAMESIZE_INVALID) return false;
+    if (fs == s_frame_size) return true;
     s->set_framesize(s, fs);
     s_frame_size = fs;
     return true;
@@ -124,6 +130,7 @@ bool camera_set_framesize(const char* size_str) {
 
 bool camera_set_quality(int q) {
     if (q < 4 || q > 63) return false;
+    if (q == s_jpeg_quality) return true;
     sensor_t* s = esp_camera_sensor_get();
     if (!s) return false;
     s->set_quality(s, q);
@@ -135,7 +142,9 @@ bool camera_init() {
     s_camera_mode = "stream";
     // fb_count=2 in PSRAM: camera DMA uses the SPI bus, WiFi DMA stays on
     // internal bus — eliminates the throughput collision that caused ~0.3 FPS.
-    return camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_240X240, 15, 2,
+    // QVGA (320x240) uses a wider crop of the OV3660 sensor → larger FOV at 1m.
+    // OV3660 at q=12 produces smaller JPEG than OV2640 q=15 at comparable quality.
+    return camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_QVGA, 12, 2,
                             CAMERA_FB_IN_PSRAM);
 }
 

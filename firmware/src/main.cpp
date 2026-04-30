@@ -63,6 +63,7 @@ static void log_wifi_scan_for_target(const String& target_ssid) {
 }
 
 static bool connect_wifi(const WifiCredentials& creds) {
+    const unsigned long connect_start_ms = millis();
     status_led_set(DEVICE_STATE_CONNECTING);
     kl_logf("[wifi] connecting ssid=\"%s\" auth=%s\n",
             creds.ssid.c_str(),
@@ -121,6 +122,15 @@ static bool connect_wifi(const WifiCredentials& creds) {
         return false;
     }
 
+    kl_logf("[perf] wifi_connect_ms=%lu ssid=\"%s\" ip=%s rssi=%d channel=%d attempts=%d heap_kb=%lu psram_kb=%lu\n",
+            millis() - connect_start_ms,
+            creds.ssid.c_str(),
+            WiFi.localIP().toString().c_str(),
+            WiFi.RSSI(),
+            WiFi.channel(),
+            attempts,
+            (unsigned long)(ESP.getFreeHeap() / 1024),
+            (unsigned long)(ESP.getFreePsram() / 1024));
     return true;
 }
 
@@ -129,11 +139,19 @@ static void run_pairing_mode() {
     kl_logln("[state] pairing reason=no_active_session");
     kl_logln("[pair] show pair.html QR to camera; adjust distance until span_px is roughly 100-200");
 
+    const unsigned long qr_camera_start_ms = millis();
     if (!camera_init_qr()) {
         status_led_set(DEVICE_STATE_FATAL);
         kl_logln("[fatal] camera_init_failed mode=pairing");
         while (true) delay(1000);
     }
+    kl_logf("[perf] qr_camera_init_ms=%lu mode=%s format=%s frame=%s heap_kb=%lu psram_kb=%lu\n",
+            millis() - qr_camera_start_ms,
+            camera_mode_name(),
+            camera_pixel_format_name(),
+            camera_frame_size_name(),
+            (unsigned long)(ESP.getFreeHeap() / 1024),
+            (unsigned long)(ESP.getFreePsram() / 1024));
 
     while (true) {
         status_led_handle();
@@ -167,6 +185,7 @@ static void run_pairing_mode() {
 }
 
 void setup() {
+    const unsigned long setup_start_ms = millis();
     Serial.begin(115200);
     unsigned long serial_wait_start = millis();
     while (!Serial && millis() - serial_wait_start < 3000) {
@@ -178,26 +197,41 @@ void setup() {
     status_led_begin();
 
     kl_logf("\n\n[boot] KineticLife firmware=%s\n", KINETICLIFE_FW_VERSION);
-    kl_logf("[boot] board=\"%s\" camera=\"%s\" heap_kb=%lu psram_kb=%lu\n",
+    kl_logf("[boot] board=\"%s\" camera=\"%s\" cpu_mhz=%lu flash_mb=%lu heap_kb=%lu psram_kb=%lu psram_size_kb=%lu\n",
             KINETICLIFE_BOARD_MODEL,
             KINETICLIFE_CAMERA_MODEL,
+            (unsigned long)ESP.getCpuFreqMHz(),
+            (unsigned long)(ESP.getFlashChipSize() / (1024 * 1024)),
             (unsigned long)(ESP.getFreeHeap() / 1024),
-            (unsigned long)(ESP.getFreePsram() / 1024));
+            (unsigned long)(ESP.getFreePsram() / 1024),
+            (unsigned long)(ESP.getPsramSize() / 1024));
 
     WifiCredentials creds;
+    const unsigned long nvs_start_ms = millis();
     if (!wifi_load_credentials(&creds)) {
+        kl_logf("[perf] nvs_load_ms=%lu active_session=0\n", millis() - nvs_start_ms);
         kl_logln("[boot] no_saved_wifi action=start_qr_pairing");
         run_pairing_mode();
     }
+    kl_logf("[perf] nvs_load_ms=%lu active_session=1\n", millis() - nvs_start_ms);
     kl_logf("[session] active_session_loaded ssid=\"%s\" auth=%s\n",
             creds.ssid.c_str(),
             creds.auth_type.c_str());
 
+    const unsigned long camera_start_ms = millis();
     if (!camera_init()) {
         status_led_set(DEVICE_STATE_FATAL);
         kl_logln("[fatal] camera_init_failed mode=stream check_pin_mapping=Freenove_FNK0085_B");
         while (true) delay(1000);
     }
+    kl_logf("[perf] camera_init_ms=%lu mode=%s format=%s frame=%s q=%d heap_kb=%lu psram_kb=%lu\n",
+            millis() - camera_start_ms,
+            camera_mode_name(),
+            camera_pixel_format_name(),
+            camera_frame_size_name(),
+            camera_jpeg_quality(),
+            (unsigned long)(ESP.getFreeHeap() / 1024),
+            (unsigned long)(ESP.getFreePsram() / 1024));
 
     if (!connect_wifi(creds)) {
         kl_logln("[session] active_session_invalid action=clear_and_reboot_to_pairing");
@@ -206,8 +240,14 @@ void setup() {
         ESP.restart();
     }
 
+    const unsigned long http_start_ms = millis();
     http_server_start(KINETICLIFE_FW_VERSION, KINETICLIFE_BOARD_MODEL,
                       KINETICLIFE_CAMERA_MODEL);
+    kl_logf("[perf] http_start_ms=%lu setup_total_ms=%lu heap_kb=%lu psram_kb=%lu\n",
+            millis() - http_start_ms,
+            millis() - setup_start_ms,
+            (unsigned long)(ESP.getFreeHeap() / 1024),
+            (unsigned long)(ESP.getFreePsram() / 1024));
     status_led_set(DEVICE_STATE_READY);
 }
 
