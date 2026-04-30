@@ -105,7 +105,9 @@ const DEFAULT_URL = "http://fitcam-d37d7c.local";
 let camUrl     = params.get("cam") || localStorage.getItem("kineticlife.camUrl") || DEFAULT_URL;
 let retryTimer = null;
 let wsConn     = null;        // active WebSocket connection
-let latestBitmap = null;      // most recently decoded ImageBitmap (or null before first frame)
+let latestBitmap  = null;     // most recently decoded ImageBitmap
+let decodePending = false;    // true while createImageBitmap() is in flight
+let pendingData   = null;     // newest raw bytes waiting for a decode slot
 
 // ── Elements ───────────────────────────────────────────────────────────────
 const canvas    = document.getElementById("canvas");
@@ -137,25 +139,40 @@ function wsUrl(httpUrl) {
   return httpUrl.replace(/^http:\/\//i, "ws://") + "/ws";
 }
 
+// Decode one raw JPEG ArrayBuffer → latestBitmap.
+// At most one decode is in flight at a time. If a new frame arrives while decoding,
+// it is stored in pendingData (overwriting any earlier pending frame) and drained
+// immediately once the current decode completes. This ensures the pipeline always
+// shows the newest frame and never queues more than one extra, preventing latency creep.
+function startDecode(data) {
+  decodePending = true;
+  pendingData   = null;
+  createImageBitmap(new Blob([data], { type: "image/jpeg" })).then(bmp => {
+    if (latestBitmap) latestBitmap.close(); // release previous GPU texture
+    latestBitmap = bmp;
+    tickFps(performance.now());             // fps = actual network delivery rate
+    decodePending = false;
+    if (pendingData) startDecode(pendingData); // drain one-frame backlog
+  });
+}
+
 function openWs() {
   const url = wsUrl(camUrl);
   const sock = new WebSocket(url);
   wsConn = sock;
-  sock.binaryType = "arraybuffer"; // avoid Blob wrapper overhead
+  sock.binaryType = "arraybuffer";
 
   sock.onopen = () => {
     console.log(`[ws] connected ${url}`);
     statusEl.textContent = "connected";
   };
 
-  // Each message is one complete JPEG frame (binary).
-  // createImageBitmap decodes off the main thread → no GC pressure on MediaPipe.
   sock.onmessage = ({ data }) => {
-    createImageBitmap(new Blob([data], { type: "image/jpeg" })).then(bmp => {
-      if (latestBitmap) latestBitmap.close(); // release GPU-backed memory of previous frame
-      latestBitmap = bmp;
-      tickFps(performance.now());
-    });
+    if (decodePending) {
+      pendingData = data; // overwrite: latest frame wins, intermediate frames dropped
+      return;
+    }
+    startDecode(data);
   };
 
   sock.onclose = () => {
@@ -310,89 +327,94 @@ recBtn.addEventListener("click", () => {
   }
 });
 
-// ── DTW comparison module ──────────────────────────────────────────────────
-// Extension points for future server-side DTW:
-//   - Replace dtw1d() with a fetch() to /api/dtw
-//   - Replace comparePoseSeries() with a server call that returns the same shape
-//   - DTW_CFG thresholds are tunable without touching logic
-
+// ── DTW config ─────────────────────────────────────────────────────────────
 const DTW_CFG = {
-  BUFFER_FRAMES: 150,   // rolling live buffer (~10 s @ 15 fps); grows to match ref length
-  COMPARE_EVERY:  20,   // run comparison every N new detected frames
-  GOOD_DEG:        8,   // per-joint avg DTW distance → green
-  WARN_DEG:       18,   // per-joint avg DTW distance → yellow (above = red)
-  SCORE_MAX_DEG:  30,   // distance at which overall score reaches 0 %
+  WINDOW_SIZE:   60,  // fixed sliding window — ~6.5 s at the ~9 fps camera rate
+  COMPARE_EVERY: 15,  // dispatch to worker every N valid detected poses
+  GOOD_DEG:       8,  // per-joint avg DTW distance → green
+  WARN_DEG:      18,  // per-joint avg DTW distance → yellow (above = red)
+  SCORE_MAX_DEG: 30,  // distance at which overall score reaches 0 %
 };
 
-let refFrames       = null;               // loaded reference sequence
-let liveBufMax      = DTW_CFG.BUFFER_FRAMES;
-let liveBuffer      = [];                 // rolling buffer of live frames
-let lastJointScores = new Array(14).fill(null); // per-joint DTW distance (°)
-let lastMatchScore  = null;               // 0–100
-let compareTick     = 0;                  // counts frames since last comparison
+// ── DTW state ──────────────────────────────────────────────────────────────
+let refFrames       = null;
+let dtwBusy         = false;     // worker is processing — skip new dispatches until done
+let compareTick     = 0;
+let lastJointScores = new Array(14).fill(null);
+let lastMatchScore  = null;
 
-// 1-D DTW — returns total_path_cost / path_length (normalised, in original units).
-// Uses a flat Float32Array for efficiency; O(n·m) time and space.
-function dtw1d(s, t) {
-  const n = s.length, m = t.length;
-  const W = m + 1;
-  const dp = new Float32Array((n + 1) * W).fill(Infinity);
-  dp[0] = 0;
-  for (let i = 1; i <= n; i++) {
-    for (let j = 1; j <= m; j++) {
-      const cost = Math.abs(s[i - 1] - t[j - 1]);
-      dp[i * W + j] = cost + Math.min(
-        dp[(i - 1) * W + j],       // insertion
-        dp[i       * W + j - 1],   // deletion
-        dp[(i - 1) * W + j - 1],   // match
-      );
-    }
+// ── DTW Web Worker (inlined Blob — no separate .js file required) ──────────
+// Runs the O(N²) DTW computation off the main thread so it cannot stutter
+// video rendering or MediaPipe inference regardless of pose sequence length.
+const _DTW_SRC = `
+function dtw1d(s,t){
+  const n=s.length,m=t.length,W=m+1;
+  const dp=new Float32Array((n+1)*W).fill(Infinity);
+  dp[0]=0;
+  for(let i=1;i<=n;i++) for(let j=1;j<=m;j++){
+    const c=Math.abs(s[i-1]-t[j-1]);
+    dp[i*W+j]=c+Math.min(dp[(i-1)*W+j],dp[i*W+j-1],dp[(i-1)*W+j-1]);
   }
-  // Traceback — count path length for normalisation
-  let i = n, j = m, pathLen = 0;
-  while (i > 0 && j > 0) {
-    pathLen++;
-    const a = dp[(i - 1) * W + j];
-    const b = dp[i       * W + j - 1];
-    const c = dp[(i - 1) * W + j - 1];
-    if (c <= a && c <= b) { i--; j--; }
-    else if (a <= b)       { i--; }
-    else                   { j--; }
+  let i=n,j=m,len=0;
+  while(i>0&&j>0){len++;const a=dp[(i-1)*W+j],b=dp[i*W+j-1],c=dp[(i-1)*W+j-1];
+    if(c<=a&&c<=b){i--;j--;}else if(a<=b){i--;}else{j--;}}
+  return dp[n*W+m]/Math.max(1,len);
+}
+self.onmessage=({data})=>{
+  const{ref,query,scoreMax}=data,N=14,dists=new Array(N).fill(null);
+  let total=0,valid=0;
+  for(let j=0;j<N;j++){
+    const rs=ref.map(f=>f.joint_angles[j]).filter(v=>v!==null);
+    const qs=query.map(f=>f.joint_angles[j]).filter(v=>v!==null);
+    if(rs.length<4||qs.length<4) continue;
+    const d=dtw1d(rs,qs);dists[j]=d;total+=d;valid++;
   }
-  return dp[n * W + m] / Math.max(1, pathLen);
+  const avg=valid>0?total/valid:Infinity;
+  self.postMessage({
+    score:valid>0?Math.max(0,Math.round(100*(1-avg/scoreMax))):null,
+    jointDists:dists,validJoints:valid
+  });
+};`;
+const dtwWorker = new Worker(
+  URL.createObjectURL(new Blob([_DTW_SRC], { type: "application/javascript" }))
+);
+dtwWorker.onmessage = ({ data }) => {
+  dtwBusy        = false;
+  lastMatchScore  = data.score;
+  lastJointScores = data.jointDists;
+  const el = document.getElementById("mMatch");
+  if (lastMatchScore === null) {
+    el.textContent = "—"; el.style.color = "#f59e0b";
+  } else {
+    el.textContent  = lastMatchScore + "%";
+    el.style.color  = lastMatchScore >= 70 ? "#34d399" : lastMatchScore >= 40 ? "#f59e0b" : "#f44636";
+  }
+};
+
+// ── Sliding window buffer (fixed-size circular) ────────────────────────────
+// Stores the last WINDOW_SIZE pose frames in chronological order.
+// Frames with fewer than 8 visible joints are discarded as noise.
+const slideWindow = new Array(DTW_CFG.WINDOW_SIZE).fill(null);
+let slideHead  = 0;   // next write position
+let slideCount = 0;   // valid entries (ramps up until window is full)
+
+function pushToWindow(angles, ts_ms) {
+  if (angles.filter(a => a !== null).length < 8) return; // skip low-visibility frame
+  slideWindow[slideHead] = { ts_ms, joint_angles: angles };
+  slideHead = (slideHead + 1) % DTW_CFG.WINDOW_SIZE;
+  if (slideCount < DTW_CFG.WINDOW_SIZE) slideCount++;
 }
 
-// Compare full pose series.
-// ref / query: Array of { joint_angles: number|null[] }
-// Returns { score: 0–100|null, jointDists: (number|null)[], validJoints: number }
-function comparePoseSeries(ref, query) {
-  const N = 14;
-  const jointDists = new Array(N).fill(null);
-  let totalDist = 0, validJoints = 0;
-
-  for (let j = 0; j < N; j++) {
-    const rs = ref  .map(f => f.joint_angles[j]).filter(v => v !== null);
-    const qs = query.map(f => f.joint_angles[j]).filter(v => v !== null);
-    if (rs.length < 4 || qs.length < 4) continue;
-    const d = dtw1d(rs, qs);
-    jointDists[j] = d;
-    totalDist += d;
-    validJoints++;
-  }
-
-  const avgDist = validJoints > 0 ? totalDist / validJoints : Infinity;
-  const score   = validJoints > 0
-    ? Math.max(0, Math.round(100 * (1 - avgDist / DTW_CFG.SCORE_MAX_DEG)))
-    : null;
-
-  return { score, jointDists, validJoints };
+function getWindowSlice() {
+  // Return frames in chronological order (oldest → newest)
+  if (slideCount < DTW_CFG.WINDOW_SIZE) return slideWindow.slice(0, slideCount);
+  return [...slideWindow.slice(slideHead), ...slideWindow.slice(0, slideHead)];
 }
 
-// Load reference JSON
+// ── Load reference for DTW ─────────────────────────────────────────────────
 const loadRefBtn   = document.getElementById("loadRefBtn");
 const loadRefInput = document.getElementById("loadRefInput");
 const refNameEl    = document.getElementById("refName");
-const mMatchEl     = document.getElementById("mMatch");
 
 loadRefBtn.addEventListener("click", () => loadRefInput.click());
 loadRefInput.addEventListener("change", e => {
@@ -403,15 +425,14 @@ loadRefInput.addEventListener("change", e => {
     try {
       const data = JSON.parse(ev.target.result);
       if (!Array.isArray(data) || !data[0]?.joint_angles) throw new Error("bad format");
-      refFrames       = data;
-      liveBufMax      = Math.max(DTW_CFG.BUFFER_FRAMES, Math.round(data.length * 1.3));
-      liveBuffer      = [];
+      refFrames = data;
+      slideWindow.fill(null); slideHead = 0; slideCount = 0; // reset window on new ref
       lastJointScores = new Array(14).fill(null);
       lastMatchScore  = null;
       refNameEl.textContent = `${file.name} (${data.length}f)`;
       refNameEl.style.color = "#34d399";
-      mMatchEl.textContent  = "—";
-      mMatchEl.style.color  = "#f59e0b";
+      const mEl = document.getElementById("mMatch");
+      mEl.textContent = "—"; mEl.style.color = "#f59e0b";
     } catch (_) {
       refNameEl.textContent = "invalid JSON";
       refNameEl.style.color = "#f44";
@@ -506,8 +527,6 @@ function tick(now) {
   if (detectHist.length > 20) detectHist.shift();
   const detectAvg = Math.round(detectHist.reduce((a, b) => a + b, 0) / detectHist.length);
 
-  tickFps(now);
-
   if (result.landmarks.length > 0) {
     drawing.drawConnectors(result.landmarks[0], PoseLandmarker.POSE_CONNECTIONS,
                            { color: "#00ff88", lineWidth: 3 });
@@ -543,23 +562,15 @@ function tick(now) {
       recCount.textContent = `${frames.length} frames`;
     }
 
-    // Accumulate live buffer for DTW (always, independent of recording)
-    liveBuffer.push({ ts_ms: Math.round(now), joint_angles: angles });
-    if (liveBuffer.length > liveBufMax) liveBuffer.shift();
+    // Push pose to fixed sliding window (visibility-filtered)
+    pushToWindow(angles, Math.round(now));
 
-    // Run comparison every COMPARE_EVERY frames (only when ref is loaded)
-    if (refFrames && ++compareTick >= DTW_CFG.COMPARE_EVERY) {
+    // Dispatch DTW to background worker — non-blocking; skipped while worker is busy
+    // so O(N²) computation never touches the main thread.
+    if (refFrames && !dtwBusy && ++compareTick >= DTW_CFG.COMPARE_EVERY && slideCount >= 15) {
       compareTick = 0;
-      const { score, jointDists } = comparePoseSeries(refFrames, liveBuffer);
-      lastMatchScore  = score;
-      lastJointScores = jointDists;
-      if (score === null) {
-        mMatchEl.textContent = "—";
-        mMatchEl.style.color = "#f59e0b";
-      } else {
-        mMatchEl.textContent = score + "%";
-        mMatchEl.style.color = score >= 70 ? "#34d399" : score >= 40 ? "#f59e0b" : "#f44636";
-      }
+      dtwBusy = true;
+      dtwWorker.postMessage({ ref: refFrames, query: getWindowSlice(), scoreMax: DTW_CFG.SCORE_MAX_DEG });
     }
   } else {
     const skipPct = tickTotal > 0 ? Math.round(tickSkipped / tickTotal * 100) : 0;
