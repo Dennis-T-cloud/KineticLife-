@@ -5,6 +5,7 @@
 struct WifiCredentials {
     String ssid;
     String password;
+    // Matches the QR payload contract: "WPA", "WEP", or "nopass".
     String auth_type;
 };
 
