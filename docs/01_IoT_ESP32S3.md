@@ -11,13 +11,14 @@
 | You own | You don't own |
 |-----------|-------------|
 | Board selection + soldering + bring-up | MediaPipe / Web UI / DTW algorithm |
-| ESP32 firmware (MJPEG + QR pairing + LED + watchdog) | Cloud services |
-| Honoring [04 §2 contract](./04_Interface_Contracts.md#2-esp32--phone-local-wifi): `/hello`, `/stream`, mDNS, WiFi QR parsing | Protocol field definitions (in 04) |
+| ESP32 firmware (WebSocket streaming + QR pairing + LED + watchdog) | Cloud services |
+| Honoring [04 §2 contract](./04_Interface_Contracts.md#2-esp32--phone-local-wifi): `/hello`, `/ws`, mDNS, WiFi QR parsing | Protocol field definitions (in 04) |
 | Hardware reliability for both demo units on Demo Day | |
 
-**External commitment (one-liner)**:
-- After power-on or QR pairing, ESP32 self-reports via **HTTP /hello** and streams MJPEG via **HTTP /stream**.
-- Frame rate ≥ 12 FPS at 240×240; 30+ minutes continuous operation without drops.
+**External commitments**:
+- After power-on or pairing (QR or Soft AP), ESP32 self-reports via **HTTP /hello** and streams binary JPEG frames via **WebSocket /ws**.
+- Serves the stream + inference page from **SPIFFS** at `http://fitcam-xxxxxx.local/` so the browser can connect to `ws://` without mixed-content issues.
+- Frame rate ≥ 9 FPS at 320×240 JPEG (OV5640 hardware limit); 30+ minutes continuous operation without drops.
 
 ---
 
@@ -25,14 +26,14 @@
 
 **Current board**: **Freenove ESP32-S3-WROOM Board (N16R8), FNK0085 B**
 
-**Camera**: **OV2640**
+**Camera**: **OV5640 160° wide-angle**
 
 **Hardware reference**: [Freenove ESP32-S3-WROOM Board GitHub](https://github.com/Freenove/Freenove_ESP32_S3_WROOM_Board)
 
 Why:
-- ESP32-S3-WROOM module with **16 MB Flash + 8 MB PSRAM** (`N16R8`), enough for MJPEG buffering and QR decode work.
+- ESP32-S3-WROOM module with **16 MB Flash + 8 MB PSRAM** (`N16R8`), enough for WebSocket buffering and QR decode work.
 - Freenove board is the team calibration target, so firmware pin mapping and camera bring-up should be validated against **FNK0085 B** first.
-- OV2640 is the active camera module for resolution, exposure, white-balance, and low-light tuning.
+- OV5640 160° wide-angle is the active camera module for resolution, exposure, white-balance, and low-light tuning.
 - Full Arduino / PlatformIO workflow remains suitable for the demo firmware.
 
 **Board assumptions to verify during bring-up**:
@@ -40,16 +41,16 @@ Why:
 | Item | Baseline value | Why it matters |
 |----|------|------|
 | Board model | Freenove ESP32-S3-WROOM Board (N16R8), FNK0085 B | Pin map and boot behavior |
-| Flash / PSRAM | 16 MB Flash / 8 MB PSRAM | MJPEG frame buffers, QR decode memory |
-| Camera | OV2640 | Camera driver, frame size, exposure tuning |
-| Default stream | 240×240 @ 15 FPS | Shared target for web pose extraction |
+| Flash / PSRAM | 16 MB Flash / 8 MB PSRAM | WebSocket frame buffers, QR decode memory |
+| Camera | OV5640 160° wide-angle | Camera driver, frame size, exposure tuning |
+| Default stream | 320×240 @ 9 FPS | OV5640 hardware limit at QVGA JPEG |
 
 **Alternatives** are not part of v0.3 calibration. If a backup board is used, create a separate pin-map note before flashing.
 
 **Auxiliary**:
 - USB-C power supply (5V/2A)
 - Small tripod or clip mount
-- **5V fill light** (REQUIRED — OV2640 noise in low light kills MediaPipe accuracy)
+- **5V fill light** (REQUIRED — OV5640 noise in low light kills MediaPipe accuracy)
 - Short USB-C cable (<30 cm, less noise)
 
 ---
@@ -58,25 +59,27 @@ Why:
 
 **Framework**: **Arduino IDE + PlatformIO** (faster ramp than ESP-IDF; sufficient for demo)
 
-**Suggested layout**:
+**Actual layout**:
 ```
 firmware/
 ├── platformio.ini
 ├── src/
-│   ├── main.cpp         # setup() + loop()
-│   ├── camera_init.cpp  # esp_camera config
-│   ├── wifi_qr.cpp      # quirc parsing + NVS write
-│   ├── http_server.cpp  # /hello + /stream routes
-│   ├── led.cpp          # RGB status indicator
-│   └── watchdog.cpp     # task watchdog
-└── data/                # SPIFFS, empty
+│   ├── main.cpp          # setup() + loop()
+│   ├── camera_init.cpp   # esp_camera config, OV5640 defaults
+│   ├── wifi_qr.cpp       # quirc parsing + NVS write
+│   ├── http_server.cpp   # REST + WebSocket /ws
+│   ├── status_led.cpp    # RGB status indicator
+│   └── debug_log.cpp     # serial logging helpers
+└── data/                 # SPIFFS root — stream page served from here
+    └── index.html        # stream + inference page (MediaPipe)
 ```
 
 **Core libraries**:
 - `esp_camera` (Espressif official)
-- `quirc` (C-language QR decoder, ~600 LOC)
-- `WiFi.h` + `WebServer.h`
-- `Preferences.h` (NVS wrapper)
+- `ESPAsyncWebServer` + `AsyncWebSocket` (non-blocking WS)
+- `quirc` (C-language QR decoder)
+- `WiFi.h` + `Preferences.h` (NVS wrapper)
+- `ESPmDNS`
 
 ---
 
@@ -118,95 +121,87 @@ Current firmware maps the RGB status LED to `STATUS_RGB_PIN=48` in `platformio.i
 
 ---
 
-## §5 MJPEG Service Implementation
+## §5 WebSocket Streaming
 
-**Key config**:
+**Transport**: Binary WebSocket (`ws://fitcam-xxxxxx.local/ws`). Each message is one complete JPEG frame. `ws.binaryAll()` is non-blocking — copies to internal queue and returns immediately. `esp_camera_fb_return()` is called right after, safe because the data is already copied.
+
+**Key camera config**:
 
 ```cpp
-// camera_init.cpp excerpt
-camera_config_t config;
+// camera_init.cpp
 config.pixel_format = PIXFORMAT_JPEG;
-config.frame_size = FRAMESIZE_240X240;  // default; resolutions are switchable
-config.jpeg_quality = 12;               // 0-63, lower = better; 12 visually OK
-config.fb_count = 2;                    // double buffer for stable FPS
-config.grab_mode = CAMERA_GRAB_LATEST;  // always send the freshest frame
-config.fb_location = CAMERA_FB_IN_PSRAM; // MUST use PSRAM
+config.frame_size   = FRAMESIZE_QVGA;   // 320×240 default; switchable via /cam
+config.jpeg_quality = 12;               // lower = better; tunable via /cam?q=
+config.fb_count     = 2;               // PSRAM double-buffer, eliminates DMA contention
+config.grab_mode    = CAMERA_GRAB_LATEST;
+config.fb_location  = CAMERA_FB_IN_PSRAM;
 ```
 
-**HTTP routes**:
-
-| Path | Method | Purpose | Contract |
-|-----|------|------|---------|
-| `/hello` | GET | device_id / fw_version / capabilities | [04 §2.3](./04_Interface_Contracts.md#23-http-handshake-hello) |
-| `/status` | GET | current state, WiFi RSSI/IP, camera mode/settings, memory | Debug/status |
-| `/stream` | GET | multipart MJPEG; per-frame `X-Frame-Id` + `X-Timestamp-Ms` | [04 §2.4](./04_Interface_Contracts.md#24-mjpeg-stream-stream) |
-| `/end` | POST/GET | clear temporary WiFi session in NVS and reboot to QR pairing | Demo session lifecycle |
-| `/ctrl` | POST | placeholder, not in v0.3 | — |
-
-**MJPEG framing** (simplified pseudocode):
+**OV5640 sensor defaults** (set at init):
 
 ```cpp
-void streamHandler(WebServer& server) {
-  server.sendContent("HTTP/1.1 200 OK\r\n");
-  server.sendContent("Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n");
-
-  uint32_t frame_id = 0;
-  while (client.connected()) {
-    camera_fb_t* fb = esp_camera_fb_get();
-    if (!fb) continue;
-
-    char header[256];
-    int n = snprintf(header, sizeof(header),
-      "--frame\r\n"
-      "Content-Type: image/jpeg\r\n"
-      "Content-Length: %u\r\n"
-      "X-Frame-Id: %u\r\n"
-      "X-Timestamp-Ms: %lld\r\n\r\n",
-      fb->len, frame_id++, esp_timer_get_time() / 1000);
-
-    client.write(header, n);
-    client.write(fb->buf, fb->len);
-    client.write("\r\n", 2);
-
-    esp_camera_fb_return(fb);
-    vTaskDelay(pdMS_TO_TICKS(66));  // ~15 FPS
-  }
-}
+s->set_brightness(s, 0);   s->set_contrast(s, 1);
+s->set_saturation(s, 0);   s->set_sharpness(s, 1);
+s->set_bpc(s, 1);          s->set_wpc(s, 1);   s->set_lenc(s, 1);
+s->set_whitebal(s, 1);     s->set_awb_gain(s, 1);
+s->set_gain_ctrl(s, 1);    s->set_exposure_ctrl(s, 1);   s->set_aec2(s, 1);
 ```
 
-**Max JPEG size**: 128 KB (per contract); drop if exceeded. At 240×240 @ q=12, frames are typically 8–15 KB, well under the limit.
+**HTTP + WS routes**:
+
+| Path | Method | Purpose |
+|------|--------|---------|
+| `/` | GET | Serves SPIFFS `index.html` (stream + inference page) |
+| `/ws` | WS | Binary JPEG stream |
+| `/hello` | GET | device_id, fw_version, state, ws_clients |
+| `/status` | GET | WiFi RSSI, camera mode/settings, memory stats |
+| `/capture` | GET | Single JPEG snapshot |
+| `/cam` | GET/POST | Live camera tuning: `?res=&q=&brightness=&contrast=&saturation=&sharpness=&ae_level=&vflip=&hmirror=` |
+| `/end` | GET/POST | Clear NVS credentials and reboot to pairing mode |
+
+**SPIFFS page**: `data/index.html` is served at the root. Because the page is on `http://`, it can open `ws://` without mixed-content issues. The page POSTs workout results back to the cloud API over HTTPS (an HTTP page requesting an HTTPS resource is allowed).
+
+**Max JPEG size**: 256 KB limit (raised from 128 KB to support VGA frames). At 320×240 q=12, frames are typically 15–40 KB. VGA (640×480) frames can reach 80–150 KB.
+
+**Resolution switching**: DMA buffers are allocated at init time. Switching to a larger frame size requires `esp_camera_deinit()` + reinit. `camera_set_framesize()` handles this automatically when the new size exceeds the init allocation.
 
 ---
 
-## §6 WiFi QR Pairing
+## §6 WiFi Pairing — Two Paths
 
-**QR format**: current web uses compact `K1:<type>:<ssid_len>:<ssid><pass>` payloads; firmware also accepts `WIFI:S:<ssid>;T:<WPA|WEP|nopass>;P:<pass>;;` for compatibility (see [04 §2.1](./04_Interface_Contracts.md#21-wifi-qr-string-format-phone--esp32-one-shot-pairing)).
+Both paths run simultaneously while the device is in pairing mode (blue LED blinking). Either can complete pairing.
 
-**Implementation flow**:
+### Path A — Soft AP (recommended, primary path)
+
+1. ESP32 broadcasts `KineticLife-Setup` / password `kineticlife`
+2. User connects laptop/phone to that AP
+3. Opens `pair.html` → Config tab → selects target WiFi → enters password
+4. ESP32 connects, saves credentials to NVS, reboots into stream mode
+
+Soft AP IP: `192.168.4.1`. No QR scanning required; works even when the phone screen is off.
+
+### Path B — QR Camera Scan
+
+**QR format**: compact `K1:<type>:<ssid_len>:<ssid><pass>` (generated by `pair.html`); firmware also accepts `WIFI:S:<ssid>;T:WPA;P:<pass>;;` for compatibility.
 
 ```mermaid
 flowchart LR
-    A[Grab a frame] --> B[Convert to grayscale]
-    B --> C[quirc_decode]
-    C -->|fail| A
-    C -->|success| D[Parse compact K1<br/>or WIFI:S fallback]
-    D --> E[Connect WiFi]
-    E --> F[Temporary Preferences.putString<br/>SSID/Password/Type]
-    F --> G[ESP.restart into camera mode]
+    A[Grab grayscale frame] --> B[quirc_decode every 200ms]
+    B -->|fail| A
+    B -->|success| C[Parse K1 or WIFI:S]
+    C --> D[WiFi.begin SSID/pass]
+    D --> E[NVS write + ESP.restart]
 ```
 
-**quirc integration notes**:
-- `quirc_resize(qr, w, h)` → `quirc_begin/end` feeds grayscale pixels
-- Convert grayscale from OV2640 RGB565
-- Try decode every 200 ms — **NOT every frame** (saves power)
+**OV5640 note**: The 160° wide-angle lens introduces barrel distortion that degrades QR ECC success rate. Soft AP is the more reliable path for this camera module. QR path still works at optimal distance (~20–30 cm) with screen at 100% brightness.
 
-**Security considerations**:
-- Write password directly to NVS, never log to serial
-- Store SSID/password/type in the `wifi` NVS namespace only for the active demo session
-- Web Camera page must call `/end` when the user finishes; ESP32 clears the NVS session and reboots to QR pairing mode
+**Security**:
+- Password written directly to NVS, never logged to serial
+- NVS namespace `wifi`, keys: `ssid` / `pass` / `type`
+- `/end` clears credentials and reboots to pairing mode
 
-**Reset entry**:
-- Long-press GPIO button 5s → `Preferences.clear()` → reboot into pairing mode
+**Reset**:
+- `POST /end` from the stream page, or `pio run --target erase` + reflash
 
 ---
 
@@ -224,7 +219,7 @@ flowchart LR
 ```
 [ ] LED states correct after power-on (blue→green)
 [ ] Phone hits http://fitcam-XXXXXX.local/hello → returns JSON
-[ ] Browser <img src=".../stream"> shows continuous video
+[ ] Browser WebSocket ws://.../ws receives video frames (debug.html shows ~9fps)
 [ ] 30 min continuous run with no resets (do this on W6 weekend)
 [ ] Backup pre-paired ESP32 ready
 [ ] Fill light positioned, low-light scenario tested
@@ -251,7 +246,7 @@ flowchart LR
 
 | Risk | Likelihood | Impact | Mitigation |
 |-----|-----|------|------|
-| OV2640 low-light noise | High | High | 5V fill light + lock white balance + control venue lighting |
+| OV5640 low-light noise | High | High | 5V fill light + lock white balance + control venue lighting |
 | PSRAM config missed → boot crash | Med | Med | platformio.ini configured AND tested with full build + boot once |
 | Venue WiFi interference | Med | High | Backup 4G router; phone hotspot must be 2.4 GHz |
 | Camera connection loose | Low | High | Tape + hot glue before Demo |
@@ -263,7 +258,7 @@ flowchart LR
 
 > Note: Outside the 6-week sprint.
 
-- **WebRTC instead of MJPEG**: latency under 100 ms, but requires full SRTP/DTLS stack on ESP32; future optimization
+- **WebRTC instead of WebSocket**: latency under 100 ms, but requires full SRTP/DTLS stack on ESP32; future optimization
 - **OTA upgrade**: ESP-IDF built-in, post-Demo
 - **Multi-device coexistence**: mDNS name already includes MAC suffix, no contract change needed
 - **Sensor reporting (gyro / temperature)**: add as optional fields in `/hello` (per §1.3 additive rule)
@@ -276,7 +271,7 @@ flowchart LR
 |---------|------|
 | WiFi QR string fields | [04 §2.1](./04_Interface_Contracts.md#21-wifi-qr-string-format-phone--esp32-one-shot-pairing) |
 | `/hello` JSON fields | [04 §2.3](./04_Interface_Contracts.md#23-http-handshake-hello) |
-| `/stream` frame headers | [04 §2.4](./04_Interface_Contracts.md#24-mjpeg-stream-stream) |
+| `/ws` binary stream contract | [04 §2.5](./04_Interface_Contracts.md#25-websocket-stream-ws) |
 | Protocol versioning | [04 §1.3](./04_Interface_Contracts.md#13-global-conventions) |
 
 ---

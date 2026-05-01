@@ -8,11 +8,11 @@
 
 ## §1 Project Overview
 
-**One-liner**: Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B with OV2640 captures video → phone/iPad Web extracts 3D pose with MediaPipe → cloud DTW analyzes → returns correctness + problem joints, gamified with a Duolingo-style loop.
+**One-liner**: Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B with OV5640 captures video → browser extracts 3D pose with MediaPipe locally → cloud receives only 14-D joint angles → DTW analyzes → returns correctness + problem joints, gamified with a Duolingo-style loop.
 
-**Hardware baseline**: Freenove ESP32-S3-WROOM Board (N16R8), model **FNK0085 B**, camera **OV2640**. Firmware pin mapping, camera resolution/FPS tuning, and Demo Day calibration assume this hardware.
+**Hardware baseline**: Freenove ESP32-S3-WROOM Board (N16R8), model **FNK0085 B**, camera **OV5640 160° wide-angle**. Firmware pin mapping, camera resolution/FPS tuning, and Demo Day calibration assume this hardware.
 
-**Privacy core**: Raw video never leaves the phone. Realtime `world_landmarks` may be sent transiently for analysis; long-term storage keeps only 14-D joint angles and derived results.
+**Privacy core**: Raw video never leaves the local network. MediaPipe runs entirely in the browser on the local stream page. Only 14-D joint angles (already de-identified and view-invariant) are sent to the cloud. The cloud never receives video frames or raw landmarks.
 
 ---
 
@@ -32,53 +32,55 @@
 
 ## §3 Architecture
 
+### 3.1 Data Flow
+
 ```mermaid
 flowchart TB
-    subgraph Home["Demo venue"]
-        ESP["Freenove ESP32-S3-WROOM N16R8<br/>FNK0085 B + OV2640"]
-        Phone["Phone/iPad<br/>(Hotspot + Browser)"]
-        ESP -- "WiFi hotspot<br/>MJPEG over HTTP" --> Phone
-        Phone -. "First-time pair: WiFi QR" .-> ESP
+    subgraph Local["Local network (phone hotspot)"]
+        ESP["ESP32-S3-WROOM N16R8<br/>OV5640 160° wide-angle<br/>WebSocket ws://"]
+        StreamPage["Stream page<br/>served from ESP32 SPIFFS<br/>http://fitcam-xxxxxx.local/"]
+        ESP -- "binary JPEG frames<br/>ws:// WebSocket" --> StreamPage
+        StreamPage -- "MediaPipe inference<br/>14-angle calc<br/>DTW comparison" --> StreamPage
     end
 
-    subgraph PhoneWeb["Web (PWA)"]
-        Entry{{"Entry"}}
-        Entry --> Jump["Jump-in"]
-        Entry --> Duo["Duolingo"]
-        Entry --> Demo["Demo Mode"]
-        Core["MediaPipe<br/>14 angles<br/>Segmenter<br/>Gesture detector"]
-        Jump & Duo & Demo --> Core
+    subgraph Cloud["Cloud (HTTPS)"]
+        MainApp["Main app<br/>https://kineticlife.app<br/>GitHub Pages / Vercel"]
+        API["FastAPI<br/>wss://api.kineticlife.app"]
+        DTW["DTW Engine"]
+        DB[("Postgres + Redis")]
+        MainApp --> API --> DTW --> DB
     end
 
-    subgraph Cloud["Cloud"]
-        GW["FastAPI<br/>WebSocket"]
-        Cls["Pluggable Classifier<br/>SVM (initial)"]
-        DTW["DTW Engine<br/>14 angles"]
-        DB[("Postgres<br/>+ Redis")]
-        GW --> Cls --> DTW
-        DTW --> DB
-    end
-
-    subgraph Advice["Advice (async, off main path)"]
-        Coach["Coaching advice service"]
-    end
-
-    Core -- "WebSocket<br/>14 joint angles" --> GW
-    GW -- "≤400ms feedback" --> PhoneWeb
-    DB -. "async trigger" .-> Coach
-    Coach -. "encouragement" .-> PhoneWeb
+    StreamPage -- "POST results only<br/>14-D joint angles, scores<br/>NO video" --> API
+    MainApp -. "redirect after pair" .-> StreamPage
+    StreamPage -. "redirect after workout" .-> MainApp
 ```
 
-**Main-path latency budget P95 ≤ 400 ms** (target ~350 ms):
+**Privacy guarantee**: The local stream page is served over `http://` from the ESP32 itself (SPIFFS), so `ws://` connections are not mixed content. Video frames never leave the local hotspot network. Only 14-D joint angles and DTW scores travel to the cloud API.
+
+### 3.2 Web Hosting Architecture
+
+The browser's mixed-content policy blocks `ws://` (insecure WebSocket) from an `https://` page. Rather than adding TLS to ESP32 (complex, bad UX with self-signed certs) or routing video through a relay server (privacy cost), the project uses a two-layer approach:
+
+| Layer | Host | Protocol | Content |
+|-------|------|----------|---------|
+| Main app (login, courses, history) | GitHub Pages / Vercel | HTTPS | Business logic only |
+| Stream + inference page | ESP32 SPIFFS | HTTP (local) | Video + pose, local only |
+
+After pairing, the main app redirects the browser to `http://fitcam-xxxxxx.local/` (ESP32 SPIFFS page). The SPIFFS page POSTs workout results back to `https://api.kineticlife.app` — an HTTP page requesting an HTTPS resource is allowed by browsers (this is the reverse of mixed content). When the workout ends, the page redirects back to the main app.
+
+No relay server is needed for video. The relay approach was evaluated and rejected because it would route raw video frames through a third-party server, breaking the privacy guarantee.
+
+### 3.3 Main-Path Latency Budget (P95 ≤ 400 ms)
 
 | Stage | Budget |
-|-----|------|
-| ESP32 → phone (local WiFi) | 50 ms |
-| MediaPipe inference | 30–60 ms |
-| 14-angle calculation | <5 ms |
-| Phone → cloud | 80–150 ms |
+|-------|--------|
+| ESP32 → browser (local WiFi, WebSocket) | 20–50 ms |
+| MediaPipe inference (local) | 20–40 ms |
+| 14-angle calculation (local) | <5 ms |
+| Browser → cloud API | 80–150 ms |
 | Classifier + DTW | 80–120 ms |
-| Cloud → phone | 80–150 ms |
+| Cloud → browser | 80–150 ms |
 | **Total** | **~350 ms** |
 
 ---
@@ -91,7 +93,7 @@ flowchart TB
 
 | Item | Setup |
 |----|------|
-| Hardware | Freenove ESP32-S3-WROOM FNK0085 B + OV2640 unit #1 + demo phone |
+| Hardware | Freenove ESP32-S3-WROOM FNK0085 B + OV5640 unit #1 + demo phone |
 | Modes | Duolingo + Jump-in + QR pairing |
 | Experience | Visitors use the demo phone, OR scan a QR to connect their own phone (new-user flow) |
 | Focus | Full user flow, gamified UI, pairing experience |
@@ -101,7 +103,7 @@ flowchart TB
 
 | Item | Setup |
 |----|------|
-| Hardware | Freenove ESP32-S3-WROOM FNK0085 B + OV2640 unit #2 + iPad (landscape) |
+| Hardware | Freenove ESP32-S3-WROOM FNK0085 B + OV5640 unit #2 + iPad (landscape) |
 | Mode | **Demo Mode** (skeleton + visual FX, no video) |
 | Experience | Visitor performs a complete set, system shows full analysis |
 | Focus | **Privacy** (no video on screen) + **DTW accuracy** (joint highlight, view-angle robustness) |
@@ -146,9 +148,9 @@ flowchart LR
 ## §6 Non-Functional Requirements
 
 | Aspect | Target |
-|-----|------|
+|--------|--------|
 | Latency | Main path ≤ 400 ms (P95) |
-| Privacy | Zero video upload; joint angles already view-invariant + de-identified |
+| Privacy | Zero video upload; stream page served from ESP32 SPIFFS (local HTTP); only 14-D joint angles reach cloud |
 | Availability | 99% during Demo (single instance is enough); offline Demo Mode if WiFi fails |
 | Cost | < $30/month (Fly.io + Neon + Upstash free tiers + low-cost advice generation) |
 

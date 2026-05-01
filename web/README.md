@@ -12,7 +12,7 @@ npm run dev
 For static hardware testing, use:
 
 - `pair.html`: generate WiFi QR and open the camera page.
-- `cam.html`: consume the ESP32 `/stream` MJPEG feed, run MediaPipe pose extraction, display 14-D joint angles, poll `/status`, and call `/end` when the user finishes.
+- `cam.html`: connect to ESP32 `/ws` WebSocket binary stream, run MediaPipe pose extraction, display 14-D joint angles, poll `/status`, and call `/end` when the user finishes.
 - `debug.html?legacy=1`: old combined pose debug page.
 
 The QR pages generate compact WiFi QR payloads in the current contract format:

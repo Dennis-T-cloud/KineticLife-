@@ -148,12 +148,15 @@ static void handle_cam_config(AsyncWebServerRequest* req) {
         req->send(503, "application/json", "{\"ok\":false,\"error\":\"no_sensor\"}");
         return;
     }
-    if (req->hasParam("res")) camera_set_framesize(req->getParam("res")->value().c_str());
-    if (req->hasParam("q"))   camera_set_quality(req->getParam("q")->value().toInt());
-    if (req->hasParam("brightness"))
-        s->set_brightness(s, constrain(req->getParam("brightness")->value().toInt(), -2, 2));
-    if (req->hasParam("contrast"))
-        s->set_contrast(s,   constrain(req->getParam("contrast")->value().toInt(), -2, 2));
+    if (req->hasParam("res"))        camera_set_framesize(req->getParam("res")->value().c_str());
+    if (req->hasParam("q"))          camera_set_quality(req->getParam("q")->value().toInt());
+    if (req->hasParam("brightness")) s->set_brightness(s,  constrain(req->getParam("brightness")->value().toInt(), -2, 2));
+    if (req->hasParam("contrast"))   s->set_contrast(s,    constrain(req->getParam("contrast")->value().toInt(),   -2, 2));
+    if (req->hasParam("saturation")) s->set_saturation(s,  constrain(req->getParam("saturation")->value().toInt(), -2, 2));
+    if (req->hasParam("sharpness"))  s->set_sharpness(s,   constrain(req->getParam("sharpness")->value().toInt(),  -2, 2));
+    if (req->hasParam("ae_level"))   s->set_ae_level(s,    constrain(req->getParam("ae_level")->value().toInt(),   -2, 2));
+    if (req->hasParam("vflip"))      s->set_vflip(s,       req->getParam("vflip")->value().toInt() ? 1 : 0);
+    if (req->hasParam("hmirror"))    s->set_hmirror(s,     req->getParam("hmirror")->value().toInt() ? 1 : 0);
 
     String j = "{\"ok\":true,\"frame_size\":\"";
     j += camera_frame_size_name();
@@ -168,7 +171,7 @@ static void handle_cam_config(AsyncWebServerRequest* req) {
 static void handle_capture(AsyncWebServerRequest* req) {
     const uint32_t t0 = millis();
     camera_fb_t* fb = esp_camera_fb_get();
-    if (!fb || fb->format != PIXFORMAT_JPEG || fb->len > 128 * 1024) {
+    if (!fb || fb->format != PIXFORMAT_JPEG || fb->len > 256 * 1024) {
         if (fb) esp_camera_fb_return(fb);
         req->send(503, "application/json", "{\"ok\":false,\"error\":\"capture_failed\"}");
         return;
@@ -255,7 +258,7 @@ void http_server_push_frame() {
     camera_fb_t* fb = esp_camera_fb_get();
     const uint32_t cap_ms = millis() - cap_t0;
 
-    if (!fb || fb->format != PIXFORMAT_JPEG || fb->len > 128 * 1024) {
+    if (!fb || fb->format != PIXFORMAT_JPEG || fb->len > 256 * 1024) {
         if (fb) esp_camera_fb_return(fb);
         s_perf_dropped++;
         if (cap_ms >= 100) {

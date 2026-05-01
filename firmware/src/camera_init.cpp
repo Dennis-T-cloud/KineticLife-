@@ -22,17 +22,19 @@
 #define HREF_GPIO_NUM    7
 #define PCLK_GPIO_NUM   13
 
-static const char* s_camera_mode = "not_initialized";
-static framesize_t s_frame_size = FRAMESIZE_INVALID;
-static pixformat_t s_pixel_format = PIXFORMAT_RGB565;
-static int s_jpeg_quality = -1;
+static const char* s_camera_mode   = "not_initialized";
+static framesize_t s_frame_size     = FRAMESIZE_INVALID;
+static framesize_t s_init_frame_size = FRAMESIZE_INVALID; // DMA buffer size at init
+static pixformat_t s_pixel_format   = PIXFORMAT_RGB565;
+static int         s_jpeg_quality   = -1;
 
 static const char* frame_size_name(framesize_t frame_size) {
     switch (frame_size) {
+        case FRAMESIZE_QQVGA:   return "160x120";
         case FRAMESIZE_240X240: return "240x240";
-        case FRAMESIZE_QQVGA: return "160x120";
-        case FRAMESIZE_QVGA: return "320x240";
-        case FRAMESIZE_VGA: return "640x480";
+        case FRAMESIZE_QVGA:    return "320x240";
+        case FRAMESIZE_VGA:     return "640x480";
+        case FRAMESIZE_SVGA:    return "800x600";
         default: return "unknown";
     }
 }
@@ -87,18 +89,22 @@ static bool camera_init_with(pixformat_t pixel_format, framesize_t frame_size,
     s->set_quality(s, jpeg_quality);
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
-    s->set_contrast(s, 2);
-    s->set_brightness(s, -1);
-    s->set_saturation(s, -2);
-    s->set_sharpness(s, 2);
     s->set_gain_ctrl(s, 1);
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 1);
-    s->set_ae_level(s, -1);
+    s->set_ae_level(s, 0);
+    s->set_bpc(s, 1);
+    s->set_wpc(s, 1);
+    s->set_lenc(s, 1);
+    s->set_brightness(s, 0);
+    s->set_contrast(s, 1);
+    s->set_saturation(s, 0);
+    s->set_sharpness(s, 1);
 
-    s_frame_size = frame_size;
-    s_pixel_format = pixel_format;
-    s_jpeg_quality = jpeg_quality;
+    s_frame_size      = frame_size;
+    s_init_frame_size = frame_size; // DMA buffers sized for this
+    s_pixel_format    = pixel_format;
+    s_jpeg_quality    = jpeg_quality;
 
     kl_logf("[camera] mode=%s format=%s frame=%s quality=%d fb_count=%d fb=%s init_ms=%lu heap_kb=%lu psram_free_kb=%lu psram_size_kb=%lu\n",
             s_camera_mode,
@@ -115,14 +121,33 @@ static bool camera_init_with(pixformat_t pixel_format, framesize_t frame_size,
 }
 
 bool camera_set_framesize(const char* size_str) {
-    sensor_t* s = esp_camera_sensor_get();
-    if (!s) return false;
     framesize_t fs = FRAMESIZE_INVALID;
     if      (strcmp(size_str, "160x120") == 0) fs = FRAMESIZE_QQVGA;
     else if (strcmp(size_str, "240x240") == 0) fs = FRAMESIZE_240X240;
     else if (strcmp(size_str, "320x240") == 0) fs = FRAMESIZE_QVGA;
+    else if (strcmp(size_str, "640x480") == 0) fs = FRAMESIZE_VGA;
+    else if (strcmp(size_str, "800x600") == 0) fs = FRAMESIZE_SVGA;
     if (fs == FRAMESIZE_INVALID) return false;
     if (fs == s_frame_size) return true;
+
+    // Switching to a larger framesize requires DMA buffer reallocation.
+    // esp_camera does not support growing the buffer in-place — deinit+reinit required.
+    if (fs > s_init_frame_size) {
+        kl_logf("[camera] reinit for larger frame old=%s new=%s\n",
+                frame_size_name(s_init_frame_size), frame_size_name(fs));
+        esp_camera_deinit();
+        if (!camera_init_with(s_pixel_format, fs, s_jpeg_quality, 2, CAMERA_FB_IN_PSRAM)) {
+            kl_logf("[camera] reinit_failed, reverting to %s\n",
+                    frame_size_name(s_init_frame_size));
+            camera_init_with(s_pixel_format, s_init_frame_size, s_jpeg_quality, 2,
+                             CAMERA_FB_IN_PSRAM);
+            return false;
+        }
+        return true;
+    }
+
+    sensor_t* s = esp_camera_sensor_get();
+    if (!s) return false;
     s->set_framesize(s, fs);
     s_frame_size = fs;
     return true;
@@ -140,10 +165,9 @@ bool camera_set_quality(int q) {
 
 bool camera_init() {
     s_camera_mode = "stream";
-    // fb_count=2 in PSRAM: camera DMA uses the SPI bus, WiFi DMA stays on
-    // internal bus — eliminates the throughput collision that caused ~0.3 FPS.
-    // QVGA (320x240) uses a wider crop of the OV3660 sensor → larger FOV at 1m.
-    // OV3660 at q=12 produces smaller JPEG than OV2640 q=15 at comparable quality.
+    // fb_count=2 in PSRAM eliminates DMA bus contention between camera and WiFi.
+    // XCLK=20MHz — FNK0085B board limit; 24MHz causes tearing regardless of sensor.
+    // Start at q=12; tune live via /cam?q= from debug.html.
     return camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_QVGA, 12, 2,
                             CAMERA_FB_IN_PSRAM);
 }

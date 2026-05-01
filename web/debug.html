@@ -39,7 +39,9 @@
                display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
     .m  { font-size: 12px; white-space: nowrap; }
     .ml { color: #64748b; }
-    .mv { color: #e2e8f0; font-weight: bold; }
+    .mv { color: #e2e8f0; font-weight: bold; display: inline-block; min-width: 4.5ch; text-align: right; }
+    #mVis, #mAng { min-width: 5.5ch; }
+    #mBytes { min-width: 6ch; }
 
     /* ── joint angles ── */
     #angles { width: 100%; padding: 6px 10px; display: grid;
@@ -52,6 +54,26 @@
     .av.ok   { color: #34d399; }
     .av.warn { color: #f59e0b; }
     .av.bad  { color: #f44636; }
+
+    /* ── cam control ── */
+    #camctl { width: 100%; padding: 5px 10px; background: #0e0e0e;
+              border-bottom: 1px solid #2b2b2b; display: flex; flex-direction: column; gap: 4px; }
+    .cc-row  { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11px; }
+    .cc-file { color: #4a5568; min-width: 160px; white-space: nowrap; }
+    .cc-pair { display: flex; align-items: center; gap: 3px; }
+    .cc-lbl  { color: #64748b; }
+    .cc-inp  { background: #202020; border: 1px solid #333; color: #e2e8f0;
+               font: 11px monospace; border-radius: 2px; padding: 1px 4px;
+               width: 34px; text-align: center; }
+    select.cc-inp { width: 80px; }
+    .cc-inp.diff  { border-color: #d97706; color: #f59e0b; }
+    input[type=number].cc-inp::-webkit-inner-spin-button,
+    input[type=number].cc-inp::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number].cc-inp { -moz-appearance: textfield; }
+    #ccQ { width: 44px; }
+    .mdir   { font-size: 9px; font-weight: normal; margin-left: 1px; }
+    .mdir-h { color: #4ade80; }
+    .mdir-l { color: #60a5fa; }
 
     @media (max-width: 500px) {
       .bar input { min-width: 120px; }
@@ -82,12 +104,40 @@
 
 <!-- metrics bar -->
 <div id="metrics">
-  <span class="m"><span class="ml">detect </span><span class="mv" id="mDetect">—</span></span>
-  <span class="m"><span class="ml">avg </span><span class="mv" id="mAvg">—</span></span>
-  <span class="m"><span class="ml">vis </span><span class="mv" id="mVis">—</span></span>
-  <span class="m"><span class="ml">skip </span><span class="mv" id="mSkip">—</span></span>
+  <span class="m"><span class="ml">detect<span class="mdir mdir-l">L</span> </span><span class="mv" id="mDetect">—</span></span>
+  <span class="m"><span class="ml">avg<span class="mdir mdir-l">L</span> </span><span class="mv" id="mAvg">—</span></span>
+  <span class="m"><span class="ml">vis<span class="mdir mdir-h">H</span> </span><span class="mv" id="mVis">—</span></span>
+  <span class="m"><span class="ml">ang<span class="mdir mdir-h">H</span> </span><span class="mv" id="mAng">—</span></span>
+  <span class="m"><span class="ml">bytes<span class="mdir mdir-l">L</span> </span><span class="mv" id="mBytes">—</span></span>
+  <span class="m"><span class="ml">skip<span class="mdir mdir-l">L</span> </span><span class="mv" id="mSkip">—</span></span>
   <span class="m"><span class="ml">mode </span><span class="mv" id="mMode" style="color:#34d399">COLOR</span></span>
-  <span class="m"><span class="ml">match </span><span class="mv" id="mMatch" style="color:#f59e0b">—</span></span>
+  <span class="m"><span class="ml">match<span class="mdir mdir-h">H</span> </span><span class="mv" id="mMatch" style="color:#f59e0b">—</span></span>
+</div>
+
+<!-- cam params (current runtime, grouped by source file) -->
+<div id="camctl">
+  <div class="cc-row">
+    <span class="cc-file">camera_init.cpp:171</span>
+    <span class="cc-pair"><span class="cc-lbl">res</span>
+      <select id="ccRes" class="cc-inp">
+        <option value="320x240">320×240</option>
+        <option value="640x480">640×480</option>
+      </select></span>
+    <span class="cc-pair"><span class="cc-lbl">q</span>
+      <input id="ccQ" class="cc-inp" type="number" min="4" max="63" value="12"></span>
+  </div>
+  <div class="cc-row">
+    <span class="cc-file">camera_init.cpp:95</span>
+    <span class="cc-pair"><span class="cc-lbl">brightness</span><input id="ccBr" class="cc-inp" type="number" min="-2" max="2" value="0"></span>
+    <span class="cc-pair"><span class="cc-lbl">contrast</span><input id="ccCo" class="cc-inp" type="number" min="-2" max="2" value="1"></span>
+    <span class="cc-pair"><span class="cc-lbl">saturation</span><input id="ccSa" class="cc-inp" type="number" min="-2" max="2" value="0"></span>
+    <span class="cc-pair"><span class="cc-lbl">sharpness</span><input id="ccSh" class="cc-inp" type="number" min="-2" max="2" value="1"></span>
+    <span class="cc-pair"><span class="cc-lbl">ae_level</span><input id="ccAe" class="cc-inp" type="number" min="-2" max="2" value="0"></span>
+    <span class="cc-pair"><span class="cc-lbl">vflip</span><input id="ccVf" class="cc-inp" type="number" min="0" max="1" value="0"></span>
+    <span class="cc-pair"><span class="cc-lbl">hmirror</span><input id="ccHm" class="cc-inp" type="number" min="0" max="1" value="0"></span>
+    <button id="ccApply" class="cc-btn">Apply</button>
+    <button id="ccReset" class="cc-btn" style="color:#888">Reset</button>
+  </div>
 </div>
 
 <!-- joint angles (14-D per §5) -->
@@ -108,6 +158,36 @@ let wsConn     = null;        // active WebSocket connection
 let latestBitmap  = null;     // most recently decoded ImageBitmap
 let decodePending = false;    // true while createImageBitmap() is in flight
 let pendingData   = null;     // newest raw bytes waiting for a decode slot
+let lastFrameBytes = 0;
+
+// ── Cam state (mirrors firmware defaults; updated on Apply / Reset) ────────
+const FW = { res:'320x240', q:12, brightness:0, contrast:1, saturation:0, sharpness:1, ae_level:0, vflip:0, hmirror:0 };
+let camState = { ...FW };
+
+const CC_IDS = { res:'ccRes', q:'ccQ', brightness:'ccBr', contrast:'ccCo',
+                 saturation:'ccSa', sharpness:'ccSh', ae_level:'ccAe', vflip:'ccVf', hmirror:'ccHm' };
+
+function ccHighlight() {
+  for (const [k, id] of Object.entries(CC_IDS)) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('diff', String(camState[k]) !== String(FW[k]));
+  }
+}
+
+function ccReadInputs() {
+  return {
+    res:        document.getElementById('ccRes').value,
+    q:          parseInt(document.getElementById('ccQ').value, 10),
+    brightness: parseInt(document.getElementById('ccBr').value, 10),
+    contrast:   parseInt(document.getElementById('ccCo').value, 10),
+    saturation: parseInt(document.getElementById('ccSa').value, 10),
+    sharpness:  parseInt(document.getElementById('ccSh').value, 10),
+    ae_level:   parseInt(document.getElementById('ccAe').value, 10),
+    vflip:      parseInt(document.getElementById('ccVf').value, 10),
+    hmirror:    parseInt(document.getElementById('ccHm').value, 10),
+  };
+}
+
 
 // ── Elements ───────────────────────────────────────────────────────────────
 const canvas    = document.getElementById("canvas");
@@ -145,6 +225,7 @@ function wsUrl(httpUrl) {
 // immediately once the current decode completes. This ensures the pipeline always
 // shows the newest frame and never queues more than one extra, preventing latency creep.
 function startDecode(data) {
+  lastFrameBytes = data.byteLength;
   decodePending = true;
   pendingData   = null;
   createImageBitmap(new Blob([data], { type: "image/jpeg" })).then(bmp => {
@@ -190,17 +271,17 @@ function openWs() {
   };
 }
 
+function buildCamQuery() {
+  const s = camState;
+  return `/cam?res=${s.res}&q=${s.q}&brightness=${s.brightness}&contrast=${s.contrast}&saturation=${s.saturation}&sharpness=${s.sharpness}&ae_level=${s.ae_level}&vflip=${s.vflip}&hmirror=${s.hmirror}`;
+}
+
 function applyStream() {
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-  // Close any existing connection before opening a new one
   if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
   fpsHist.length = 0;
   fpsEl.textContent = "— fps";
-
-  // Configure camera first, then open WebSocket.
-  // Errors are silently ignored — if the device is unreachable, the WS will
-  // fail to connect and trigger the retry path via onclose.
-  fetch(`${camUrl}/cam?res=320x240&q=20&brightness=0`, { signal: AbortSignal.timeout(3000) })
+  fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) })
     .catch(() => {})
     .finally(() => openWs());
 }
@@ -216,6 +297,23 @@ function connect(value) {
 // ── Camera controls ────────────────────────────────────────────────────────
 document.getElementById("camApply").addEventListener("click", () => connect(camUrlEl.value));
 camUrlEl.addEventListener("keydown", e => { if (e.key === "Enter") connect(camUrlEl.value); });
+
+// ── Cam control panel ─────────────────────────────────────────────────────
+document.getElementById('ccApply').addEventListener('click', () => {
+  camState = ccReadInputs();
+  ccHighlight();
+  fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+});
+
+document.getElementById('ccReset').addEventListener('click', () => {
+  camState = { ...FW };
+  for (const [k, id] of Object.entries(CC_IDS)) {
+    const el = document.getElementById(id);
+    if (el) el.value = FW[k];
+  }
+  ccHighlight();
+  fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+});
 
 // ── Navigation ─────────────────────────────────────────────────────────────
 document.getElementById("btnPair").addEventListener("click", () => {
@@ -536,6 +634,7 @@ function tick(now) {
     const visCount = result.landmarks[0].filter(p => p.visibility > 0.5).length;
 
     const angles = computeAngles(result.worldLandmarks[0]);
+    const validAngles = angles.filter(v => v !== null).length;
     angles.forEach((val, i) => {
       const el = document.getElementById(`av${i}`);
       if (val === null) {
@@ -555,6 +654,8 @@ function tick(now) {
     document.getElementById("mDetect").textContent = lastDetectMs + "ms";
     document.getElementById("mAvg").textContent    = detectAvg + "ms";
     document.getElementById("mVis").textContent    = visCount + "/33";
+    document.getElementById("mAng").textContent    = validAngles + "/14";
+    document.getElementById("mBytes").textContent  = lastFrameBytes > 0 ? (lastFrameBytes / 1024).toFixed(1) + "KB" : "—";
     document.getElementById("mSkip").textContent   = skipPct + "%";
 
     if (recording) {
@@ -577,6 +678,8 @@ function tick(now) {
     document.getElementById("mDetect").textContent = lastDetectMs + "ms";
     document.getElementById("mAvg").textContent    = detectAvg + "ms";
     document.getElementById("mVis").textContent    = "—";
+    document.getElementById("mAng").textContent    = "—";
+    document.getElementById("mBytes").textContent  = lastFrameBytes > 0 ? (lastFrameBytes / 1024).toFixed(1) + "KB" : "—";
     document.getElementById("mSkip").textContent   = skipPct + "%";
   }
 }
