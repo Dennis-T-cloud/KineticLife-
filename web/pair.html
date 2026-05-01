@@ -40,8 +40,14 @@
     .qrBox { min-height: 460px; border: 1px solid #dde4ef; border-radius: 8px;
              background: #fff; display: grid; place-items: center; padding: 20px;
              box-shadow: 0 18px 40px rgba(33, 49, 77, 0.12); }
-    #qr { width: 420px; height: 420px; display: grid; place-items: center; color: #697891; font-weight: 800; text-align: center; }
+    #qr { width: 420px; height: 420px; display: grid; place-items: center; color: #697891; font-weight: 800; text-align: center; transition: transform 0.15s; transform-origin: top center; }
     #qr canvas, #qr img { width: 420px; height: 420px; display: block; image-rendering: pixelated; }
+    .qrScaleRow { display: flex; gap: 6px; align-items: center; margin-top: 14px; }
+    .qrScaleBtn { background: transparent; border: 1.5px solid #bac6d8; color: #50617c;
+                  border-radius: 6px; padding: 6px 13px; font: inherit; font-size: 13px;
+                  font-weight: 700; cursor: pointer; }
+    .qrScaleBtn:hover { border-color: #1f6f52; color: #1f6f52; }
+    .qrScaleBtn.active { border-color: #1f6f52; color: #1f6f52; background: #eef8f3; }
     pre { margin: 0; white-space: pre-wrap; word-break: break-all; background: #172033;
           color: #dbe7f6; border-radius: 6px; padding: 12px; font-size: 12px; }
     .actions { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
@@ -110,6 +116,13 @@
 
       <div class="qrBox">
         <div id="qr">Enter SSID</div>
+        <div class="qrScaleRow">
+          <span style="font-size:13px;color:#697891;font-weight:700">Size:</span>
+          <button class="qrScaleBtn" data-scale="0.3">30%</button>
+          <button class="qrScaleBtn" data-scale="0.5">50%</button>
+          <button class="qrScaleBtn" data-scale="0.7">70%</button>
+          <button class="qrScaleBtn active" data-scale="1">100%</button>
+        </div>
       </div>
     </section>
 
@@ -238,6 +251,17 @@
 
     [ssidEl, typeEl, passwordEl].forEach((el) => el.addEventListener("input", updateQr));
     document.getElementById("refreshQr").addEventListener("click", updateQr);
+
+    // QR scale buttons
+    document.querySelectorAll(".qrScaleBtn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const scale = parseFloat(btn.dataset.scale);
+        const qrEl2 = document.getElementById("qr");
+        qrEl2.style.transform = scale === 1 ? "" : `scale(${scale})`;
+        document.querySelectorAll(".qrScaleBtn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+      });
+    });
     document.getElementById("openCam").addEventListener("click", () => {
       const camUrl = normalizeCamUrl(camUrlEl.value);
       localStorage.setItem("kineticlife.camUrl", camUrl);

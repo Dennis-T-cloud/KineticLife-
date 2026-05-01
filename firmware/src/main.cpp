@@ -16,7 +16,7 @@
 #define KINETICLIFE_BOARD_MODEL "Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B"
 #endif
 #ifndef KINETICLIFE_CAMERA_MODEL
-#define KINETICLIFE_CAMERA_MODEL "OV2640"
+#define KINETICLIFE_CAMERA_MODEL "OV5640"
 #endif
 
 static const char* wifi_status_name(wl_status_t status) {
@@ -281,6 +281,7 @@ void setup() {
 
 void loop() {
     http_server_handle();
+    http_server_push_frame();
     status_led_handle();
 
     static unsigned long last_status_ms = 0;

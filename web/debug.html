@@ -39,7 +39,9 @@
                display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
     .m  { font-size: 12px; white-space: nowrap; }
     .ml { color: #64748b; }
-    .mv { color: #e2e8f0; font-weight: bold; }
+    .mv { color: #e2e8f0; font-weight: bold; display: inline-block; min-width: 4.5ch; text-align: right; }
+    #mVis, #mAng { min-width: 5.5ch; }
+    #mBytes { min-width: 6ch; }
 
     /* ── joint angles ── */
     #angles { width: 100%; padding: 6px 10px; display: grid;
@@ -52,6 +54,26 @@
     .av.ok   { color: #34d399; }
     .av.warn { color: #f59e0b; }
     .av.bad  { color: #f44636; }
+
+    /* ── cam control ── */
+    #camctl { width: 100%; padding: 5px 10px; background: #0e0e0e;
+              border-bottom: 1px solid #2b2b2b; display: flex; flex-direction: column; gap: 4px; }
+    .cc-row  { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11px; }
+    .cc-file { color: #4a5568; min-width: 160px; white-space: nowrap; }
+    .cc-pair { display: flex; align-items: center; gap: 3px; }
+    .cc-lbl  { color: #64748b; }
+    .cc-inp  { background: #202020; border: 1px solid #333; color: #e2e8f0;
+               font: 11px monospace; border-radius: 2px; padding: 1px 4px;
+               width: 34px; text-align: center; }
+    select.cc-inp { width: 80px; }
+    .cc-inp.diff  { border-color: #d97706; color: #f59e0b; }
+    input[type=number].cc-inp::-webkit-inner-spin-button,
+    input[type=number].cc-inp::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number].cc-inp { -moz-appearance: textfield; }
+    #ccQ { width: 44px; }
+    .mdir   { font-size: 9px; font-weight: normal; margin-left: 1px; }
+    .mdir-h { color: #4ade80; }
+    .mdir-l { color: #60a5fa; }
 
     @media (max-width: 500px) {
       .bar input { min-width: 120px; }
@@ -82,19 +104,46 @@
 
 <!-- metrics bar -->
 <div id="metrics">
-  <span class="m"><span class="ml">detect </span><span class="mv" id="mDetect">—</span></span>
-  <span class="m"><span class="ml">avg </span><span class="mv" id="mAvg">—</span></span>
-  <span class="m"><span class="ml">vis </span><span class="mv" id="mVis">—</span></span>
-  <span class="m"><span class="ml">skip </span><span class="mv" id="mSkip">—</span></span>
+  <span class="m"><span class="ml">detect<span class="mdir mdir-l">L</span> </span><span class="mv" id="mDetect">—</span></span>
+  <span class="m"><span class="ml">avg<span class="mdir mdir-l">L</span> </span><span class="mv" id="mAvg">—</span></span>
+  <span class="m"><span class="ml">vis<span class="mdir mdir-h">H</span> </span><span class="mv" id="mVis">—</span></span>
+  <span class="m"><span class="ml">ang<span class="mdir mdir-h">H</span> </span><span class="mv" id="mAng">—</span></span>
+  <span class="m"><span class="ml">bytes<span class="mdir mdir-l">L</span> </span><span class="mv" id="mBytes">—</span></span>
+  <span class="m"><span class="ml">skip<span class="mdir mdir-l">L</span> </span><span class="mv" id="mSkip">—</span></span>
   <span class="m"><span class="ml">mode </span><span class="mv" id="mMode" style="color:#34d399">COLOR</span></span>
-  <span class="m"><span class="ml">match </span><span class="mv" id="mMatch" style="color:#f59e0b">—</span></span>
+  <span class="m"><span class="ml">match<span class="mdir mdir-h">H</span> </span><span class="mv" id="mMatch" style="color:#f59e0b">—</span></span>
+</div>
+
+<!-- cam params (current runtime, grouped by source file) -->
+<div id="camctl">
+  <div class="cc-row">
+    <span class="cc-file">camera_init.cpp:171</span>
+    <span class="cc-pair"><span class="cc-lbl">res</span>
+      <select id="ccRes" class="cc-inp">
+        <option value="320x240">320×240</option>
+        <option value="640x480">640×480</option>
+      </select></span>
+    <span class="cc-pair"><span class="cc-lbl">q</span>
+      <input id="ccQ" class="cc-inp" type="number" min="4" max="63" value="12"></span>
+  </div>
+  <div class="cc-row">
+    <span class="cc-file">camera_init.cpp:95</span>
+    <span class="cc-pair"><span class="cc-lbl">brightness</span><input id="ccBr" class="cc-inp" type="number" min="-2" max="2" value="0"></span>
+    <span class="cc-pair"><span class="cc-lbl">contrast</span><input id="ccCo" class="cc-inp" type="number" min="-2" max="2" value="1"></span>
+    <span class="cc-pair"><span class="cc-lbl">saturation</span><input id="ccSa" class="cc-inp" type="number" min="-2" max="2" value="0"></span>
+    <span class="cc-pair"><span class="cc-lbl">sharpness</span><input id="ccSh" class="cc-inp" type="number" min="-2" max="2" value="1"></span>
+    <span class="cc-pair"><span class="cc-lbl">ae_level</span><input id="ccAe" class="cc-inp" type="number" min="-2" max="2" value="0"></span>
+    <span class="cc-pair"><span class="cc-lbl">vflip</span><input id="ccVf" class="cc-inp" type="number" min="0" max="1" value="0"></span>
+    <span class="cc-pair"><span class="cc-lbl">hmirror</span><input id="ccHm" class="cc-inp" type="number" min="0" max="1" value="0"></span>
+    <button id="ccApply" class="cc-btn">Apply</button>
+    <button id="ccReset" class="cc-btn" style="color:#888">Reset</button>
+  </div>
 </div>
 
 <!-- joint angles (14-D per §5) -->
 <div id="angles"></div>
 
-<!-- hidden MJPEG source; canvas reads frames from it -->
-<img id="mjpeg" crossorigin="anonymous" style="display:none" alt="">
+<!-- WebSocket video stream — no img element needed -->
 
 <script type="module">
 import { PoseLandmarker, FilesetResolver, DrawingUtils }
@@ -103,14 +152,44 @@ import { PoseLandmarker, FilesetResolver, DrawingUtils }
 // ── State ──────────────────────────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
 const DEFAULT_URL = "http://fitcam-d37d7c.local";
-let camUrl    = params.get("cam") || localStorage.getItem("kineticlife.camUrl") || DEFAULT_URL;
+let camUrl     = params.get("cam") || localStorage.getItem("kineticlife.camUrl") || DEFAULT_URL;
 let retryTimer = null;
-let streamReady = false;
-// 1×1 transparent GIF — clean disconnect without triggering error event
-const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+let wsConn     = null;        // active WebSocket connection
+let latestBitmap  = null;     // most recently decoded ImageBitmap
+let decodePending = false;    // true while createImageBitmap() is in flight
+let pendingData   = null;     // newest raw bytes waiting for a decode slot
+let lastFrameBytes = 0;
+
+// ── Cam state (mirrors firmware defaults; updated on Apply / Reset) ────────
+const FW = { res:'320x240', q:12, brightness:0, contrast:1, saturation:0, sharpness:1, ae_level:0, vflip:0, hmirror:0 };
+let camState = { ...FW };
+
+const CC_IDS = { res:'ccRes', q:'ccQ', brightness:'ccBr', contrast:'ccCo',
+                 saturation:'ccSa', sharpness:'ccSh', ae_level:'ccAe', vflip:'ccVf', hmirror:'ccHm' };
+
+function ccHighlight() {
+  for (const [k, id] of Object.entries(CC_IDS)) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('diff', String(camState[k]) !== String(FW[k]));
+  }
+}
+
+function ccReadInputs() {
+  return {
+    res:        document.getElementById('ccRes').value,
+    q:          parseInt(document.getElementById('ccQ').value, 10),
+    brightness: parseInt(document.getElementById('ccBr').value, 10),
+    contrast:   parseInt(document.getElementById('ccCo').value, 10),
+    saturation: parseInt(document.getElementById('ccSa').value, 10),
+    sharpness:  parseInt(document.getElementById('ccSh').value, 10),
+    ae_level:   parseInt(document.getElementById('ccAe').value, 10),
+    vflip:      parseInt(document.getElementById('ccVf').value, 10),
+    hmirror:    parseInt(document.getElementById('ccHm').value, 10),
+  };
+}
+
 
 // ── Elements ───────────────────────────────────────────────────────────────
-const img       = document.getElementById("mjpeg");
 const canvas    = document.getElementById("canvas");
 const ctx       = canvas.getContext("2d");
 const statusEl  = document.getElementById("status");
@@ -129,23 +208,82 @@ function tickFps(now) {
   fpsEl.textContent = (fpsHist.length / 3).toFixed(1) + " fps";
 }
 
-// ── Stream control ─────────────────────────────────────────────────────────
+// ── Stream control (WebSocket) ─────────────────────────────────────────────
 function normalizeCamUrl(v) {
   const t = v.trim().replace(/\/+$/, "");
   if (!t) return DEFAULT_URL;
   return /^https?:\/\//i.test(t) ? t : `http://${t}`;
 }
 
+function wsUrl(httpUrl) {
+  return httpUrl.replace(/^http:\/\//i, "ws://") + "/ws";
+}
+
+// Decode one raw JPEG ArrayBuffer → latestBitmap.
+// At most one decode is in flight at a time. If a new frame arrives while decoding,
+// it is stored in pendingData (overwriting any earlier pending frame) and drained
+// immediately once the current decode completes. This ensures the pipeline always
+// shows the newest frame and never queues more than one extra, preventing latency creep.
+function startDecode(data) {
+  lastFrameBytes = data.byteLength;
+  decodePending = true;
+  pendingData   = null;
+  createImageBitmap(new Blob([data], { type: "image/jpeg" })).then(bmp => {
+    if (latestBitmap) latestBitmap.close(); // release previous GPU texture
+    latestBitmap = bmp;
+    tickFps(performance.now());             // fps = actual network delivery rate
+    decodePending = false;
+    if (pendingData) startDecode(pendingData); // drain one-frame backlog
+  });
+}
+
+function openWs() {
+  const url = wsUrl(camUrl);
+  const sock = new WebSocket(url);
+  wsConn = sock;
+  sock.binaryType = "arraybuffer";
+
+  sock.onopen = () => {
+    console.log(`[ws] connected ${url}`);
+    statusEl.textContent = "connected";
+  };
+
+  sock.onmessage = ({ data }) => {
+    if (decodePending) {
+      pendingData = data; // overwrite: latest frame wins, intermediate frames dropped
+      return;
+    }
+    startDecode(data);
+  };
+
+  sock.onclose = () => {
+    if (wsConn !== sock) return; // stale — a newer connect() already took over
+    wsConn = null;
+    console.warn("[ws] closed — retrying in 2 s");
+    statusEl.textContent = "stream closed — retrying in 2 s";
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = setTimeout(applyStream, 2000);
+  };
+
+  sock.onerror = () => {
+    console.error("[ws] error");
+    statusEl.textContent = "WebSocket error";
+  };
+}
+
+function buildCamQuery() {
+  const s = camState;
+  return `/cam?res=${s.res}&q=${s.q}&brightness=${s.brightness}&contrast=${s.contrast}&saturation=${s.saturation}&sharpness=${s.sharpness}&ae_level=${s.ae_level}&vflip=${s.vflip}&hmirror=${s.hmirror}`;
+}
+
 function applyStream() {
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-  streamReady = false;
-  img.src = BLANK;           // valid URL → no error event; cancels old stream
+  if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
   fpsHist.length = 0;
   fpsEl.textContent = "— fps";
-  setTimeout(() => {
-    streamReady = true;
-    img.src = `${camUrl}/stream?res=320x240&q=20&brightness=0&ts=${Date.now()}`;
-  }, 450);
+  fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) })
+    .catch(() => {})
+    .finally(() => openWs());
 }
 
 function connect(value) {
@@ -156,26 +294,35 @@ function connect(value) {
   applyStream();
 }
 
-img.addEventListener("error", () => {
-  const now = performance.now();
-  console.warn(`[stream] disconnected at ${(now/1000).toFixed(1)}s — retrying in 2s`);
-  statusEl.textContent = `stream failed — retrying in 2 s`;
-  if (retryTimer) clearTimeout(retryTimer);
-  retryTimer = setTimeout(applyStream, 2000);
-});
-
 // ── Camera controls ────────────────────────────────────────────────────────
 document.getElementById("camApply").addEventListener("click", () => connect(camUrlEl.value));
 camUrlEl.addEventListener("keydown", e => { if (e.key === "Enter") connect(camUrlEl.value); });
 
+// ── Cam control panel ─────────────────────────────────────────────────────
+document.getElementById('ccApply').addEventListener('click', () => {
+  camState = ccReadInputs();
+  ccHighlight();
+  fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+});
+
+document.getElementById('ccReset').addEventListener('click', () => {
+  camState = { ...FW };
+  for (const [k, id] of Object.entries(CC_IDS)) {
+    const el = document.getElementById(id);
+    if (el) el.value = FW[k];
+  }
+  ccHighlight();
+  fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+});
+
 // ── Navigation ─────────────────────────────────────────────────────────────
 document.getElementById("btnPair").addEventListener("click", () => {
-  img.src = BLANK;
+  if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
   location.href = "./pair.html";
 });
 
 document.getElementById("btnEnd").addEventListener("click", async () => {
-  img.src = BLANK;
+  if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
   statusEl.textContent = "ending session — ESP32 rebooting…";
   try {
     await fetch(`${camUrl}/end`, { method: "POST", mode: "cors", signal: AbortSignal.timeout(3000) });
@@ -278,89 +425,94 @@ recBtn.addEventListener("click", () => {
   }
 });
 
-// ── DTW comparison module ──────────────────────────────────────────────────
-// Extension points for future server-side DTW:
-//   - Replace dtw1d() with a fetch() to /api/dtw
-//   - Replace comparePoseSeries() with a server call that returns the same shape
-//   - DTW_CFG thresholds are tunable without touching logic
-
+// ── DTW config ─────────────────────────────────────────────────────────────
 const DTW_CFG = {
-  BUFFER_FRAMES: 150,   // rolling live buffer (~10 s @ 15 fps); grows to match ref length
-  COMPARE_EVERY:  20,   // run comparison every N new detected frames
-  GOOD_DEG:        8,   // per-joint avg DTW distance → green
-  WARN_DEG:       18,   // per-joint avg DTW distance → yellow (above = red)
-  SCORE_MAX_DEG:  30,   // distance at which overall score reaches 0 %
+  WINDOW_SIZE:   60,  // fixed sliding window — ~6.5 s at the ~9 fps camera rate
+  COMPARE_EVERY: 15,  // dispatch to worker every N valid detected poses
+  GOOD_DEG:       8,  // per-joint avg DTW distance → green
+  WARN_DEG:      18,  // per-joint avg DTW distance → yellow (above = red)
+  SCORE_MAX_DEG: 30,  // distance at which overall score reaches 0 %
 };
 
-let refFrames       = null;               // loaded reference sequence
-let liveBufMax      = DTW_CFG.BUFFER_FRAMES;
-let liveBuffer      = [];                 // rolling buffer of live frames
-let lastJointScores = new Array(14).fill(null); // per-joint DTW distance (°)
-let lastMatchScore  = null;               // 0–100
-let compareTick     = 0;                  // counts frames since last comparison
+// ── DTW state ──────────────────────────────────────────────────────────────
+let refFrames       = null;
+let dtwBusy         = false;     // worker is processing — skip new dispatches until done
+let compareTick     = 0;
+let lastJointScores = new Array(14).fill(null);
+let lastMatchScore  = null;
 
-// 1-D DTW — returns total_path_cost / path_length (normalised, in original units).
-// Uses a flat Float32Array for efficiency; O(n·m) time and space.
-function dtw1d(s, t) {
-  const n = s.length, m = t.length;
-  const W = m + 1;
-  const dp = new Float32Array((n + 1) * W).fill(Infinity);
-  dp[0] = 0;
-  for (let i = 1; i <= n; i++) {
-    for (let j = 1; j <= m; j++) {
-      const cost = Math.abs(s[i - 1] - t[j - 1]);
-      dp[i * W + j] = cost + Math.min(
-        dp[(i - 1) * W + j],       // insertion
-        dp[i       * W + j - 1],   // deletion
-        dp[(i - 1) * W + j - 1],   // match
-      );
-    }
+// ── DTW Web Worker (inlined Blob — no separate .js file required) ──────────
+// Runs the O(N²) DTW computation off the main thread so it cannot stutter
+// video rendering or MediaPipe inference regardless of pose sequence length.
+const _DTW_SRC = `
+function dtw1d(s,t){
+  const n=s.length,m=t.length,W=m+1;
+  const dp=new Float32Array((n+1)*W).fill(Infinity);
+  dp[0]=0;
+  for(let i=1;i<=n;i++) for(let j=1;j<=m;j++){
+    const c=Math.abs(s[i-1]-t[j-1]);
+    dp[i*W+j]=c+Math.min(dp[(i-1)*W+j],dp[i*W+j-1],dp[(i-1)*W+j-1]);
   }
-  // Traceback — count path length for normalisation
-  let i = n, j = m, pathLen = 0;
-  while (i > 0 && j > 0) {
-    pathLen++;
-    const a = dp[(i - 1) * W + j];
-    const b = dp[i       * W + j - 1];
-    const c = dp[(i - 1) * W + j - 1];
-    if (c <= a && c <= b) { i--; j--; }
-    else if (a <= b)       { i--; }
-    else                   { j--; }
+  let i=n,j=m,len=0;
+  while(i>0&&j>0){len++;const a=dp[(i-1)*W+j],b=dp[i*W+j-1],c=dp[(i-1)*W+j-1];
+    if(c<=a&&c<=b){i--;j--;}else if(a<=b){i--;}else{j--;}}
+  return dp[n*W+m]/Math.max(1,len);
+}
+self.onmessage=({data})=>{
+  const{ref,query,scoreMax}=data,N=14,dists=new Array(N).fill(null);
+  let total=0,valid=0;
+  for(let j=0;j<N;j++){
+    const rs=ref.map(f=>f.joint_angles[j]).filter(v=>v!==null);
+    const qs=query.map(f=>f.joint_angles[j]).filter(v=>v!==null);
+    if(rs.length<4||qs.length<4) continue;
+    const d=dtw1d(rs,qs);dists[j]=d;total+=d;valid++;
   }
-  return dp[n * W + m] / Math.max(1, pathLen);
+  const avg=valid>0?total/valid:Infinity;
+  self.postMessage({
+    score:valid>0?Math.max(0,Math.round(100*(1-avg/scoreMax))):null,
+    jointDists:dists,validJoints:valid
+  });
+};`;
+const dtwWorker = new Worker(
+  URL.createObjectURL(new Blob([_DTW_SRC], { type: "application/javascript" }))
+);
+dtwWorker.onmessage = ({ data }) => {
+  dtwBusy        = false;
+  lastMatchScore  = data.score;
+  lastJointScores = data.jointDists;
+  const el = document.getElementById("mMatch");
+  if (lastMatchScore === null) {
+    el.textContent = "—"; el.style.color = "#f59e0b";
+  } else {
+    el.textContent  = lastMatchScore + "%";
+    el.style.color  = lastMatchScore >= 70 ? "#34d399" : lastMatchScore >= 40 ? "#f59e0b" : "#f44636";
+  }
+};
+
+// ── Sliding window buffer (fixed-size circular) ────────────────────────────
+// Stores the last WINDOW_SIZE pose frames in chronological order.
+// Frames with fewer than 8 visible joints are discarded as noise.
+const slideWindow = new Array(DTW_CFG.WINDOW_SIZE).fill(null);
+let slideHead  = 0;   // next write position
+let slideCount = 0;   // valid entries (ramps up until window is full)
+
+function pushToWindow(angles, ts_ms) {
+  if (angles.filter(a => a !== null).length < 8) return; // skip low-visibility frame
+  slideWindow[slideHead] = { ts_ms, joint_angles: angles };
+  slideHead = (slideHead + 1) % DTW_CFG.WINDOW_SIZE;
+  if (slideCount < DTW_CFG.WINDOW_SIZE) slideCount++;
 }
 
-// Compare full pose series.
-// ref / query: Array of { joint_angles: number|null[] }
-// Returns { score: 0–100|null, jointDists: (number|null)[], validJoints: number }
-function comparePoseSeries(ref, query) {
-  const N = 14;
-  const jointDists = new Array(N).fill(null);
-  let totalDist = 0, validJoints = 0;
-
-  for (let j = 0; j < N; j++) {
-    const rs = ref  .map(f => f.joint_angles[j]).filter(v => v !== null);
-    const qs = query.map(f => f.joint_angles[j]).filter(v => v !== null);
-    if (rs.length < 4 || qs.length < 4) continue;
-    const d = dtw1d(rs, qs);
-    jointDists[j] = d;
-    totalDist += d;
-    validJoints++;
-  }
-
-  const avgDist = validJoints > 0 ? totalDist / validJoints : Infinity;
-  const score   = validJoints > 0
-    ? Math.max(0, Math.round(100 * (1 - avgDist / DTW_CFG.SCORE_MAX_DEG)))
-    : null;
-
-  return { score, jointDists, validJoints };
+function getWindowSlice() {
+  // Return frames in chronological order (oldest → newest)
+  if (slideCount < DTW_CFG.WINDOW_SIZE) return slideWindow.slice(0, slideCount);
+  return [...slideWindow.slice(slideHead), ...slideWindow.slice(0, slideHead)];
 }
 
-// Load reference JSON
+// ── Load reference for DTW ─────────────────────────────────────────────────
 const loadRefBtn   = document.getElementById("loadRefBtn");
 const loadRefInput = document.getElementById("loadRefInput");
 const refNameEl    = document.getElementById("refName");
-const mMatchEl     = document.getElementById("mMatch");
 
 loadRefBtn.addEventListener("click", () => loadRefInput.click());
 loadRefInput.addEventListener("change", e => {
@@ -371,15 +523,14 @@ loadRefInput.addEventListener("change", e => {
     try {
       const data = JSON.parse(ev.target.result);
       if (!Array.isArray(data) || !data[0]?.joint_angles) throw new Error("bad format");
-      refFrames       = data;
-      liveBufMax      = Math.max(DTW_CFG.BUFFER_FRAMES, Math.round(data.length * 1.3));
-      liveBuffer      = [];
+      refFrames = data;
+      slideWindow.fill(null); slideHead = 0; slideCount = 0; // reset window on new ref
       lastJointScores = new Array(14).fill(null);
       lastMatchScore  = null;
       refNameEl.textContent = `${file.name} (${data.length}f)`;
       refNameEl.style.color = "#34d399";
-      mMatchEl.textContent  = "—";
-      mMatchEl.style.color  = "#f59e0b";
+      const mEl = document.getElementById("mMatch");
+      mEl.textContent = "—"; mEl.style.color = "#f59e0b";
     } catch (_) {
       refNameEl.textContent = "invalid JSON";
       refNameEl.style.color = "#f44";
@@ -444,13 +595,14 @@ function tick(now) {
   const minInterval = Math.max(50, lastDetectMs + 30);
   if (now - lastTick < minInterval) { tickSkipped++; return; }
   lastTick = now;
-  if (!streamReady || !img.complete || img.naturalWidth === 0 || !landmarker) return;
+  if (!latestBitmap || !landmarker) return;
 
-  // Inference canvas always gets the rotated frame
+  // Inference canvas: rotate 90° CW — camera sends 320×240 landscape,
+  // inferCanvas is 120×160 portrait (same 3:4 aspect, scaled down).
   inferCtx.save();
   inferCtx.translate(inferCanvas.width, 0);
   inferCtx.rotate(Math.PI / 2);
-  inferCtx.drawImage(img, 0, 0, inferCanvas.height, inferCanvas.width);
+  inferCtx.drawImage(latestBitmap, 0, 0, inferCanvas.height, inferCanvas.width);
   inferCtx.restore();
 
   // Display canvas: skip drawImage when raw is off (save GPU blit)
@@ -458,7 +610,7 @@ function tick(now) {
     ctx.save();
     ctx.translate(canvas.width, 0);
     ctx.rotate(Math.PI / 2);
-    ctx.drawImage(img, 0, 0, canvas.height, canvas.width);
+    ctx.drawImage(latestBitmap, 0, 0, canvas.height, canvas.width);
     ctx.restore();
   } else {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -473,8 +625,6 @@ function tick(now) {
   if (detectHist.length > 20) detectHist.shift();
   const detectAvg = Math.round(detectHist.reduce((a, b) => a + b, 0) / detectHist.length);
 
-  tickFps(now);
-
   if (result.landmarks.length > 0) {
     drawing.drawConnectors(result.landmarks[0], PoseLandmarker.POSE_CONNECTIONS,
                            { color: "#00ff88", lineWidth: 3 });
@@ -484,6 +634,7 @@ function tick(now) {
     const visCount = result.landmarks[0].filter(p => p.visibility > 0.5).length;
 
     const angles = computeAngles(result.worldLandmarks[0]);
+    const validAngles = angles.filter(v => v !== null).length;
     angles.forEach((val, i) => {
       const el = document.getElementById(`av${i}`);
       if (val === null) {
@@ -503,6 +654,8 @@ function tick(now) {
     document.getElementById("mDetect").textContent = lastDetectMs + "ms";
     document.getElementById("mAvg").textContent    = detectAvg + "ms";
     document.getElementById("mVis").textContent    = visCount + "/33";
+    document.getElementById("mAng").textContent    = validAngles + "/14";
+    document.getElementById("mBytes").textContent  = lastFrameBytes > 0 ? (lastFrameBytes / 1024).toFixed(1) + "KB" : "—";
     document.getElementById("mSkip").textContent   = skipPct + "%";
 
     if (recording) {
@@ -510,29 +663,23 @@ function tick(now) {
       recCount.textContent = `${frames.length} frames`;
     }
 
-    // Accumulate live buffer for DTW (always, independent of recording)
-    liveBuffer.push({ ts_ms: Math.round(now), joint_angles: angles });
-    if (liveBuffer.length > liveBufMax) liveBuffer.shift();
+    // Push pose to fixed sliding window (visibility-filtered)
+    pushToWindow(angles, Math.round(now));
 
-    // Run comparison every COMPARE_EVERY frames (only when ref is loaded)
-    if (refFrames && ++compareTick >= DTW_CFG.COMPARE_EVERY) {
+    // Dispatch DTW to background worker — non-blocking; skipped while worker is busy
+    // so O(N²) computation never touches the main thread.
+    if (refFrames && !dtwBusy && ++compareTick >= DTW_CFG.COMPARE_EVERY && slideCount >= 15) {
       compareTick = 0;
-      const { score, jointDists } = comparePoseSeries(refFrames, liveBuffer);
-      lastMatchScore  = score;
-      lastJointScores = jointDists;
-      if (score === null) {
-        mMatchEl.textContent = "—";
-        mMatchEl.style.color = "#f59e0b";
-      } else {
-        mMatchEl.textContent = score + "%";
-        mMatchEl.style.color = score >= 70 ? "#34d399" : score >= 40 ? "#f59e0b" : "#f44636";
-      }
+      dtwBusy = true;
+      dtwWorker.postMessage({ ref: refFrames, query: getWindowSlice(), scoreMax: DTW_CFG.SCORE_MAX_DEG });
     }
   } else {
     const skipPct = tickTotal > 0 ? Math.round(tickSkipped / tickTotal * 100) : 0;
     document.getElementById("mDetect").textContent = lastDetectMs + "ms";
     document.getElementById("mAvg").textContent    = detectAvg + "ms";
     document.getElementById("mVis").textContent    = "—";
+    document.getElementById("mAng").textContent    = "—";
+    document.getElementById("mBytes").textContent  = lastFrameBytes > 0 ? (lastFrameBytes / 1024).toFixed(1) + "KB" : "—";
     document.getElementById("mSkip").textContent   = skipPct + "%";
   }
 }

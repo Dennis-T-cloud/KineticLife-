@@ -1,10 +1,10 @@
 # KineticLife
 
-> Real-time fitness action accuracy feedback. Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B + OV2640 camera + MediaPipe (browser-side) + cloud DTW. **Raw video never leaves the phone.**
+> Real-time fitness action accuracy feedback. Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B + OV5640 160° wide-angle camera + MediaPipe (browser-side, local) + cloud DTW on joint angles only. **Raw video never leaves the local network.**
 
 **Status**: v0.3 · 6-week Demo Day sprint · 3-person part-time team
 
-**Hardware baseline**: Freenove ESP32-S3-WROOM Board (N16R8), model **FNK0085 B**, with **OV2640** camera. All firmware pin mapping, camera tuning, and calibration notes should assume this board unless a document explicitly says otherwise.
+**Hardware baseline**: Freenove ESP32-S3-WROOM Board (N16R8), model **FNK0085 B**, with **OV5640 160° wide-angle** camera. All firmware pin mapping, camera tuning, and calibration notes should assume this board unless a document explicitly says otherwise.
 
 ## Repository Layout
 
@@ -96,13 +96,13 @@ uv run uvicorn app.main:app --reload
 
 ## Local Hardware Test (iPhone + Laptop)
 
-End-to-end test without the cloud backend: ESP32 streams video → iPhone runs MediaPipe → displays 14-D joint angles in real time.
+End-to-end test without the cloud backend: ESP32 streams WebSocket video → browser runs MediaPipe locally → displays 14-D joint angles in real time.
 
 ### What you need
 
-- Freenove ESP32-S3-WROOM (FNK0085 B) flashed with firmware in `firmware/`
+- Freenove ESP32-S3-WROOM (FNK0085 B) + OV5640 camera, flashed with firmware in `firmware/`
 - iPhone (acts as WiFi hotspot)
-- macOS laptop (serves the static pairing and camera pages)
+- macOS laptop on the same hotspot
 
 ### Steps
 
@@ -111,86 +111,81 @@ End-to-end test without the cloud backend: ESP32 streams video → iPhone runs M
 ```bash
 cd firmware
 pio run --target upload
+pio device monitor
 ```
 
-On first boot, if NVS has no saved WiFi credentials, the ESP32 enters QR pairing mode and prints:
+On first boot with no saved credentials, ESP32 enters pairing mode (blue LED blinks) and prints:
 
 ```text
-[pair] No saved WiFi credentials; entering QR pairing mode
+[pair] No saved WiFi; entering pairing mode
 ```
 
-To force pairing again after a successful setup:
-
-```bash
-cd firmware
-pio run --target erase
-pio run --target upload
-```
+To force re-pairing after setup: `pio run --target erase && pio run --target upload`
 
 #### 2. Start iPhone hotspot
 
-Start the hotspot and connect the laptop to it.
+Start hotspot, connect laptop to it. Use a 2.4 GHz hotspot; avoid spaces in the SSID.
 
-> For max compatibility, use a 2.4 GHz hotspot and avoid spaces in the hotspot SSID.
+#### 3. Pair via Soft AP (easiest path)
 
-#### 3. Find the laptop's hotspot IP
+Open `web/pair.html` locally (file://) or serve it:
 
 ```bash
-ipconfig getifaddr en0    # try en1 if blank
+cd web && python3 -m http.server 8080
+# open http://localhost:8080/pair.html
 ```
 
-#### 4. Allow incoming connections
+**Config tab** (Soft AP path — no QR needed):
 
-macOS firewall blocks them by default:
+1. Connect laptop to `KineticLife-Setup` (password: `kineticlife`)
+2. Open `pair.html` → Config tab → load preset networks or enter credentials
+3. ESP32 connects, saves, reboots
+4. Reconnect laptop to iPhone hotspot
+
+**QR tab** (alternative — keep laptop on hotspot throughout):
+
+Enter hotspot SSID/password → QR appears. Hold phone screen at 100% brightness ~20–30 cm from ESP32 camera. Wait for serial: `[session] saved`.
+
+> OV5640 note: 160° wide-angle lens reduces QR ECC success rate. Soft AP is more reliable.
+
+#### 4. Open the stream + debug page
+
+After reboot, ESP32 is at `http://fitcam-d37d7c.local/` (mDNS) or the IP shown in serial monitor.
+
+```bash
+# Or open directly in browser:
+open http://fitcam-d37d7c.local/
+```
+
+If mDNS fails, open `web/debug.html` and enter the IP manually. The debug page connects via `ws://` and runs MediaPipe + DTW locally.
+
+#### 5. Allow incoming connections (macOS firewall)
+
+Only needed if using `debug.html` served from laptop:
 
 ```bash
 sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
-# re-enable after testing:
-# sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+# re-enable after: --setglobalstate on
 ```
 
-#### 5. Serve the static web pages
+#### 6. End session
 
-```bash
-cd web
-python3 -m http.server 8080
-```
+Press **End Session** in the page, or: `curl -X POST http://fitcam-d37d7c.local/end`
 
-#### 6. Pair ESP32 with the WiFi QR
-
-Open the pair page on iPhone Safari:
-
-```text
-http://<laptop-ip>:8080/pair.html
-```
-
-Enter the hotspot SSID/password. The page generates the compact QR payload used by the current firmware:
-
-```text
-K1:W:<SSID_LEN>:<SSID><PASSWORD>
-```
-
-Set the phone brightness to 100%, hold the QR about 30 cm from the ESP32 camera, and wait for the serial monitor to print:
-
-```text
-[session] active_session_saved action=reboot_to_camera
-```
-
-After reboot, open `cam.html` from the Pair page. It consumes ESP32 `/stream`, runs MediaPipe in the browser, and displays the 14-D joint angles. If mDNS fails, copy the ESP32 serial monitor IP into the Camera address field.
-
-When the user is done, press **End Session** on `cam.html`. The page calls `/end`; ESP32 clears the temporary WiFi session from NVS and reboots back to QR pairing mode. There is intentionally no default hotspot in firmware.
+ESP32 clears NVS credentials and reboots to pairing mode.
 
 ### Troubleshooting
 
 | Symptom | Fix |
-| --- | --- |
-| Stream is black | mDNS failed — append `?cam=http://<ESP32-IP>` to the URL |
-| ESP32 IP unknown | Open `pio device monitor` and wait for the `[status]` line |
-| ESP32 stays in pairing mode | Re-enter the hotspot SSID/password, use 100% screen brightness, and hold the QR closer/farther around 30 cm |
-| WiFi connection fails after QR parse | Confirm the hotspot is 2.4 GHz and the password is correct; rename SSID without spaces if needed |
-| Next user should pair from scratch | Press **End Session** in `cam.html`, or run `pio run --target erase` before flashing |
-| "no pose detected" | Ensure full body is visible; move closer to camera |
-| Page unreachable from phone | Confirm firewall is off and laptop is on the hotspot network |
+|---------|-----|
+| Stream not loading | mDNS failed — use IP from serial monitor directly |
+| ESP32 IP unknown | `pio device monitor`, look for `[http] ready ip=...` |
+| Soft AP not visible | Wait 10 s after boot; blue LED should be blinking |
+| QR parse fails repeatedly | Use Soft AP path instead; OV5640 160° lens degrades QR reliability |
+| WiFi connect fails after QR | Keep phone screen on; hotspot must be 2.4 GHz |
+| `ws://` connection refused | Confirm laptop and ESP32 are on the same hotspot network |
+| No pose detected | Ensure full body visible; move 1–2 m from camera |
+| macOS firewall blocks page | Run `socketfilterfw --setglobalstate off` |
 
 ---
 

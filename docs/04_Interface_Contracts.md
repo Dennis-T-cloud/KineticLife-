@@ -21,7 +21,7 @@ Role docs (01/02/03) **do not redefine any format** — they only reference this
 │  Phone   │  ───────────────────────>         │ ESP32-S3│
 │   Web    │  ② HTTP /hello (handshake)        │         │
 │          │  <───────────────────────         │         │
-│          │  ③ HTTP /stream (MJPEG)           │         │
+│          │  ③ WebSocket /ws (binary JPEG)    │         │
 │          │  <═══════════════════════         │         │
 └────┬─────┘                                    └─────────┘
      │ ④ WebSocket JSON (bidirectional)
@@ -108,7 +108,7 @@ Web tries to resolve on launch; falls back to manual IP entry on failure.
   "fw_version": "0.3.0",
   "mac": "aa:bb:cc:a1:b2:c3",
   "board_model": "Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B",
-  "cam_model": "OV2640",
+  "cam_model": "OV5640",
   "state": "ready",
   "supported_resolutions": ["160x120@20", "240x240@15", "320x240@10"],
   "default_resolution": "240x240@15",
@@ -134,7 +134,7 @@ Web tries to resolve on launch; falls back to manual IP entry on failure.
   "device_id": "a1b2c3",
   "fw_version": "0.3.0",
   "board_model": "Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B",
-  "cam_model": "OV2640",
+  "cam_model": "OV5640",
   "camera_mode": "stream",
   "pixel_format": "JPEG",
   "frame_size": "240x240",
@@ -151,35 +151,24 @@ Web tries to resolve on launch; falls back to manual IP entry on failure.
 
 `state` values: `boot`, `pairing`, `connecting`, `ready`, `streaming`, `error`, `fatal`.
 
-### 2.5 MJPEG stream `/stream`
+### 2.5 WebSocket stream `/ws`
 
-**Request**: `GET http://fitcam-<mac6>.local/stream?res=240x240@15`
+**Endpoint**: `ws://fitcam-<mac6>.local/ws`
 
-`res` is optional (defaults to `default_resolution`). Invalid value → 400.
+**Transport**: Binary WebSocket. Each WebSocket message is one complete JPEG frame (raw JPEG bytes, no wrapper). `ws.binaryAll()` is non-blocking — copies to internal queue immediately; ESP32 returns the camera framebuffer right after.
 
-**Response**: `200 OK`
-
-```
-Content-Type: multipart/x-mixed-replace; boundary=frame
-```
-
-**Per-frame envelope**:
+**Before connecting**, client should apply camera settings:
 
 ```
---frame\r\n
-Content-Type: image/jpeg\r\n
-Content-Length: <N>\r\n
-X-Frame-Id: <uint32>\r\n
-X-Timestamp-Ms: <int64>\r\n
-\r\n
-<JPEG bytes, N bytes>\r\n
+GET http://fitcam-<mac6>.local/cam?res=320x240&q=12&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0
 ```
 
 **Constraints**:
-- `X-Frame-Id` monotonic; resets to 0 on ESP32 reboot
-- `X-Timestamp-Ms` = ESP32 local clock in epoch ms (NTP-synced; before sync may be relative-to-boot, Web calibrates via `/hello.uptime_s`)
-- Max JPEG size 128 KB (drops oversized frames)
-- ESP32 stops encoding after 5 s of no client read (power saving)
+- Each binary message = one complete JPEG; client decodes with `createImageBitmap()` or `URL.createObjectURL()`
+- Frame rate ≈ 9 FPS at QVGA JPEG (OV5640 hardware limit, `cap_avg_ms ≈ 106 ms`)
+- Max JPEG size 256 KB (frames exceeding this are dropped by firmware)
+- Client must implement backpressure: only decode one frame at a time; drop intermediate frames if decode is in progress
+- ESP32 calls `ws.cleanupClients()` every loop tick to reclaim closed-connection memory
 
 ### 2.6 End session `/end`
 

@@ -9,18 +9,54 @@
 ## §1 Scope & External Commitments
 
 | You own | You don't own |
-|-----------|-------------|
-| PWA (React + Vite + Zustand + Tailwind) | ESP32 firmware |
-| MediaPipe Pose integration + 14-angle calc ([04 §5](./04_Interface_Contracts.md#5-14-d-joint-angle-definitions)) | DTW server implementation |
-| Dual entry (Jump-in / Duolingo) + Demo Mode | Classifier training |
-| Gesture detection + auto rep counting (client-side) | Server-side advice generation |
-| WebSocket client (honoring [04 §3 / §4](./04_Interface_Contracts.md#3-phone--cloud-websocket-upstream)) | |
+|---------|---------------|
+| **SPIFFS stream page** (`data/index.html`) — ESP32-served, local HTTP, WebSocket client | ESP32 firmware |
+| **Main app** (`https://kineticlife.app`) — login, courses, history, results | DTW server implementation |
+| MediaPipe Pose integration + 14-angle calc ([04 §5](./04_Interface_Contracts.md#5-14-d-joint-angle-definitions)) | Classifier training |
+| DTW Web Worker (client-side, 60-frame sliding window) | Server-side advice generation |
+| Gesture detection + auto rep counting (client-side) | |
+| Cloud WebSocket client in main app (honoring [04 §3 / §4](./04_Interface_Contracts.md#3-phone--cloud-websocket-upstream)) | |
 | Demo Day iPad UI tuning | |
 
 **External commitments**:
-- After connecting to ESP32 MJPEG, render skeleton overlay at ≥ 20 FPS
+
+- Stream page connects to `ws://fitcam-xxxxxx.local/ws` and renders skeleton overlay at ≥ 15 FPS
 - 14-angle calculation must **strictly match** server formulas (shared fixture tests in §4 must pass)
-- WebSocket queues offline messages locally and replays on reconnect
+- Stream page POSTs workout results to cloud API over HTTPS on session end
+- Main app redirects to `http://fitcam-xxxxxx.local/` after pairing; stream page redirects back on finish
+
+---
+
+## §1.5 Two-Layer Web Architecture
+
+The browser mixed-content policy blocks `ws://` connections from `https://` pages. The project solves this without a video relay server and without TLS on the ESP32:
+
+```
+https://kineticlife.app          http://fitcam-xxxxxx.local/
+  (GitHub Pages / Vercel)          (ESP32 SPIFFS — local network)
+────────────────────────         ──────────────────────────────
+  Login / auth                     WebSocket ← binary JPEG frames
+  Course library                   MediaPipe inference (local)
+  Workout history       ◄─POST─    14-angle calc + DTW
+  Results display         HTTPS    Workout results only (no video)
+```
+
+**Why this works**:
+
+- The SPIFFS page is served over `http://`, so `ws://` connections are same-scheme — no mixed content.
+- An `http://` page can make HTTPS `fetch()` requests to the cloud API (the restriction only goes the other way: HTTPS pages cannot load HTTP sub-resources).
+- Video frames never leave the local hotspot network at any point.
+
+**Why not a relay server**: routing video through a relay means raw frames pass through a third-party server, breaking the privacy guarantee. The SPIFFS approach avoids this entirely.
+
+**User flow**:
+
+1. User visits `https://kineticlife.app` — logs in, selects exercise
+2. Pairs ESP32 via `pair.html` (Soft AP or QR)
+3. Main app redirects to `http://fitcam-xxxxxx.local/?session=<id>&ref=https://kineticlife.app`
+4. SPIFFS stream page: video streams locally, MediaPipe runs, DTW compares
+5. Workout ends → SPIFFS page POSTs `{joint_angles, dtw_score, reps}` to `https://api.kineticlife.app`
+6. Browser redirects back to `https://kineticlife.app/results`
 
 ---
 
@@ -190,6 +226,30 @@ describe("14 joint angles v1", () => {
 
 **Purpose**: Give the user real-time tactile feedback. Does **NOT** replace cloud-side fine DTW.
 
+**Full pipeline**:
+
+```text
+Continuous dirty stream (raw WebSocket JPEG)
+  │
+  ▼ (every frame)
+MediaPipe inference → worldLandmarks[33] + joint_angles[14]
+  │
+  ▼
+Segmenter detects rep boundary  ─────────────────────────────────────┐
+  │                                                                    │
+  ▼ (per completed rep)                                               │
+client.action_submit → cloud (angles only, ~30 frames)               │
+  │                                                                    │
+  ▼                                                                    │
+server.feedback ← DTW + problem_joints  ◄────── authoritative result │
+  │                                                                    │
+  ▼                                                                    │
+Edge DTW preview (optimistic) ◄──────────────────────────────────────┘
+  (highlights joint red immediately; corrected when server.feedback arrives)
+```
+
+Key implication: The segmenter is the entry gate. DTW only runs on cleanly segmented reps — **never on the continuous stream directly**. This makes the system robust to dirty/partial poses between reps.
+
 **Segmentation** (`edge/segmenter.ts`):
 - Compute "motion magnitude" = mean of `||worldLandmarks[t] - worldLandmarks[t-3]||`
 - 1-second sliding window; **velocity zero-crossing** (motion → still) = end of one rep
@@ -350,7 +410,7 @@ export type ClientHello = {
 
 | Week | Goal | Acceptance |
 |---|---------|---------|
-| **W1** | Connect ESP32 video + skeleton render | `<img src="esp32/stream">` shows video + skeleton overlay ≥ 20 FPS |
+| **W1** | Connect ESP32 video + skeleton render | WebSocket `/ws` receives frames; skeleton overlay renders ≥ 9 FPS |
 | **W2** | MediaPipe 3D + 14 angles + shared unit tests pass | `joint_angles_v1.json` all green (both client and server) |
 | **W3** | Edge DTW + segmenter | A squat rep can be segmented + edge DTW gives "optimistic red/green" |
 | **W4** | Gestures + auto rep + Jump-in | Hands-free full set; gesture recognition >95% |
@@ -375,10 +435,39 @@ export type ClientHello = {
 
 ## §14 Extension Placeholders (post-Demo)
 
-- **DTW history playback**: `/history` route reserved, post-W5
 - **Hand Landmarker**: not in v0.3; fine-grained gestures (e.g. heart shape) for future
 - **Multi-language UI**: i18n is wired (`react-i18next`); add language packs after Demo
 - **Personalized thresholds**: tune local thresholds after collecting user's 3 baseline reps; not for Demo
+
+### Trajectory Replay (post-W5, requires contract change)
+
+**What it is**: After a set ends, show a side-by-side or dual-color skeleton overlay comparing the user's actual rep motion vs. the standard template. Problem joints pulse in a different color. The user can scrub through the rep to see exactly where the deviation occurred.
+
+**Why it's valuable**: DTW feedback is abstract ("knee valgus, severity 0.7"). Watching the replay makes it concrete — the user sees their skeleton diverge from the template in real time.
+
+**What it needs** (changes from current v0.3 baseline):
+
+| Component | Current | Required for Replay |
+| --- | --- | --- |
+| Client recording | `joint_angles[14]` per frame | + `world_landmarks[33]` per frame buffered in memory |
+| `client.action_submit` | angles only | + `world_landmarks` per frame (see [04 §3.5](./04_Interface_Contracts.md#35-clientaction_submit--full-action-sequence-duolingo)) |
+| Server DB `actions` table | `joint_angles_compressed` | + `world_landmarks_compressed` (see [04 §8](./04_Interface_Contracts.md#8-database-schema-contract-server-internal-but-client-needs-to-know)) |
+| History API | not implemented | `GET /api/history/{action_id}` returns angles + landmarks |
+| Client render | Canvas 2D skeleton | Procrustes-align template → dual-color scrubable animation |
+
+**System load analysis**:
+
+| Aspect | Impact | Notes |
+| --- | --- | --- |
+| Client memory | +~16 KB per rep in JS heap | 30 frames × 33 landmarks × 4 floats × 4 bytes; buffer only while recording, flush to IndexedDB after POST |
+| POST payload | ~50–80 KB per rep (gzip) vs ~1 KB today | One-time POST at rep end, not streaming; acceptable on local WiFi |
+| Server storage | ~800 B/rep compressed (vs ~300 B today) | ×3 storage per rep, still negligible at demo scale (<100 users) |
+| Server CPU | None | Replay is pure client-side Canvas animation; server just stores and returns the blob |
+| Cloud bandwidth (results page) | +~80 KB per replay fetch | Acceptable; only triggered on user intent |
+
+**Conclusion**: System load is negligible at demo scale. The only real cost is the storage policy change (see privacy note below).
+
+**Privacy consideration**: `worldLandmarks` coordinates are pelvis-origin, meter-scale body geometry — NOT absolute spatial positions, NOT tied to location or identity. The current [04 §8](./04_Interface_Contracts.md#8-database-schema-contract-server-internal-but-client-needs-to-know) privacy rule prohibits "absolute world_landmarks" as shorthand for raw tracking data. Replay requires a **scoped exception**: per-rep worldLandmarks (body geometry only, retained for replay, not for external processing). This needs 3-way review and a 04 contract update before implementation.
 
 ---
 
