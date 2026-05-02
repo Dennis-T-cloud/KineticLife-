@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -464,6 +464,23 @@ const EXERCISES = {
   },
 };
 
+// ── Source mode ────────────────────────────────────────────────────────────
+const _params   = new URLSearchParams(location.search);
+const camUrl    = _params.get('cam') || localStorage.getItem('kineticlife.camUrl') || '';
+const ESP32_MODE = Boolean(camUrl);
+
+// ── WS stream state (ESP32 mode) ───────────────────────────────────────────
+let wsConn        = null;
+let latestBitmap  = null;
+let decodePending = false;
+let pendingData   = null;
+let retryTimer    = null;
+
+// Offscreen inference canvas: 120×160 portrait (same as debug.html)
+const inferCanvas = document.createElement('canvas');
+inferCanvas.width = 120; inferCanvas.height = 160;
+const inferCtx    = inferCanvas.getContext('2d');
+
 // ── App state ──────────────────────────────────────────────────────────────
 let landmarker, videoEl;
 const canvas       = document.getElementById('canvas');
@@ -489,32 +506,70 @@ const exNoteEl        = document.getElementById('exNote');
 const statusBadge     = document.getElementById('statusBadge');
 const analysisOverlay = document.getElementById('analysisOverlay');
 
+// ── WS helpers (ESP32 mode) ────────────────────────────────────────────────
+function startDecode(data) {
+  decodePending = true;
+  pendingData   = null;
+  createImageBitmap(new Blob([data], { type: 'image/jpeg' })).then(bmp => {
+    if (latestBitmap) latestBitmap.close();
+    latestBitmap  = bmp;
+    decodePending = false;
+    if (pendingData) startDecode(pendingData);
+  });
+}
+
+function openWs() {
+  const normalized = camUrl.trim().replace(/\/+$/, '');
+  const http = /^https?:\/\//i.test(normalized) ? normalized : `http://${normalized}`;
+  const url  = http.replace(/^http:\/\//i, 'ws://') + '/ws';
+  const sock = new WebSocket(url);
+  wsConn = sock;
+  sock.binaryType = 'arraybuffer';
+  sock.onopen    = () => { statusBadge.textContent = 'ESP32 connected'; };
+  sock.onmessage = ({ data }) => {
+    if (decodePending) { pendingData = data; return; }
+    startDecode(data);
+  };
+  sock.onclose   = () => {
+    if (wsConn !== sock) return;
+    wsConn = null;
+    statusBadge.textContent = 'stream closed — retrying…';
+    retryTimer = setTimeout(openWs, 2000);
+  };
+  sock.onerror   = () => { statusBadge.textContent = 'WebSocket error'; };
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
-  // Webcam
-  videoEl = document.createElement('video');
-  videoEl.autoplay = true;
-  videoEl.playsInline = true;
-  videoEl.muted = true;
-  try {
-    videoEl.srcObject = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-      audio: false,
-    });
-  } catch {
-    statusBadge.textContent = 'camera access denied';
-    return;
-  }
-  await new Promise(r => { videoEl.onloadedmetadata = r; });
-  videoEl.play();
-
   // Canvas fill screen
   function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
   resize();
   window.addEventListener('resize', resize);
 
+  if (ESP32_MODE) {
+    statusBadge.textContent = `connecting → ${camUrl}`;
+    openWs();
+  } else {
+    // Local webcam fallback (no ?cam= param)
+    videoEl = document.createElement('video');
+    videoEl.autoplay = true;
+    videoEl.playsInline = true;
+    videoEl.muted = true;
+    try {
+      videoEl.srcObject = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        audio: false,
+      });
+    } catch {
+      statusBadge.textContent = 'camera access denied';
+      return;
+    }
+    await new Promise(r => { videoEl.onloadedmetadata = r; });
+    videoEl.play();
+  }
+
   // MediaPipe
-  statusBadge.textContent = 'loading model…';
+  statusBadge.textContent = ESP32_MODE ? `${statusBadge.textContent} · loading model…` : 'loading model…';
   const vision = await FilesetResolver.forVisionTasks(
     'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
   );
@@ -531,7 +586,7 @@ async function init() {
       runningMode: 'VIDEO', numPoses: 1,
     });
   }
-  statusBadge.textContent = 'ready';
+  statusBadge.textContent = ESP32_MODE ? 'ESP32 · ready' : 'ready';
   sessionStart = performance.now();
   requestAnimationFrame(tick);
 }
@@ -540,29 +595,55 @@ async function init() {
 function tick(now) {
   requestAnimationFrame(tick);
   if (appState !== 'RECORDING') return;
-  if (!landmarker || !videoEl || videoEl.readyState < 2) return;
+  if (!landmarker) return;
+  if (ESP32_MODE ? !latestBitmap : (!videoEl || videoEl.readyState < 2)) return;
   if (now - lastTs < 40) return;   // ~25 fps cap
   lastTs = now;
 
   const W = canvas.width, H = canvas.height;
-
-  // Draw video (cover fit — letterbox areas stay black)
-  const vw = videoEl.videoWidth  || 640;
-  const vh = videoEl.videoHeight || 480;
-  const scale = Math.max(W / vw, H / vh);
-  const dw = vw * scale, dh = vh * scale;
-  const dx = (W - dw) / 2, dy = (H - dh) / 2;
-  vidTransform = { dx, dy, dw, dh };
-
   ctx.clearRect(0, 0, W, H);
-  ctx.drawImage(videoEl, dx, dy, dw, dh);
+
+  let inferSource;
+  if (ESP32_MODE) {
+    // ESP32 sends 320×240 landscape JPEG — rotate 90° CW to portrait 240×320
+    const vw = 240, vh = 320;
+    const scale = Math.max(W / vw, H / vh);
+    const dw = vw * scale, dh = vh * scale;
+    const dx = (W - dw) / 2, dy = (H - dh) / 2;
+    vidTransform = { dx, dy, dw, dh };
+
+    // Draw rotated frame into cover-fit area on display canvas
+    ctx.save();
+    ctx.translate(dx + dw, dy);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(latestBitmap, 0, 0, dh, dw);
+    ctx.restore();
+
+    // Update inference canvas (120×160 portrait)
+    inferCtx.save();
+    inferCtx.translate(inferCanvas.width, 0);
+    inferCtx.rotate(Math.PI / 2);
+    inferCtx.drawImage(latestBitmap, 0, 0, inferCanvas.height, inferCanvas.width);
+    inferCtx.restore();
+    inferSource = inferCanvas;
+  } else {
+    // Local webcam: cover fit
+    const vw = videoEl.videoWidth  || 640;
+    const vh = videoEl.videoHeight || 480;
+    const scale = Math.max(W / vw, H / vh);
+    const dw = vw * scale, dh = vh * scale;
+    const dx = (W - dw) / 2, dy = (H - dh) / 2;
+    vidTransform = { dx, dy, dw, dh };
+    ctx.drawImage(videoEl, dx, dy, dw, dh);
+    inferSource = videoEl;
+  }
 
   // Dark overlay — improves skeleton visibility
   ctx.fillStyle = 'rgba(0,0,0,0.38)';
   ctx.fillRect(0, 0, W, H);
 
   // Run inference
-  const result = landmarker.detectForVideo(videoEl, now);
+  const result = landmarker.detectForVideo(inferSource, now);
   if (!result.landmarks.length) return;
 
   const lm = result.landmarks[0];
@@ -759,7 +840,11 @@ exSelect.addEventListener('change', () => {
 document.getElementById('btnFinish').addEventListener('click', showAnalysis);
 document.getElementById('btnReset').addEventListener('click', resetSession);
 document.getElementById('btnRestart').addEventListener('click', resetSession);
-document.getElementById('btnHome').addEventListener('click', () => { location.href = './index.html'; });
+document.getElementById('btnHome').addEventListener('click', () => {
+  if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  location.href = './index.html';
+});
 
 // init note for default exercise
 exNoteEl.textContent = EXERCISES[currentExKey].note ?? '';
