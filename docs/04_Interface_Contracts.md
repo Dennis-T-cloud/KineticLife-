@@ -24,7 +24,7 @@ Role docs (01/02/03) **do not redefine any format** — they only reference this
 │          │  ③ WebSocket /ws (binary JPEG)    │         │
 │          │  <═══════════════════════         │         │
 └────┬─────┘                                    └─────────┘
-     │ ④ WebSocket JSON (bidirectional)
+     │ ④ HTTPS REST JSON (post-set reports; WS reserved)
      ↓
 ┌──────────┐
 │  Cloud   │
@@ -38,7 +38,7 @@ Role docs (01/02/03) **do not redefine any format** — they only reference this
 | **Endianness** | All binary little-endian |
 | **Encoding** | UTF-8 |
 | **Timestamps** | `ts_ms` = UTC epoch ms, int64; `frame_id` = monotonic uint32 starting from ESP32 boot |
-| **WebSocket protocol version** | Every message MUST carry `"v": 1`; only **backwards-compatible additions** allowed (new fields must be optional); breaking changes bump to `v: 2` and are negotiated at `client.hello` |
+| **Cloud protocol version** | Every cloud JSON payload MUST carry `"v": 1`; only **backwards-compatible additions** allowed (new fields must be optional); breaking changes bump to `v: 2` and are negotiated by endpoint/client capability |
 | **ID generation** | `session_id` / `user_id` = UUIDv4 string; `device_id` = ESP32 MAC last 6 bytes hex |
 | **Coordinate units** | 3D world landmarks = meters; image landmarks = normalized [0, 1] |
 | **Numeric precision** | Landmark coords 4 decimals; angles 1 decimal; confidence 2 decimals |
@@ -191,13 +191,16 @@ ESP32 clears the temporary WiFi session in NVS and reboots into QR pairing mode.
 
 ---
 
-## §3 Phone → Cloud (WebSocket upstream)
+## §3 Phone → Cloud (summary/report upstream; WS reserved)
 
-**URL**: `wss://api.kineticlife.app/ws?token=<jwt>`
-**Subprotocol**: `kineticlife.v1`
-**Heartbeat**: client sends `{"type":"ping"}` every 20 s; server replies `{"type":"pong"}`
+**Current demo URL**: `POST https://api.kineticlife.app/api/actions`
+**Reserved full-cloud URL**: `wss://api.kineticlife.app/ws?token=<jwt>`
+**Reserved WS subprotocol**: `kineticlife.v1`
+**Reserved WS heartbeat**: client sends `{"type":"ping"}` every 20 s; server replies `{"type":"pong"}`
 
-### 3.1 `client.hello` — session init (first message after connect)
+### 3.1 `client.hello` — session init (reserved logged-in / full-cloud modes)
+
+> Current standalone Demo Mode may skip `client.hello` and call `/api/actions` directly with a generated `session_id`. Logged-in modes and future realtime cloud modes should use this session handshake.
 
 ```json
 {
@@ -227,7 +230,9 @@ ESP32 clears the temporary WiFi session in NVS and reboots into QR pairing mode.
 
 **Server response**: `server.ack` (see §4.1)
 
-### 3.2 `client.keypoints` — realtime keypoints (high-frequency main path)
+### 3.2 `client.keypoints` — realtime keypoints (reserved full-cloud mode)
+
+> Current Demo Mode does **not** send realtime keypoints to the cloud. Live feedback is local heuristic logic in the browser. This message is reserved for future Jump-in/Duolingo modes that need cloud-side realtime feedback.
 
 ```json
 {
@@ -256,7 +261,7 @@ ESP32 clears the temporary WiFi session in NVS and reboots into QR pairing mode.
 
 **Send rate**: 10–15 Hz (matches MJPEG; client may downsample)
 
-**Server response**: `server.feedback` (see §4.2). Server may batch (not every frame gets a response).
+**Server response**: `server.feedback` (see §4.2) in full-cloud modes only. Demo Mode does not depend on this response for live counting or form hints.
 
 ### 3.3 `client.gesture` — gesture event
 
@@ -287,9 +292,9 @@ ESP32 clears the temporary WiFi session in NVS and reboots into QR pairing mode.
 
 `action` enum: `"start"` / `"end"`
 
-### 3.5 `client.action_submit` — full action sequence (Duolingo)
+### 3.5 `client.action_submit` — completed action sequence (post-set DTW report)
 
-In Duolingo mode, after edge detects a complete rep, the client submits the full sequence for server-side fine DTW:
+After the browser detects a complete rep, or when the user presses Finish Set, the client may submit completed-rep sequences for summary-time DTW. This is not a realtime dependency; local heuristic feedback remains available if the request fails.
 
 ```json
 {
@@ -326,7 +331,7 @@ In Duolingo mode, after edge detects a complete rep, the client submits the full
 
 ---
 
-## §4 Cloud → Phone (WebSocket downstream)
+## §4 Cloud → Phone (summary/report responses; WS reserved)
 
 ### 4.1 `server.ack` — handshake confirm
 
@@ -342,7 +347,7 @@ In Duolingo mode, after edge detects a complete rep, the client submits the full
 }
 ```
 
-### 4.2 `server.feedback` — main-path feedback (critical)
+### 4.2 `server.feedback` — DTW feedback / summary report item
 
 ```json
 {
@@ -367,7 +372,7 @@ In Duolingo mode, after edge detects a complete rep, the client submits the full
 
 | Field | Type | Notes |
 |-----|------|------|
-| `for_frame_id` | uint32 | The `client.keypoints.frame_id` this feedback addresses (may lag by a few frames) |
+| `for_frame_id` | uint32 / null | The `client.keypoints.frame_id` this feedback addresses in full-cloud mode; null/omitted for post-set reports |
 | `correct` | bool | Overall correctness |
 | `problem_joints[].joint` | string | English joint name from §5 |
 | `problem_joints[].severity` | [0,1] | Higher = more wrong |
@@ -375,7 +380,7 @@ In Duolingo mode, after edge detects a complete rep, the client submits the full
 | `completeness` | [0,1] | Range-of-motion completion |
 | `dtw_distance` | float | Distance to template |
 
-### 4.3 `server.set_event` — auto-set detection events
+### 4.3 `server.set_event` — auto-set detection / summary events
 
 ```json
 {
@@ -391,7 +396,7 @@ In Duolingo mode, after edge detects a complete rep, the client submits the full
 
 `event` enum: `"set_start"` / `"rep_detected"` / `"rest_started"` / `"set_end"`
 
-For `"set_end"`, an additional `summary` is included:
+For `"set_end"`, an additional `summary` may be included. In the current demo, the browser can show a local summary immediately and merge this server summary when a post-set DTW report returns:
 ```json
 {
   "summary": {
@@ -512,37 +517,31 @@ New issue codes must be registered here AND bump §5 version.
 
 ## §7 Minimum Round-trip Example (for joint integration testing)
 
-A complete Duolingo squat session (2 reps):
+A complete demo squat set with local live feedback and a post-set DTW report:
 
 ```
-[Web] WS open → wss://api/.../ws?token=jwt_xxx
-[Web] → client.hello {mode: "duolingo", action_hint: "squat"}
-[Cloud] → server.ack {templates_available: ["squat", "pushup", "plank"]}
-[Web] → client.gesture {gesture: "start", hold_ms: 1500}
-[Cloud] → server.set_event {event: "set_start"}
+[Web] opens demo.html?cam=http://fitcam-xxxxxx.local
+[Web] connects to ESP32 /ws and runs MediaPipe locally
+[Web] local heuristic state machine counts rep 1
+[Web] local heuristic state machine counts rep 2
+[Web] user presses "Finish Set"
+[Web] immediately shows local summary {rep_count: 2, duration_s, heuristic_accuracy}
 
-(user starts squatting, 30 frames)
-[Web] → client.keypoints {frame_id: 1, ts: T+0,    joint_angles: [...]}
-[Web] → client.keypoints {frame_id: 2, ts: T+100,  ...}
-...
-[Web] → client.keypoints {frame_id: 30, ts: T+3000, ...}
-
-[Cloud] → server.feedback {for_frame_id: 8,  correct: true,  completeness: 0.85}
-[Cloud] → server.feedback {for_frame_id: 25, correct: false, problem_joints: [...]}
-[Cloud] → server.set_event {event: "rep_detected", rep_index: 1}
-
-(rep 2, 30 frames, omitted)
-
-[Cloud] → server.set_event {event: "rep_detected", rep_index: 2}
-[Web] → client.gesture {gesture: "end_set"}
-[Cloud] → server.set_event {
-  event: "set_end",
-  summary: {rep_count: 2, correct_count: 1, avg_completeness: 0.78}
+[Web] → POST /api/actions for rep 1 {
+  type: "client.action_submit",
+  exercise_hint: "squat",
+  frames: ["... rep 1 joint_angles[T,14]"]
 }
-[Cloud] → server.advice_tip {scope: "set_end", markdown: "..."}
+[Cloud] → ActionResponse {
+  correct: true,
+  completeness: 0.86,
+  dtw_distance: 1.9,
+  problem_joints: []
+}
+[Web] repeats for rep 2 and aggregates DTW report items into the summary card
 ```
 
-**Integration test**: all 3 engineers must run this end-to-end on the W3 milestone scaffolding. Once all messages are exchanged successfully, contract alignment is considered verified.
+**Integration test**: Web must still work with cloud disabled. With cloud enabled, Finish Set should submit completed-rep angle sequences and merge a DTW report without blocking the local summary.
 
 ---
 
@@ -579,17 +578,17 @@ Actual Postgres tables live in `03_Cloud_DTW.md`. This section only enumerates *
 ## §9 Versioning Rules
 
 1. **Adding a field** = compatible, no `v` bump. New fields must be optional; receivers must ignore unknown fields without erroring.
-2. **Removing a field / changing semantics** = breaking, **bump `v`**. Both sides negotiate the highest mutually supported `v` at `client.hello`.
+2. **Removing a field / changing semantics** = breaking, **bump `v`**. Logged-in/full-cloud modes negotiate at `client.hello`; REST-only demo endpoints reject unsupported versions explicitly.
 3. **§5 joint angle changes** = bump `joint_angles_version` (independent from `v`).
 4. **Change process**: PR this doc → 3-way review → merge → propagate to role docs.
 
 ---
 
-## §10 Demo Mode — Real-time Heuristic Feedback (`web/demo.html`)
+## §10 Demo Mode — Local Heuristic Feedback + DTW Summary Report
 
-> **Status**: implemented in `web/demo.html` (standalone page, no server dependency).
-> **Purpose**: Demo Day prototype demonstrating real-time form feedback and rep counting.
-> This page replaces the planned replay/ghost-skeleton flow (rolled back 2026-05-01).
+> **Status**: real-time feedback implemented in `web/demo.html` / `web/demo-table.html`; DTW report is an optional summary-time integration.
+> **Purpose**: Demo Day prototype demonstrating stable real-time form feedback, rep counting, and a summary card that can later merge DTW report data.
+> This replaces the old cloud-DTW-as-live-main-path plan. The live path must stay usable with no server.
 
 ### 10.1 Architecture
 
@@ -602,7 +601,8 @@ ESP32 /ws (binary JPEG, 320×240 landscape)
        → calcAngle()          (Kaggle arctan2 method, 2D)
        → threshold checks     → colored skeleton overlay
        → state machine        → rep counter
-       [on "Finish Set"] → in-browser summary card
+       [on "Finish Set"] → immediate in-browser summary card
+                         → optional POST completed reps for DTW summary report
 ```
 
 **Camera source**: ESP32 WebSocket stream only. No local webcam.
@@ -610,7 +610,7 @@ If no `?cam=` URL parameter and no `kineticlife.camUrl` in localStorage, page sh
 
 **Entry point**: `pair.html` → "Demo Mode" button → `demo.html?cam=<url>`.
 
-No server calls during recording. Data stays entirely in the browser.
+No server calls during recording. Data stays entirely in the browser until Finish Set. If DTW reporting is enabled, only completed-rep joint-angle sequences are submitted after the set.
 
 ### 10.1.1 WebSocket stream handling
 
@@ -677,17 +677,32 @@ Rep counted when state transitions: `neutral → rest → work → rest`.
 
 ### 10.5 Canvas rendering spec
 
+**Display vs. logic landmark split**: `rawLm = result.landmarks[0]` drives all rep counting, angle thresholds, and form checks. A separate `displayLm` (EMA-smoothed, α = 0.45; low-visibility joints hold last position) is used exclusively for skeleton drawing and angle annotations. Error bones/hints are debounced: 4 consecutive failing frames to turn red, 4 consecutive passing frames to clear.
+
 | Element | Style |
 | --- | --- |
 | Background | `#000000` + `rgba(0,0,0,0.38)` video overlay |
 | Skeleton — correct | stroke `#DEFF9A`, lineWidth 6 |
-| Skeleton — error | stroke `#FF5555`, lineWidth 8 |
+| Skeleton — error | stroke `#FF5555`, lineWidth 8 (shown only after 4-frame debounce) |
 | Skeleton — low visibility | stroke `rgba(255,255,255,0.45)`, lineWidth 2, alpha 0.4 |
 | Joint dots | radius 5px, same color as connected bones |
 | Head center anchor | nose (lm[0]); hollow circle radius 8, fill `rgba(255,255,255,0.22)`, stroke `rgba(255,255,255,0.65)` lineWidth 2; drawn only when visibility ≥ 0.5; reserved for head-motion features |
-| Angle annotation | white text drawn on canvas near vertex joint |
+| Angle annotation | white 24 px bold text drawn on canvas near vertex joint; background `rgba(0,0,0,0.55)` rect |
 
-### 10.6 Post-set summary (in-browser only)
+### 10.6 demo-table.html — tablet variant differences
+
+`web/demo-table.html` shares all exercise logic, thresholds, and rendering with `demo.html`. Key differences:
+
+| Aspect | demo.html | demo-table.html |
+| --- | --- | --- |
+| Camera source | ESP32 WS only | ESP32 WS (`?cam=<url>`) **or** device front camera (`getUserMedia`) |
+| Source detection | `?cam=` or localStorage | `?cam=` URL param only (localStorage not used for mode selection) |
+| Local camera pipeline | — | Frame flipped horizontally before MediaPipe inference so landmark left/right matches anatomical side |
+| Source badge | — | `ESP32` (green) or `Local Cam` (blue) shown in header |
+
+**Local camera mirror note**: `getUserMedia` front-camera delivers unmirrored raw frames; MediaPipe labels sides by image position. The horizontal flip (`scale(-1,1)` draw to `localInferCanvas`) makes the display a selfie-mirror and ensures MediaPipe lm[12/14/16] (right arm) maps to the user's anatomical right arm.
+
+### 10.7 Post-set summary + optional DTW report
 
 Triggered by "Finish Set" button. Displays:
 
@@ -696,8 +711,15 @@ Triggered by "Finish Set" button. Displays:
 - Accuracy = `(totalFrames − errorFrames) / totalFrames × 100%`
 - Top 3 most frequent form errors (sorted by frame count, with relative frequency bar)
 
-No DTW. No server call. Summary resets on "Restart".
+This local summary appears immediately and is the fallback if cloud is unavailable.
+
+Optional DTW report mode:
+
+- Submit each completed rep's `joint_angles[T,14]` sequence after Finish Set
+- Aggregate returned `correct`, `completeness`, `dtw_distance`, and `problem_joints` into `correct_count`, `avg_completeness`, and top problem joints in the summary card
+- Do not block or revise live rep counting while the user is exercising
+- If the request fails, keep the local heuristic summary and show DTW as unavailable
 
 ---
 
-Last updated: 2026-05-02 (head center anchor added to §10.5; WS target display added to debug.html) · Maintained jointly by all 3 engineers
+Last updated: 2026-05-02 (§10.5 display/logic landmark split + debounce; §10.6 demo-table.html local-camera mirror pipeline; §10.7 local summary + optional DTW report) · Maintained jointly by all 3 engineers

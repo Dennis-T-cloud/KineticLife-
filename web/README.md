@@ -14,8 +14,8 @@ For static hardware testing, use:
 - `index.html`: default entry that redirects to `pair.html` and includes fallback links.
 - `pair.html`: generate WiFi QR and open the camera page.
 - `debug.html`: connect to ESP32 `/ws` WebSocket binary stream, run MediaPipe pose extraction, display 14-D joint angles, show live WS stream target in metrics bar, and call `/end` when the user finishes.
-- `demo.html`: ESP32-connected demo mode with real-time heuristic feedback, rep counting, and post-set summary. Calls `/cam` at startup to apply default camera settings (q=12, 320×240). Raw video overlay toggle (`raw ●/○`). Shows black screen if no ESP32 URL present.
-- `demo-table.html`: tablet/desktop variant. If `?cam=<url>` is present → ESP32 WS stream (same pipeline as demo.html). If no cam URL → falls back to device front camera via `getUserMedia`. Source shown as `ESP32` or `Local Cam` badge. All exercises, form checks, and summary identical to demo.html.
+- `demo.html`: ESP32-connected demo mode with real-time heuristic feedback, rep counting, and immediate local post-set summary. Optional DTW summary reports can be added after Finish Set by submitting completed-rep angle sequences. Calls `/cam` at startup to apply default camera settings (q=12, 320×240). Raw video overlay toggle (`raw ●/○`). Shows black screen if no ESP32 URL present. Skeleton rendered from EMA-smoothed landmarks (α=0.45); rep counting and form checks use raw landmarks.
+- `demo-table.html`: tablet/desktop variant. If `?cam=<url>` is present → ESP32 WS stream (same pipeline as demo.html). If no `?cam=` param → falls back to device front camera via `getUserMedia`. Front-camera frames are flipped horizontally before MediaPipe inference so landmark left/right matches the user's anatomical side. Source shown as `ESP32` or `Local Cam` badge. All exercises, form checks, smoothing, and local summary behavior are identical to demo.html.
 
 The QR pages generate compact WiFi QR payloads in the current contract format:
 

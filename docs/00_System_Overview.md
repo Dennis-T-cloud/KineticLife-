@@ -8,11 +8,11 @@
 
 ## §1 Project Overview
 
-**One-liner**: Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B with OV5640 captures video → browser extracts 3D pose with MediaPipe locally → cloud receives only 14-D joint angles → DTW analyzes → returns correctness + problem joints, gamified with a Duolingo-style loop.
+**One-liner**: Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B with OV5640 streams video locally → browser runs MediaPipe and local heuristic rep/form checks for real-time feedback → optional post-set DTW summary compares submitted joint-angle sequences against templates.
 
 **Hardware baseline**: Freenove ESP32-S3-WROOM Board (N16R8), model **FNK0085 B**, camera **OV5640 160° wide-angle**. Firmware pin mapping, camera resolution/FPS tuning, and Demo Day calibration assume this hardware.
 
-**Privacy core**: Raw video never leaves the local network. MediaPipe runs entirely in the browser on the local stream page. Only 14-D joint angles (already de-identified and view-invariant) are sent to the cloud. The cloud never receives video frames or raw landmarks.
+**Privacy core**: Raw video never leaves the local network. MediaPipe runs entirely in the browser on the local stream page. Real-time feedback is local. Only completed-rep joint-angle sequences are sent for optional DTW summary reports; the cloud never receives video frames or raw image landmarks.
 
 ---
 
@@ -23,7 +23,7 @@
 | **This document** | Everyone + judges | Overview / external |
 | [`01_IoT_ESP32S3.md`](./01_IoT_ESP32S3.md) | IoT engineer | ESP32-S3 firmware, MJPEG, QR pairing |
 | [`02_Web_MediaPipe.md`](./02_Web_MediaPipe.md) | Frontend engineer | PWA, MediaPipe Pose, gesture detection, Demo Mode |
-| [`03_Cloud_DTW.md`](./03_Cloud_DTW.md) | Backend engineer | FastAPI+WS, DTW, pluggable classifier, async coaching advice |
+| [`03_Cloud_DTW.md`](./03_Cloud_DTW.md) | Backend engineer | FastAPI, post-set DTW reports, template calibration, async coaching advice |
 | [`04_Interface_Contracts.md`](./04_Interface_Contracts.md) | **All required** | Cross-platform data formats, protocols, joint angle defs |
 
 **Collaboration rule**: Any interface field change requires **first updating 04 → 3-way review → then implementing in role docs**. This is the only hard rule.
@@ -40,23 +40,23 @@ flowchart TB
         ESP["ESP32-S3-WROOM N16R8<br/>OV5640 160° wide-angle<br/>WebSocket ws://"]
         StreamPage["Stream page<br/>served from ESP32 SPIFFS<br/>http://fitcam-xxxxxx.local/"]
         ESP -- "binary JPEG frames<br/>ws:// WebSocket" --> StreamPage
-        StreamPage -- "MediaPipe inference<br/>14-angle calc<br/>DTW comparison" --> StreamPage
+        StreamPage -- "MediaPipe inference<br/>local heuristic checks<br/>rep counting" --> StreamPage
     end
 
     subgraph Cloud["Cloud (HTTPS)"]
         MainApp["Main app<br/>https://kineticlife.app<br/>GitHub Pages / Vercel"]
-        API["FastAPI<br/>wss://api.kineticlife.app"]
-        DTW["DTW Engine"]
+        API["FastAPI<br/>https://api.kineticlife.app"]
+        DTW["Post-set DTW<br/>summary reports"]
         DB[("Postgres + Redis")]
         MainApp --> API --> DTW --> DB
     end
 
-    StreamPage -- "POST results only<br/>14-D joint angles, scores<br/>NO video" --> API
+    StreamPage -- "POST completed reps only<br/>14-D joint angles<br/>NO video" --> API
     MainApp -. "redirect after pair" .-> StreamPage
     StreamPage -. "redirect after workout" .-> MainApp
 ```
 
-**Privacy guarantee**: The local stream page is served over `http://` from the ESP32 itself (SPIFFS), so `ws://` connections are not mixed content. Video frames never leave the local hotspot network. Only 14-D joint angles and DTW scores travel to the cloud API.
+**Privacy guarantee**: The local stream page is served over `http://` from the ESP32 itself (SPIFFS), so `ws://` connections are not mixed content. Video frames never leave the local hotspot network. Live rep counting and form warnings run in the browser; only completed-rep 14-D joint-angle sequences and derived summary scores travel to the cloud API when DTW reporting is enabled.
 
 ### 3.2 Web Hosting Architecture
 
@@ -67,21 +67,22 @@ The browser's mixed-content policy blocks `ws://` (insecure WebSocket) from an `
 | Main app (login, courses, history) | GitHub Pages / Vercel | HTTPS | Business logic only |
 | Stream + inference page | ESP32 SPIFFS | HTTP (local) | Video + pose, local only |
 
-After pairing, the main app redirects the browser to `http://fitcam-xxxxxx.local/` (ESP32 SPIFFS page). The SPIFFS page POSTs workout results back to `https://api.kineticlife.app` — an HTTP page requesting an HTTPS resource is allowed by browsers (this is the reverse of mixed content). When the workout ends, the page redirects back to the main app.
+After pairing, the main app redirects the browser to the local stream/demo page. The page may POST completed-rep joint-angle sequences to `https://api.kineticlife.app` for a DTW summary report — an HTTP page requesting an HTTPS resource is allowed by browsers (this is the reverse of mixed content). When the workout ends, the page can display the local summary immediately and merge in the DTW report when available.
 
 No relay server is needed for video. The relay approach was evaluated and rejected because it would route raw video frames through a third-party server, breaking the privacy guarantee.
 
-### 3.3 Main-Path Latency Budget (P95 ≤ 400 ms)
+### 3.3 Live Feedback Latency Budget (P95 ≤ 400 ms)
 
 | Stage | Budget |
 |-------|--------|
 | ESP32 → browser (local WiFi, WebSocket) | 20–50 ms |
 | MediaPipe inference (local) | 20–40 ms |
 | 14-angle calculation (local) | <5 ms |
-| Browser → cloud API | 80–150 ms |
-| Classifier + DTW | 80–120 ms |
-| Cloud → browser | 80–150 ms |
-| **Total** | **~350 ms** |
+| Local heuristic checks + state machine | <5 ms |
+| Canvas skeleton + UI updates | 10–30 ms |
+| **Total live path** | **~60–125 ms + stream jitter** |
+
+**Post-set DTW report** is intentionally outside the live path. It can take 1–2 s after Finish Set without hurting the user's real-time experience.
 
 ---
 
@@ -96,8 +97,8 @@ No relay server is needed for video. The relay approach was evaluated and reject
 | Hardware | Freenove ESP32-S3-WROOM FNK0085 B + OV5640 unit #1 + demo phone |
 | Modes | Duolingo + Jump-in + QR pairing |
 | Experience | Visitors use the demo phone, OR scan a QR to connect their own phone (new-user flow) |
-| Focus | Full user flow, gamified UI, pairing experience |
-| Latency | Main path ≤ 400 ms (real-time feedback) |
+| Focus | Full pairing + demo flow, local live feedback, optional DTW summary report |
+| Latency | Local live path ≤ 400 ms; DTW report may arrive after Finish Set |
 
 ### 4.2 Booth B · iPad Main-Function Showcase
 
@@ -106,8 +107,8 @@ No relay server is needed for video. The relay approach was evaluated and reject
 | Hardware | Freenove ESP32-S3-WROOM FNK0085 B + OV5640 unit #2 + iPad (landscape) |
 | Mode | **Demo Mode** (skeleton + visual FX, no video) |
 | Experience | Visitor performs a complete set, system shows full analysis |
-| Focus | **Privacy** (no video on screen) + **DTW accuracy** (joint highlight, view-angle robustness) |
-| Latency | 1–2 s post-set acceptable for the deeper analysis |
+| Focus | **Privacy** (no video on screen) + stable real-time heuristic feedback + DTW-backed post-set analysis |
+| Latency | Real-time feedback is local; 1–2 s post-set acceptable for DTW report |
 
 ### 4.3 Demo Script (2–3 min per visitor)
 
@@ -127,11 +128,11 @@ flowchart LR
 
 | Week | Overall goal | IoT (01) | Web (02) | Cloud (03) |
 |---|--------|---------|---------|-----------|
-| **W1** | Hardware streams; Web shows skeleton | **MJPEG firmware + LED** | Pull ESP32 stream + skeleton render | FastAPI+WS scaffold + echo |
+| **W1** | Hardware streams; Web shows skeleton | **MJPEG firmware + LED** | Pull ESP32 stream + skeleton render | FastAPI health + action submission stub |
 | **W2** | End-to-end skeleton + standard templates recorded | **QR pairing done** + stability test | MediaPipe 3D + **14-angle calc** | Recording script + Postgres schema |
-| **W3** | DTW works + single action verified | (maintain) | Edge DTW + segmenter | **dtaidistance engine + 3 templates** |
-| **W4** | Full hands-free interaction | (maintain) | **Gesture + auto rep counter** + Jump-in | SVM classifier + server-side DTW verify |
-| **W5** | Duolingo + coaching advice | (maintain) | Slim Duolingo UI + courses | **Async advice triggers** |
+| **W3** | Local heuristic demo stable + DTW report scaffold | (maintain) | Rep state machine + form checks + rep buffers | **DTW summary endpoint + 3 templates** |
+| **W4** | Full demo interaction | (maintain) | **Gesture/manual controls + auto rep counter** + Jump-in | Summary report quality + template tuning |
+| **W5** | Polished demo + coaching copy | (maintain) | Slim UI + summary card polish | **Async advice from summary report** |
 | **W6** | Two-booth deploy + dry runs | **2nd ESP32 + iPad bring-up** | iPad UI tuning + Demo Mode polish | Fallbacks + monitoring |
 
 **Part-time effort estimate** (3 engineers × 6 weeks):
@@ -149,8 +150,8 @@ flowchart LR
 
 | Aspect | Target |
 |--------|--------|
-| Latency | Main path ≤ 400 ms (P95) |
-| Privacy | Zero video upload; stream page served from ESP32 SPIFFS (local HTTP); only 14-D joint angles reach cloud |
+| Latency | Local live feedback ≤ 400 ms (P95); post-set DTW report ≤ 2 s target |
+| Privacy | Zero video upload; stream page served from ESP32/local web page; only completed-rep 14-D joint-angle sequences reach cloud when summary DTW is enabled |
 | Availability | 99% during Demo (single instance is enough); offline Demo Mode if WiFi fails |
 | Cost | < $30/month (Fly.io + Neon + Upstash free tiers + low-cost advice generation) |
 
@@ -164,7 +165,7 @@ Implementation details in role docs.
 |-----|-----|------|------|
 | Venue WiFi unstable | Med | High | Bring backup 4G router + Demo Mode offline fallback |
 | ESP32 low-light noise → MediaPipe misdetects | Med | High | Fill light + locked white balance |
-| DTW thresholds don't generalize across body types | High | Med | Calibrate against user's own 3 baseline reps |
+| DTW summary thresholds don't generalize across body types | High | Med | Keep live UX heuristic-first; calibrate DTW against user's own 3 baseline reps before using it for final scoring |
 | iPad frame rate drops below 20 FPS at venue | Med | Med | Demo Mode uses Canvas 2D (chosen); turn off extras |
 | 3-way contract drift | Med | High | **Walkthrough 04 weekly + integration milestone end of W3** |
 
@@ -172,8 +173,8 @@ Implementation details in role docs.
 
 ## §8 Decisions Pending Dennis (before Demo Day)
 
-1. **Standard template source**: (A) record ourselves / (B) public dataset (MM-Fit) — recommend A; just 3 actions (squat / pushup / plank)
-2. **View-angle robustness validation window**: 1 day in W3 collecting 0°/30°/45° data, comparing DTW distances
+1. **Standard template source for summary DTW**: (A) record ourselves / (B) public dataset (MM-Fit) — recommend A; just the 3 demo actions first
+2. **DTW report threshold policy**: decide whether Demo Day summary uses DTW as a visible score, a hidden sanity check, or a secondary "template similarity" metric
 
 ---
 

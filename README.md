@@ -1,6 +1,6 @@
 # KineticLife
 
-> Real-time fitness action accuracy feedback. Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B + OV5640 160° wide-angle camera + MediaPipe (browser-side, local) + cloud DTW on joint angles only. **Raw video never leaves the local network.**
+> Real-time fitness action feedback. Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B + OV5640 160° wide-angle camera + MediaPipe in the browser, local heuristic rep/form checks for live UX, and optional post-set DTW summary reports on joint-angle sequences. **Raw video never leaves the local network.**
 
 **Status**: v0.3 · 6-week Demo Day sprint · 3-person part-time team
 

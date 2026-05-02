@@ -1,6 +1,8 @@
 # KineticLife Server
 
-FastAPI backend workspace for WebSocket sessions, classifier routing, DTW analysis, persistence, and async coaching advice.
+FastAPI backend workspace for post-set action submissions, DTW summary reports, persistence, and async coaching advice.
+
+Current demo builds around local heuristic feedback in the browser. The server path is for summary-time DTW analysis after the client has segmented reps and submitted joint-angle sequences.
 
 ## Quick Start
 
@@ -9,4 +11,4 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
-The WebSocket and data contracts are defined in `../docs/04_Interface_Contracts.md`.
+The action submission and data contracts are defined in `../docs/04_Interface_Contracts.md`.
