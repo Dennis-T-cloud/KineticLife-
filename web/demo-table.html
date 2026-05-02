@@ -472,7 +472,7 @@ const EXERCISES = {
 // ── Source detection ───────────────────────────────────────────────────────
 // sourceMode = 'esp32' when camUrl is set; 'local' when no camUrl (tablet front camera)
 const _params = new URLSearchParams(location.search);
-const camUrl  = _params.get('cam') || localStorage.getItem('kineticlife.camUrl') || '';
+const camUrl  = _params.get('cam') || '';
 let   sourceMode = camUrl ? 'esp32' : 'local';
 
 // ── URL helpers ────────────────────────────────────────────────────────────
