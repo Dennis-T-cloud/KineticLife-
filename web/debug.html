@@ -392,22 +392,13 @@ function computeAngles(wl) {
     a[12] = angleDeg(sub(mH, mS), { x:0, y:-1, z:0 });
   }
 
-  // pelvis_tilt: L_HIP→R_HIP vs horizontal [1,0,0]
+  // pelvis_tilt: deviation of hip axis from horizontal, folded to 0–90°
   if (wl[LH].visibility >= VIS && wl[RH].visibility >= VIS) {
-    a[13] = Math.min(45, angleDeg(sub(wl[LH], wl[RH]), { x:1, y:0, z:0 }));
+    const raw = angleDeg(sub(wl[LH], wl[RH]), { x:1, y:0, z:0 });
+    a[13] = raw > 90 ? 180 - raw : raw;
   }
 
   return a.map(v => isNaN(v) ? null : parseFloat(v.toFixed(1)));
-}
-
-// Serialize MediaPipe worldLandmarks to compact [[x,y,z,vis]×33] (contract §3.5)
-function serializeLandmarks(wl) {
-  return wl.map(lm => [
-    parseFloat(lm.x.toFixed(4)),
-    parseFloat(lm.y.toFixed(4)),
-    parseFloat(lm.z.toFixed(4)),
-    parseFloat(lm.visibility.toFixed(2)),
-  ]);
 }
 
 // ── Recording (JSON frames for DTW reference) ──────────────────────────────
@@ -669,12 +660,7 @@ function tick(now) {
     document.getElementById("mSkip").textContent   = skipPct + "%";
 
     if (recording) {
-      frames.push({
-        frame_id: frameId++,
-        ts_ms: Math.round(now),
-        joint_angles: angles,
-        world_landmarks: serializeLandmarks(result.worldLandmarks[0]),
-      });
+      frames.push({ frame_id: frameId++, ts_ms: Math.round(now), joint_angles: angles });
       recCount.textContent = `${frames.length} frames`;
     }
 

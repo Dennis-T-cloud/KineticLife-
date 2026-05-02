@@ -133,6 +133,37 @@ async def handle_ws(ws: WebSocket):
 
 ## §4 DTW Engine
 
+### Full recognition pipeline
+
+```text
+client.keypoints (10–15 Hz, continuous)
+  │
+  ▼
+ActionClassifier (rolling 2 s window, every 500 ms)
+  │  3 consecutive same label + confidence > 0.85 → lock action type
+  ▼
+SetDetector.feed() — tracks indicator curve (e.g. hip angle for squat)
+  │  peak/valley detection → rep boundary found
+  ▼
+Segmented rep  [T_start, T_end] × joint_angles[T, 14]
+  │  discard if T < 0.5 s or T > 5 s (noise gate)
+  ▼
+DTW preprocessing: NaN interpolation → Savitzky-Golay smooth → downsample to 30 frames
+  │
+  ▼
+dtw_ndim.distance(user_rep, template) → dtw_distance
+dtw_ndim.warping_path(...)           → alignment path
+  │
+  ▼
+find_problem_joints() — per-joint deviation along alignment path
+  │  top-2 joints above threshold → problem_joints[]
+  ▼
+server.feedback {correct, completeness, dtw_distance, problem_joints}
+  + server.set_event {rep_detected, rep_index}
+```
+
+Key implication: DTW only runs on cleanly segmented reps — **never on the raw continuous stream**. The segmenter is the noise gate; it makes DTW robust to partial / transitional poses between reps.
+
 **Input**: `joint_angles[T, 14]` series (per contract §5, **formula identical to frontend**)
 
 **Preprocessing** (`ml/dtw_engine.py`):
@@ -383,7 +414,8 @@ class Action(Base):
     dtw_distance: Mapped[float]
     completeness: Mapped[float]
     problem_joints: Mapped[list[dict]] = mapped_column(JSONB)
-    joint_angles_compressed: Mapped[bytes]  # gzip(joint_angles[T,14])
+    joint_angles_compressed: Mapped[bytes]           # gzip(joint_angles[T,14])
+    world_landmarks_compressed: Mapped[bytes | None]  # gzip(world_landmarks[T,33,4]); null unless replay opt-in
     created_at: Mapped[datetime]
 
 class Template(Base):
@@ -467,9 +499,49 @@ class AiTip(Base):
 
 - **1D-CNN / ST-GCN classifier**: interface ready, swap implementation
 - **Multi-view template fallback**: `templates.view_angle` reserved; DTW engine needs "pick nearest view template" logic
-- **DTW history playback API**: `/api/history/{user_id}` route placeholder
 - **Horizontal scaling**: FastAPI is stateless; add ML Worker queue (Celery/RQ)
 - **Multi-provider advice routing**: `AdviceProvider` interface placeholder; route to different providers
+
+### Trajectory Replay API (post-W5)
+
+When a client submits `world_landmarks` per frame (replay opt-in), the server stores them in `actions.world_landmarks_compressed`. The history API returns them for client-side replay rendering.
+
+**New endpoint**:
+
+```python
+@app.get("/api/history/{action_id}")
+async def get_action_history(action_id: str, token: str = Depends(verify_jwt)):
+    row = await db.fetch_one(
+        "SELECT action_id, exercise, correct, dtw_distance, completeness, "
+        "problem_joints, joint_angles_compressed, world_landmarks_compressed "
+        "FROM actions WHERE action_id = :id", {"id": action_id}
+    )
+    if not row:
+        raise HTTPException(404)
+    return {
+        "action_id": row["action_id"],
+        "exercise": row["exercise"],
+        "correct": row["correct"],
+        "dtw_distance": row["dtw_distance"],
+        "problem_joints": row["problem_joints"],
+        "frames": decompress_frames(row["joint_angles_compressed"],
+                                    row["world_landmarks_compressed"]),
+        "template_frames": load_template_frames(row["exercise"]),
+    }
+```
+
+`template_frames` is the standard-action series for the exercise — the client Procrustes-aligns it to the user's body proportions and renders both skeletons in different colors.
+
+**Storage cost**: `world_landmarks_compressed` ≈ 4–6 KB per rep (gzip). Nullable; existing rows unaffected.
+
+**Alembic migration**: add nullable column — zero downtime, no backfill required.
+
+```python
+# migrations/add_world_landmarks_compressed.py
+def upgrade():
+    op.add_column("actions",
+        sa.Column("world_landmarks_compressed", sa.LargeBinary(), nullable=True))
+```
 
 ---
 

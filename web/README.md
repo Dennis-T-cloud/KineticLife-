@@ -11,9 +11,10 @@ npm run dev
 
 For static hardware testing, use:
 
+- `index.html`: default entry that redirects to `pair.html` and includes fallback links.
 - `pair.html`: generate WiFi QR and open the camera page.
-- `cam.html`: connect to ESP32 `/ws` WebSocket binary stream, run MediaPipe pose extraction, display 14-D joint angles, poll `/status`, and call `/end` when the user finishes.
-- `debug.html?legacy=1`: old combined pose debug page.
+- `debug.html`: connect to ESP32 `/ws` WebSocket binary stream, run MediaPipe pose extraction, display 14-D joint angles, and call `/end` when the user finishes.
+- `demo.html`: standalone local-camera demo mode with real-time heuristic feedback.
 
 The QR pages generate compact WiFi QR payloads in the current contract format:
 
@@ -21,4 +22,4 @@ The QR pages generate compact WiFi QR payloads in the current contract format:
 K1:<TYPE_CODE>:<SSID_LEN>:<SSID><PASSWORD>
 ```
 
-The Vite app entry point is `src/main.tsx`.
+The Vite dev server serves `index.html` at `/`, which redirects to the pairing flow.

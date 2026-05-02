@@ -299,19 +299,30 @@ In Duolingo mode, after edge detects a complete rep, the client submits the full
   "action_id": "act-2025-4-24-00012",
   "exercise_hint": "squat",
   "ts_start_ms": 1745520010000,
-  "tsd_ms": 1745520012500,
+  "ts_end_ms": 1745520012500,
   "frames": [
     {
       "frame_id": 1234,
       "ts_ms": 1745520010000,
-      "joint_angles": [158.2, "..."]
+      "joint_angles": [158.2, 162.5, "..."],
+      "world_landmarks": [
+        [0.0123, -0.4521, 0.0987, 0.98],
+        "... 33 × [x, y, z, visibility]"
+      ]
     },
     "... 25–60 frames"
   ]
 }
 ```
 
-> Each frame carries only `joint_angles` (14 dims), not the full 33 keypoints — sufficient for DTW and 10× cheaper bandwidth.
+| Field | Required | Notes |
+| --- | --- | --- |
+| `frames[].joint_angles` | yes | 14 dims; see §5 |
+| `frames[].world_landmarks` | **optional** | `[33][4]` floats `[x, y, z, visibility]`; pelvis-origin meters; included when client supports replay (see §9) |
+
+> `world_landmarks` is omitted by default and only included when the client opts in for replay recording. DTW and classification use only `joint_angles`. The server stores `world_landmarks` separately and never uses them for scoring.
+
+**Replay opt-in**: client signals intent by setting `"replay": true` in `client.hello.client_capabilities` (additive field, ignored by servers that don't support it).
 
 ---
 
@@ -551,12 +562,17 @@ Actual Postgres tables live in `03_Cloud_DTW.md`. This section only enumerates *
 | | `correct` | bool | DTW output |
 | | `dtw_distance` | float | |
 | | `joint_angles_compressed` | bytea | gzip of `joint_angles` series |
+| | `world_landmarks_compressed` | bytea / null | gzip of `world_landmarks` series; **null unless client sent replay opt-in**; see privacy note below |
 | `gesture_events` | `gesture` | enum | `client.gesture` |
 | `advice_tips` | `markdown` | text | `server.advice_tip` |
 
-**Privacy contract**: NO table may store raw video or absolute `world_landmarks` x/y/z. Only:
-- 14-D `joint_angles` (already view-invariant and de-identified)
-- Derived labels (correct, problem_joints, completeness)
+**Privacy contract**: NO table may store raw video or raw `image_landmarks`. Only:
+
+- 14-D `joint_angles` (view-invariant, de-identified) — always stored
+- Derived labels (`correct`, `problem_joints`, `completeness`) — always stored
+- `world_landmarks` (pelvis-origin body geometry, NOT absolute spatial position, NOT tied to location or identity) — **stored only when client explicitly opts in for replay** (`client.hello.client_capabilities.replay: true`); retained per-rep for replay playback only; never used for scoring or external processing
+
+> **Why worldLandmarks are permitted for replay**: MediaPipe `worldLandmarks` use the pelvis midpoint as origin (meter-scale body geometry). They encode body shape/pose, not spatial location. This is meaningfully different from GPS or camera-position data. The scoped exception applies only to replay-enabled sessions and is always nullable.
 
 ---
 
@@ -569,4 +585,100 @@ Actual Postgres tables live in `03_Cloud_DTW.md`. This section only enumerates *
 
 ---
 
-*Last updated: 2026-04-24 · Maintained jointly by all 3 engineers*
+## §10 Demo Mode — Real-time Heuristic Feedback (`web/demo.html`)
+
+> **Status**: implemented in `web/demo.html` (standalone page, no server dependency).
+> **Purpose**: Demo Day prototype demonstrating real-time form feedback and rep counting.
+> This page replaces the planned replay/ghost-skeleton flow (rolled back 2026-05-01).
+
+### 10.1 Architecture
+
+```
+Camera → MediaPipe PoseLandmarker (tasks-vision@0.10.14)
+       → result.landmarks[0]  (image-normalized coords)
+       → calcAngle()          (Kaggle arctan2 method, 2D)
+       → threshold checks     → colored skeleton overlay
+       → state machine        → rep counter
+       [on "Finish Set"] → in-browser summary card
+```
+
+No server calls during recording. Data stays entirely in the browser.
+
+### 10.2 Angle calculation — Kaggle arctan2 method (JS)
+
+```js
+function calcAngle(a, b, c) {
+  // a, b, c = MediaPipe landmark objects { x, y, visibility }
+  // b = vertex joint
+  const rad = Math.atan2(c.y - b.y, c.x - b.x)
+            - Math.atan2(a.y - b.y, a.x - b.x);
+  let deg = Math.abs(rad * 180 / Math.PI);
+  if (deg > 180) deg = 360 - deg;
+  return Math.round(deg);
+}
+```
+
+Uses **image-space 2D coords** (`result.landmarks[0]`), not world landmarks.
+This differs from `debug.html`'s `computeAngles()` which uses 3D world landmarks.
+
+### 10.3 Exercises and key parameters
+
+| Exercise | Key landmark triplet (vertex = middle) | Rest condition | Work condition |
+|---|---|---|---|
+| Bodyweight Squat | hip→knee→ankle (both sides, avg) | avg > 160° | avg < 100° |
+| Dumbbell Curl (Right Arm) | shoulder→elbow→wrist (right) | angle > 155° | angle < 55° |
+| Dumbbell Lateral Raise | hip→shoulder→elbow (both sides, avg) | avg < 30° | avg > 75° |
+
+Rep counted when state transitions: `neutral → rest → work → rest`.
+
+### 10.4 Form checks per exercise
+
+#### Bodyweight Squat
+
+| Check | Condition (fail = red) | Hint |
+| --- | --- | --- |
+| Left depth | During work: knee angle ≥ 110° | Squat lower on the left |
+| Right depth | During work: knee angle ≥ 110° | Squat lower on the right |
+| Symmetry | `\|left − right\|` ≥ 20° at any time | Uneven leg drive |
+
+#### Dumbbell Curl (Right Arm)
+
+| Check | Condition (fail = red) | Hint |
+| --- | --- | --- |
+| Curl range | During work: elbow angle ≥ 60° | Curl higher |
+| Elbow height | `elbow.y − shoulder.y < −0.05` (elbow above shoulder) | Do not lift your elbow |
+
+#### Dumbbell Lateral Raise
+
+| Check | Condition (fail = red) | Hint |
+| --- | --- | --- |
+| Right height | During work: shoulder abduction ≤ 70° | Raise your right arm to shoulder height |
+| Left height | During work: shoulder abduction ≤ 70° | Raise your left arm to shoulder height |
+| Elbow lock (R) | During work: elbow angle ≥ 165° | Keep your right elbow slightly bent; do not lock it |
+| Symmetry | `\|right − left\|` ≥ 25° at any time | Arm heights do not match |
+
+### 10.5 Canvas rendering spec
+
+| Element | Style |
+| --- | --- |
+| Background | `#000000` + `rgba(0,0,0,0.38)` video overlay |
+| Skeleton — correct | stroke `#DEFF9A`, lineWidth 6 |
+| Skeleton — error | stroke `#FF5555`, lineWidth 8 |
+| Skeleton — low visibility | stroke `rgba(255,255,255,0.45)`, lineWidth 2, alpha 0.4 |
+| Joint dots | radius 5px, same color as connected bones |
+| Angle annotation | white text drawn on canvas near vertex joint |
+
+### 10.6 Post-set summary (in-browser only)
+
+Triggered by "Finish Set" button. Displays:
+
+- Total rep count
+- Session duration (seconds)
+- Accuracy = `(totalFrames − errorFrames) / totalFrames × 100%`
+- Top 3 most frequent form errors (sorted by frame count, with relative frequency bar)
+
+No DTW. No server call. Summary resets on "Restart".
+
+---
+
+*Last updated: 2026-05-01 · Maintained jointly by all 3 engineers*
