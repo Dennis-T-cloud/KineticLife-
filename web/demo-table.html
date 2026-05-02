@@ -493,6 +493,11 @@ const inferCanvas = document.createElement('canvas');
 inferCanvas.width = 120; inferCanvas.height = 160;
 const inferCtx    = inferCanvas.getContext('2d');
 
+// Offscreen canvas for local camera — stores horizontally-flipped frame
+// so MediaPipe landmark left/right matches the mirror display
+const localInferCanvas = document.createElement('canvas');
+const localInferCtx    = localInferCanvas.getContext('2d');
+
 // Local camera video element (created in init if needed)
 let videoEl = null;
 
@@ -657,8 +662,19 @@ function tick(now) {
     const dx = (W - dw) / 2, dy = (H - dh) / 2;
     vidTransform = { dx, dy, dw, dh };
 
-    if (showRaw) ctx.drawImage(videoEl, dx, dy, dw, dh);
-    inferSource = videoEl;
+    // Flip frame horizontally so front-camera left/right matches MediaPipe labels
+    if (localInferCanvas.width !== vw || localInferCanvas.height !== vh) {
+      localInferCanvas.width = vw;
+      localInferCanvas.height = vh;
+    }
+    localInferCtx.save();
+    localInferCtx.translate(vw, 0);
+    localInferCtx.scale(-1, 1);
+    localInferCtx.drawImage(videoEl, 0, 0, vw, vh);
+    localInferCtx.restore();
+
+    if (showRaw) ctx.drawImage(localInferCanvas, dx, dy, dw, dh);
+    inferSource = localInferCanvas;
   }
 
   ctx.fillStyle = 'rgba(0,0,0,0.38)';
