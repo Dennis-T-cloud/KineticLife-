@@ -594,7 +594,10 @@ Actual Postgres tables live in `03_Cloud_DTW.md`. This section only enumerates *
 ### 10.1 Architecture
 
 ```
-Camera → MediaPipe PoseLandmarker (tasks-vision@0.10.14)
+ESP32 /ws (binary JPEG, 320×240 landscape)
+       → WebSocket → createImageBitmap() → latestBitmap
+       → rotate 90° CW → inferCanvas (120×160 portrait)
+       → MediaPipe PoseLandmarker.detectForVideo(inferCanvas)
        → result.landmarks[0]  (image-normalized coords)
        → calcAngle()          (Kaggle arctan2 method, 2D)
        → threshold checks     → colored skeleton overlay
@@ -602,7 +605,22 @@ Camera → MediaPipe PoseLandmarker (tasks-vision@0.10.14)
        [on "Finish Set"] → in-browser summary card
 ```
 
+**Camera source**: ESP32 WebSocket stream only. No local webcam.
+If no `?cam=` URL parameter and no `kineticlife.camUrl` in localStorage, page shows error badge and stays black (MediaPipe is not loaded).
+
+**Entry point**: `pair.html` → "Demo Mode" button → `demo.html?cam=<url>`.
+
 No server calls during recording. Data stays entirely in the browser.
+
+### 10.1.1 WebSocket stream handling
+
+Identical pattern to `debug.html`. One decode in flight at a time; newest frame wins when a second arrives during decoding (no latency creep). Auto-reconnects every 2 s on close.
+
+```text
+Binary JPEG ArrayBuffer
+  → createImageBitmap(Blob)  [async, GPU-accelerated]
+  → latestBitmap (ImageBitmap, previous released via .close())
+```
 
 ### 10.2 Angle calculation — Kaggle arctan2 method (JS)
 
@@ -666,6 +684,7 @@ Rep counted when state transitions: `neutral → rest → work → rest`.
 | Skeleton — error | stroke `#FF5555`, lineWidth 8 |
 | Skeleton — low visibility | stroke `rgba(255,255,255,0.45)`, lineWidth 2, alpha 0.4 |
 | Joint dots | radius 5px, same color as connected bones |
+| Head center anchor | nose (lm[0]); hollow circle radius 8, fill `rgba(255,255,255,0.22)`, stroke `rgba(255,255,255,0.65)` lineWidth 2; drawn only when visibility ≥ 0.5; reserved for head-motion features |
 | Angle annotation | white text drawn on canvas near vertex joint |
 
 ### 10.6 Post-set summary (in-browser only)
@@ -681,4 +700,4 @@ No DTW. No server call. Summary resets on "Restart".
 
 ---
 
-*Last updated: 2026-05-01 · Maintained jointly by all 3 engineers*
+Last updated: 2026-05-02 (head center anchor added to §10.5; WS target display added to debug.html) · Maintained jointly by all 3 engineers

@@ -111,6 +111,9 @@
           <button id="openCam">Camera Debug</button>
           <button id="openDemo" class="secondary">Demo Mode</button>
         </div>
+        <div class="actions" style="grid-template-columns:1fr">
+          <button class="outline" id="openDemoTable">Demo (Tablet) — ESP32 + local cam fallback</button>
+        </div>
         <div class="actions">
           <button class="secondary" id="refreshQr">Refresh QR</button>
         </div>
@@ -172,6 +175,9 @@
         <div class="actions">
           <button id="directOpen">Camera Debug</button>
           <button id="directDemo" class="secondary">Demo Mode</button>
+        </div>
+        <div class="actions" style="grid-template-columns:1fr">
+          <button class="outline" id="directDemoTable">Demo (Tablet) — ESP32 + local cam fallback</button>
         </div>
       </div>
     </section>
@@ -277,6 +283,11 @@
       localStorage.setItem("kineticlife.camUrl", camUrl);
       location.href = `./demo.html?cam=${encodeURIComponent(camUrl)}`;
     });
+    document.getElementById("openDemoTable").addEventListener("click", () => {
+      const camUrl = normalizeCamUrl(camUrlEl.value);
+      localStorage.setItem("kineticlife.camUrl", camUrl);
+      location.href = `./demo-table.html?cam=${encodeURIComponent(camUrl)}`;
+    });
     updateQr();
 
     // ── Config Networks tab ────────────────────────────────────────
@@ -377,6 +388,11 @@
       const url = normalizeCamUrl(directUrlEl.value);
       localStorage.setItem("kineticlife.camUrl", url);
       location.href = `./demo.html?cam=${encodeURIComponent(url)}`;
+    });
+    document.getElementById("directDemoTable").addEventListener("click", () => {
+      const url = normalizeCamUrl(directUrlEl.value);
+      localStorage.setItem("kineticlife.camUrl", url);
+      location.href = `./demo-table.html?cam=${encodeURIComponent(url)}`;
     });
   </script>
 </body>

@@ -13,8 +13,9 @@ For static hardware testing, use:
 
 - `index.html`: default entry that redirects to `pair.html` and includes fallback links.
 - `pair.html`: generate WiFi QR and open the camera page.
-- `debug.html`: connect to ESP32 `/ws` WebSocket binary stream, run MediaPipe pose extraction, display 14-D joint angles, and call `/end` when the user finishes.
-- `demo.html`: standalone local-camera demo mode with real-time heuristic feedback.
+- `debug.html`: connect to ESP32 `/ws` WebSocket binary stream, run MediaPipe pose extraction, display 14-D joint angles, show live WS stream target in metrics bar, and call `/end` when the user finishes.
+- `demo.html`: ESP32-connected demo mode with real-time heuristic feedback, rep counting, and post-set summary. Calls `/cam` at startup to apply default camera settings (q=12, 320×240). Raw video overlay toggle (`raw ●/○`). Shows black screen if no ESP32 URL present.
+- `demo-table.html`: tablet/desktop variant. If `?cam=<url>` is present → ESP32 WS stream (same pipeline as demo.html). If no cam URL → falls back to device front camera via `getUserMedia`. Source shown as `ESP32` or `Local Cam` badge. All exercises, form checks, and summary identical to demo.html.
 
 The QR pages generate compact WiFi QR payloads in the current contract format:
 
@@ -23,3 +24,22 @@ K1:<TYPE_CODE>:<SSID_LEN>:<SSID><PASSWORD>
 ```
 
 The Vite dev server serves `index.html` at `/`, which redirects to the pairing flow.
+
+## Camera Parameter Tuning
+
+`debug.html` exposes live camera controls (brightness, contrast, saturation, sharpness, ae\_level, JPEG quality). Use it to find the optimal values for the physical setup.
+
+Once tuned, the finalized values must be applied in **three places** to keep all pages consistent:
+
+1. **Firmware** — camera init defaults in `firmware/src/` (values the ESP32 boots with)
+2. **`demo.html`** — the `/cam` call in `init()` (line ~566)
+3. **`demo-table.html`** — the `/cam` call in `init()` (line ~569)
+
+Current defaults used by demo.html and demo-table.html (match `debug.html` FW object):
+
+```text
+res=320x240  q=12  brightness=0  contrast=1  saturation=0
+sharpness=1  ae_level=0  vflip=0  hmirror=0
+```
+
+> Note: OV5640 AEC (auto-exposure) and AWB (auto white balance) run continuously in hardware and are not disabled by `/cam`. Visual brightness/color will still converge over ~5–10 s after each connection. The `/cam` parameters only control static ISP offsets (contrast ratio, sharpness kernel, etc.) and JPEG compression quality.

@@ -112,6 +112,7 @@
   <span class="m"><span class="ml">skip<span class="mdir mdir-l">L</span> </span><span class="mv" id="mSkip">—</span></span>
   <span class="m"><span class="ml">mode </span><span class="mv" id="mMode" style="color:#34d399">COLOR</span></span>
   <span class="m"><span class="ml">match<span class="mdir mdir-h">H</span> </span><span class="mv" id="mMatch" style="color:#f59e0b">—</span></span>
+  <span class="m"><span class="ml">ws→ </span><span id="mWsUrl" style="color:#4a5568;font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span></span>
 </div>
 
 <!-- cam params (current runtime, grouped by source file) -->
@@ -246,6 +247,8 @@ function openWs() {
   sock.onopen = () => {
     console.log(`[ws] connected ${url}`);
     statusEl.textContent = "connected";
+    const mWs = document.getElementById("mWsUrl");
+    if (mWs) { mWs.textContent = url; mWs.style.color = "#34d399"; }
   };
 
   sock.onmessage = ({ data }) => {
@@ -261,6 +264,8 @@ function openWs() {
     wsConn = null;
     console.warn("[ws] closed — retrying in 2 s");
     statusEl.textContent = "stream closed — retrying in 2 s";
+    const mWs = document.getElementById("mWsUrl");
+    if (mWs) mWs.style.color = "#4a5568";
     if (retryTimer) clearTimeout(retryTimer);
     retryTimer = setTimeout(applyStream, 2000);
   };
