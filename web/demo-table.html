@@ -517,6 +517,13 @@ let lastTs         = -1;
 let showRaw        = true;
 let vidTransform   = { dx: 0, dy: 0, dw: 640, dh: 480 };
 
+// ── Display smoothing state ────────────────────────────────────────────────
+let smoothedLm      = null;
+const SMOOTH_ALPHA  = 0.45;
+let consecErrFrames = 0;
+let displayErrSet   = new Set();
+const ERR_DEBOUNCE  = 4;
+
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const exSelect        = document.getElementById('exSelect');
 const repNumEl        = document.getElementById('repNum');
@@ -683,9 +690,10 @@ function tick(now) {
   const result = landmarker.detectForVideo(inferSource, now);
   if (!result.landmarks.length) return;
 
-  const lm = result.landmarks[0];
+  const rawLm    = result.landmarks[0];
+  const displayLm = smoothLandmarks(rawLm);
   const ex = EXERCISES[currentExKey];
-  const keyAngle = ex.getKeyAngle(lm);
+  const keyAngle = ex.getKeyAngle(rawLm);
   totalFrames++;
 
   updateSM(keyAngle, ex);
@@ -694,7 +702,7 @@ function tick(now) {
   const activeHints  = [];
   let   frameHasErr  = false;
   for (const check of ex.checks) {
-    const v   = check.getVal(lm);
+    const v   = check.getVal(rawLm);
     const ok  = check.valid(v, repPhase);
     if (!ok) {
       check.bones.forEach(([a, b]) => errorBoneSet.add(boneKey(a, b)));
@@ -703,13 +711,21 @@ function tick(now) {
       frameHasErr = true;
     }
   }
-  if (frameHasErr) errorFrames++;
+  if (frameHasErr) {
+    errorFrames++;
+    consecErrFrames = Math.min(consecErrFrames + 1, ERR_DEBOUNCE);
+  } else {
+    consecErrFrames = Math.max(consecErrFrames - 1, 0);
+  }
+  if (consecErrFrames >= ERR_DEBOUNCE)  displayErrSet = errorBoneSet;
+  else if (consecErrFrames === 0)        displayErrSet = new Set();
 
-  drawSkeleton(lm, errorBoneSet);
-  drawAngleOnCanvas(lm, ex);
-  updateHintPanel(activeHints, ex.checks.map(c => c.hint));
+  drawSkeleton(displayLm, displayErrSet);
+  drawAngleOnCanvas(displayLm, ex);
+  const showHints = consecErrFrames >= ERR_DEBOUNCE ? activeHints : [];
+  updateHintPanel(showHints, ex.checks.map(c => c.hint));
   updatePhase(ex);
-  updateAngleStrip(lm, ex);
+  updateAngleStrip(displayLm, ex);
 }
 
 // ── State machine ──────────────────────────────────────────────────────────
@@ -725,6 +741,24 @@ function updateSM(angle, ex) {
   } else if (ex.workCond(angle)) {
     repPhase = 'work';
   }
+}
+
+// ── Landmark EMA smoothing (display only) ─────────────────────────────────
+function smoothLandmarks(raw) {
+  if (!smoothedLm || smoothedLm.length !== raw.length) {
+    smoothedLm = raw.map(p => ({ x: p.x, y: p.y, z: p.z, visibility: p.visibility }));
+    return smoothedLm;
+  }
+  for (let i = 0; i < raw.length; i++) {
+    const r = raw[i], s = smoothedLm[i];
+    if (r.visibility >= VIS) {
+      s.x = SMOOTH_ALPHA * r.x + (1 - SMOOTH_ALPHA) * s.x;
+      s.y = SMOOTH_ALPHA * r.y + (1 - SMOOTH_ALPHA) * s.y;
+      s.z = SMOOTH_ALPHA * r.z + (1 - SMOOTH_ALPHA) * s.z;
+    }
+    s.visibility = r.visibility;
+  }
+  return smoothedLm;
 }
 
 // ── Draw skeleton on canvas ────────────────────────────────────────────────
@@ -780,16 +814,16 @@ function drawSkeleton(lm, errorBoneSet) {
 // ── Angle text on skeleton ─────────────────────────────────────────────────
 function drawAngleOnCanvas(lm, ex) {
   const { dx, dy, dw, dh } = vidTransform;
-  ctx.font      = 'bold 13px system-ui';
+  ctx.font      = 'bold 24px system-ui';
   ctx.textAlign = 'center';
 
   for (const d of ex.displayAngles) {
     if (!d.joint || lm[d.joint].visibility < VIS) continue;
     const x   = dx + lm[d.joint].x * dw;
-    const y   = dy + lm[d.joint].y * dh - 16;
+    const y   = dy + lm[d.joint].y * dh - 30;
     const txt = `${d.fn(lm)}°`;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(x - 24, y - 14, 48, 18);
+    ctx.fillRect(x - 36, y - 20, 72, 28);
     ctx.fillStyle = '#fff';
     ctx.fillText(txt, x, y);
   }
@@ -863,6 +897,7 @@ function showAnalysis() {
 function resetSession() {
   repCount  = 0; repPhase = 'neutral';
   hintCounts = {}; totalFrames = 0; errorFrames = 0;
+  smoothedLm = null; consecErrFrames = 0; displayErrSet = new Set();
   sessionStart = performance.now();
   repNumEl.textContent = '0';
   appState = 'RECORDING';
