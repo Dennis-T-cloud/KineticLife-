@@ -43,6 +43,10 @@ web/npm-debug.log*
 web/yarn-debug.log*
 web/yarn-error.log*
 web/pnpm-debug.log*
+web/vendor/mediapipe/
+web/__pycache__/
+web/**/*.py[cod]
+web/**/__pycache__/
 
 # Legacy frontend workspace
 frontend/node_modules/

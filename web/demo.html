@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KineticLife — Demo</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #000;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  overflow: hidden;
+  height: 100dvh;
+  width: 100dvw;
+}
+
+#canvas {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+
+/* ── Header ───────────────────────────────────────────────────────────── */
+#header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.78) 0%, transparent 100%);
+}
+
+#exSelect {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 0.92rem;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  min-width: 150px;
+}
+#exSelect option { background: #1a1a1a; }
+
+#repBox {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-left: 6px;
+}
+#repNum {
+  font-size: 2.8rem;
+  font-weight: 800;
+  color: #DEFF9A;
+  line-height: 1;
+  min-width: 2ch;
+  text-align: right;
+  transition: transform 0.1s;
+}
+#repNum.flash { transform: scale(1.35); }
+#repLabel { font-size: 0.82rem; color: rgba(255,255,255,0.5); }
+
+.hdr-btn {
+  padding: 7px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.hdr-btn:active { opacity: 0.65; }
+
+#btnFinish {
+  background: #DEFF9A;
+  color: #111;
+  margin-left: auto;
+}
+#btnReset {
+  background: rgba(255,255,255,0.13);
+  color: #fff;
+}
+#btnHome {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.5);
+  font-size: 0.8rem;
+}
+#btnRaw {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.45);
+  font-size: 0.78rem;
+}
+#btnRaw.raw-off { color: rgba(255,255,255,0.2); }
+
+#statusBadge {
+  font-size: 0.75rem;
+  color: rgba(255,255,255,0.35);
+}
+
+/* ── Phase pill ───────────────────────────────────────────────────────── */
+#phasePill {
+  position: fixed;
+  top: 68px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 4px 18px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+  transition: background 0.18s, color 0.18s;
+  white-space: nowrap;
+}
+.pill-ready { background: rgba(255,255,255,0.1);  color: rgba(255,255,255,0.55); }
+.pill-rest  { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.85); }
+.pill-work  { background: rgba(222,255,154,0.22); color: #DEFF9A; }
+
+/* ── Right hint panel ─────────────────────────────────────────────────── */
+#hintPanel {
+  position: fixed;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-width: 190px;
+  pointer-events: none;
+}
+.hint-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0,0,0,0.58);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 0.8rem;
+  border-left: 3px solid;
+}
+.hint-ok  { border-color: #DEFF9A; color: rgba(255,255,255,0.65); }
+.hint-err { border-color: #FF5555; color: #fff; font-weight: 600; }
+.hint-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.hint-ok  .hint-dot { background: #DEFF9A; }
+.hint-err .hint-dot { background: #FF5555; }
+
+/* ── Bottom angle strip ───────────────────────────────────────────────── */
+#angleStrip {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 20;
+  display: flex;
+  gap: 10px;
+  pointer-events: none;
+}
+.angle-box {
+  background: rgba(0,0,0,0.62);
+  border-radius: 8px;
+  padding: 5px 12px;
+  text-align: center;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.angle-label { font-size: 0.67rem; color: rgba(255,255,255,0.42); text-transform: uppercase; letter-spacing: 0.04em; }
+.angle-val   { font-size: 1.35rem; font-weight: 700; color: #DEFF9A; }
+
+/* ── Exercise note (shown for single-side exercises) ─────────────────── */
+#exNote {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 20;
+  font-size: 0.72rem;
+  color: rgba(255,255,255,0.3);
+  pointer-events: none;
+}
+
+/* ── Analysis overlay ─────────────────────────────────────────────────── */
+#analysisOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.84);
+  backdrop-filter: blur(8px);
+}
+#analysisOverlay[hidden] { display: none; }
+
+#summaryCard {
+  background: #111;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 20px;
+  padding: 36px 40px;
+  max-width: 400px;
+  width: 90%;
+  text-align: center;
+}
+#summaryCard h2 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: rgba(255,255,255,0.6);
+  margin-bottom: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sum-big  { font-size: 4.5rem; font-weight: 800; color: #DEFF9A; line-height: 1; }
+.sum-unit { font-size: 0.8rem; color: rgba(255,255,255,0.38); margin-top: 2px; }
+
+.sum-row  {
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+  margin: 18px 0 24px;
+}
+.sum-stat { text-align: center; }
+.sum-stat-val { font-size: 1.6rem; font-weight: 700; }
+.sum-stat-lbl { font-size: 0.72rem; color: rgba(255,255,255,0.38); margin-top: 2px; }
+
+.errors-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: rgba(255,255,255,0.35);
+  margin-bottom: 10px;
+  text-align: left;
+}
+.error-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255,85,85,0.1);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+  text-align: left;
+}
+.err-text { flex: 1; }
+.err-bar-wrap { width: 60px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; flex-shrink: 0; }
+.err-bar { height: 100%; background: #FF5555; border-radius: 2px; }
+
+#noErrors {
+  font-size: 0.85rem;
+  color: rgba(255,255,255,0.4);
+  padding: 8px 0;
+}
+
+#btnRestart {
+  margin-top: 22px;
+  width: 100%;
+  padding: 13px;
+  background: #DEFF9A;
+  color: #111;
+  border: none;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+#btnRestart:active { opacity: 0.7; }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="header">
+  <select id="exSelect">
+    <option value="squat">Bodyweight Squat</option>
+    <option value="bicep_curl">Dumbbell Curl (Right Arm)</option>
+    <option value="lateral_raise">Dumbbell Lateral Raise</option>
+  </select>
+  <div id="repBox">
+    <span id="repNum">0</span>
+    <span id="repLabel">reps</span>
+  </div>
+  <button class="hdr-btn" id="btnFinish">Finish Set</button>
+  <button class="hdr-btn" id="btnReset">Reset</button>
+  <button class="hdr-btn" id="btnRaw">raw ●</button>
+  <button class="hdr-btn" id="btnHome">← Home</button>
+  <span id="statusBadge">loading…</span>
+</div>
+
+<div id="phasePill" class="pill-ready">Ready</div>
+<div id="hintPanel"></div>
+<div id="angleStrip"></div>
+<div id="exNote"></div>
+
+<div id="analysisOverlay" hidden>
+  <div id="summaryCard">
+    <h2 id="sumExLabel">Set Complete</h2>
+    <div class="sum-big" id="sumReps">0</div>
+    <div class="sum-unit">reps</div>
+    <div class="sum-row">
+      <div class="sum-stat">
+        <div class="sum-stat-val" id="sumScore" style="color:#DEFF9A">—%</div>
+        <div class="sum-stat-lbl">Form Quality</div>
+      </div>
+      <div class="sum-stat">
+        <div class="sum-stat-val" id="sumDur">—s</div>
+        <div class="sum-stat-lbl">Time</div>
+      </div>
+    </div>
+    <div class="errors-title">Main Issues</div>
+    <div id="sumErrors"></div>
+    <button id="btnRestart">Restart</button>
+  </div>
+</div>
+
+<script type="module">
+import { createPoseLandmarkerRuntime } from "./mediapipe_loader.mjs";
+import { logMediaPipeRuntime, logPageBoot, logWsEvent, probeDevice } from "./runtime_log.mjs";
+
+// ── Constants ──────────────────────────────────────────────────────────────
+const VIS       = 0.5;
+const C_OK      = '#DEFF9A';
+const C_ERR     = '#FF5555';
+const C_DEFAULT = 'rgba(255,255,255,0.45)';  // low-visibility fallback
+
+// Bones to draw (from spec + ankles)
+const BONE_PAIRS = [
+  [11,12],[11,13],[13,15],[12,14],[14,16],
+  [11,23],[12,24],[23,24],
+  [23,25],[24,26],[25,27],[26,28],
+];
+const ALL_JOINTS = [...new Set(BONE_PAIRS.flat())];
+
+// ── Angle helpers ──────────────────────────────────────────────────────────
+// Kaggle arctan2 method — ported from Python to JS.
+// Uses 2D image-space coords (y increases downward).
+function calcAngle(a, b, c) {
+  const rad = Math.atan2(c.y - b.y, c.x - b.x)
+            - Math.atan2(a.y - b.y, a.x - b.x);
+  let deg = Math.abs(rad * 180 / Math.PI);
+  if (deg > 180) deg = 360 - deg;
+  return Math.round(deg);
+}
+
+function boneKey(a, b) { return `${Math.min(a,b)}_${Math.max(a,b)}`; }
+
+function visible(lm, ...idxs) { return idxs.every(i => lm[i].visibility >= VIS); }
+
+// ── Exercise definitions ───────────────────────────────────────────────────
+// Each exercise has:
+//   getKeyAngle  → drives the state machine
+//   restCond     → "starting position reached"
+//   workCond     → "working position reached" (rep counted on return to rest)
+//   checks[]     → form validations; failing → paint bones red + show hint
+//   displayAngles[] → bottom-strip readout
+//   note         → optional side-bar reminder
+
+const EXERCISES = {
+  squat: {
+    label:    'Bodyweight Squat',
+    getKeyAngle: lm => (calcAngle(lm[23], lm[25], lm[27])
+                       + calcAngle(lm[24], lm[26], lm[28])) / 2,
+    restCond: a => a > 160,   // standing
+    workCond: a => a < 100,   // deep squat
+    phaseLabel: { rest: 'Standing', work: 'Squatting' },
+    checks: [
+      {
+        id: 'sq_depth_l',
+        getVal: lm => calcAngle(lm[23], lm[25], lm[27]),
+        valid: (v, phase) => phase !== 'work' || v < 110,
+        hint: 'Squat lower on the left',
+        bones: [[23,25],[25,27]],
+      },
+      {
+        id: 'sq_depth_r',
+        getVal: lm => calcAngle(lm[24], lm[26], lm[28]),
+        valid: (v, phase) => phase !== 'work' || v < 110,
+        hint: 'Squat lower on the right',
+        bones: [[24,26],[26,28]],
+      },
+      {
+        id: 'sq_sym',
+        getVal: lm => Math.abs(calcAngle(lm[23],lm[25],lm[27]) - calcAngle(lm[24],lm[26],lm[28])),
+        valid: v => v < 20,
+        hint: 'Uneven leg drive',
+        bones: [[23,25],[25,27],[24,26],[26,28]],
+      },
+    ],
+    displayAngles: [
+      { label: 'Left Knee', fn: lm => calcAngle(lm[23],lm[25],lm[27]), joint: 25 },
+      { label: 'Right Knee', fn: lm => calcAngle(lm[24],lm[26],lm[28]), joint: 26 },
+    ],
+  },
+
+  bicep_curl: {
+    label:    'Dumbbell Curl',
+    note:     'Use your right hand for the dumbbell',
+    getKeyAngle: lm => calcAngle(lm[12], lm[14], lm[16]),
+    restCond: a => a > 155,   // arm extended
+    workCond: a => a < 55,    // fully curled
+    phaseLabel: { rest: 'Arm Extended', work: 'Curling' },
+    checks: [
+      {
+        id: 'curl_range',
+        getVal: lm => calcAngle(lm[12], lm[14], lm[16]),
+        valid: (v, phase) => phase !== 'work' || v < 60,
+        hint: 'Curl higher',
+        bones: [[12,14],[14,16]],
+      },
+      {
+        // elbow.y - shoulder.y: positive = elbow is below shoulder (correct)
+        // negative = elbow has risen above shoulder (cheating)
+        id: 'curl_elbow',
+        getVal: lm => lm[14].y - lm[12].y,
+        valid: v => v > -0.05,
+        hint: 'Do not lift your elbow',
+        bones: [[12,14]],
+      },
+    ],
+    displayAngles: [
+      { label: 'Right Arm', fn: lm => calcAngle(lm[12],lm[14],lm[16]), joint: 14 },
+    ],
+  },
+
+  lateral_raise: {
+    label:    'Dumbbell Lateral Raise',
+    getKeyAngle: lm => (calcAngle(lm[24],lm[12],lm[14]) + calcAngle(lm[23],lm[11],lm[13])) / 2,
+    restCond: a => a < 30,    // arms by sides
+    workCond: a => a > 75,    // arms near horizontal
+    phaseLabel: { rest: 'Lowered', work: 'Raising' },
+    checks: [
+      {
+        id: 'lr_height_r',
+        getVal: lm => calcAngle(lm[24], lm[12], lm[14]),
+        valid: (v, phase) => phase !== 'work' || v > 70,
+        hint: 'Raise your right arm to shoulder height',
+        bones: [[12,14],[14,16]],
+      },
+      {
+        id: 'lr_height_l',
+        getVal: lm => calcAngle(lm[23], lm[11], lm[13]),
+        valid: (v, phase) => phase !== 'work' || v > 70,
+        hint: 'Raise your left arm to shoulder height',
+        bones: [[11,13],[13,15]],
+      },
+      {
+        id: 'lr_elbow_r',
+        getVal: lm => calcAngle(lm[12], lm[14], lm[16]),
+        valid: (v, phase) => phase !== 'work' || v < 165,
+        hint: 'Keep your right elbow slightly bent; do not lock it',
+        bones: [[14,16]],
+      },
+      {
+        id: 'lr_sym',
+        getVal: lm => Math.abs(calcAngle(lm[24],lm[12],lm[14]) - calcAngle(lm[23],lm[11],lm[13])),
+        valid: v => v < 25,
+        hint: 'Arm heights do not match',
+        bones: [[11,13],[12,14]],
+      },
+    ],
+    displayAngles: [
+      { label: 'Right Shoulder', fn: lm => calcAngle(lm[24],lm[12],lm[14]), joint: 12 },
+      { label: 'Left Shoulder', fn: lm => calcAngle(lm[23],lm[11],lm[13]), joint: 11 },
+    ],
+  },
+};
+
+// ── ESP32 camera URL (required — no local webcam fallback) ────────────────
+const _params = new URLSearchParams(location.search);
+const camUrl  = _params.get('cam') || localStorage.getItem('kineticlife.camUrl') || '';
+logPageBoot('demo', { camUrl: camUrl || null, sourceMode: camUrl ? 'esp32' : 'none' });
+
+// ── WS stream state ────────────────────────────────────────────────────────
+let wsConn        = null;
+let latestBitmap  = null;
+let decodePending = false;
+let pendingData   = null;
+let retryTimer    = null;
+
+// Offscreen inference canvas: 120×160 portrait (same as debug.html)
+const inferCanvas = document.createElement('canvas');
+inferCanvas.width = 120; inferCanvas.height = 160;
+const inferCtx    = inferCanvas.getContext('2d');
+
+// ── App state ──────────────────────────────────────────────────────────────
+let landmarker;
+const canvas       = document.getElementById('canvas');
+const ctx          = canvas.getContext('2d');
+let appState       = 'RECORDING';
+let currentExKey   = 'squat';
+let repPhase       = 'neutral';   // 'neutral' | 'rest' | 'work'
+let repCount       = 0;
+let hintCounts     = {};
+let totalFrames    = 0;
+let errorFrames    = 0;
+let sessionStart   = null;
+let lastTs         = -1;
+let showRaw        = true;
+let vidTransform   = { dx: 0, dy: 0, dw: 640, dh: 480 };  // updated in tick
+
+// ── Display smoothing state ────────────────────────────────────────────────
+let smoothedLm      = null;
+const SMOOTH_ALPHA  = 0.45;
+let consecErrFrames = 0;
+let displayErrSet   = new Set();
+const ERR_DEBOUNCE  = 4;
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const exSelect        = document.getElementById('exSelect');
+const repNumEl        = document.getElementById('repNum');
+const phasePill       = document.getElementById('phasePill');
+const hintPanel       = document.getElementById('hintPanel');
+const angleStrip      = document.getElementById('angleStrip');
+const exNoteEl        = document.getElementById('exNote');
+const statusBadge     = document.getElementById('statusBadge');
+const analysisOverlay = document.getElementById('analysisOverlay');
+
+// ── URL helpers ────────────────────────────────────────────────────────────
+function httpBase() {
+  const n = camUrl.trim().replace(/\/+$/, '');
+  return /^https?:\/\//i.test(n) ? n : `http://${n}`;
+}
+
+// ── WS helpers (ESP32 mode) ────────────────────────────────────────────────
+function startDecode(data) {
+  decodePending = true;
+  pendingData   = null;
+  createImageBitmap(new Blob([data], { type: 'image/jpeg' })).then(bmp => {
+    if (latestBitmap) latestBitmap.close();
+    latestBitmap  = bmp;
+    decodePending = false;
+    if (pendingData) startDecode(pendingData);
+  });
+}
+
+function openWs() {
+  const url = httpBase().replace(/^http:\/\//i, 'ws://') + '/ws';
+  const sock = new WebSocket(url);
+  wsConn = sock;
+  sock.binaryType = 'arraybuffer';
+  sock.onopen    = () => {
+    logWsEvent('open', { url });
+    statusBadge.textContent = 'ESP32 connected';
+  };
+  sock.onmessage = ({ data }) => {
+    if (decodePending) { pendingData = data; return; }
+    startDecode(data);
+  };
+  sock.onclose   = () => {
+    if (wsConn !== sock) return;
+    wsConn = null;
+    logWsEvent('close', { url });
+    statusBadge.textContent = 'stream closed — retrying…';
+    retryTimer = setTimeout(openWs, 2000);
+  };
+  sock.onerror   = () => {
+    logWsEvent('error', { url });
+    statusBadge.textContent = 'WebSocket error';
+  };
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+  resize();
+  window.addEventListener('resize', resize);
+
+  if (!camUrl) {
+    statusBadge.textContent = 'No ESP32 — go to pair.html to connect';
+    return;
+  }
+
+  probeDevice(httpBase(), 'demo-device');
+  statusBadge.textContent = 'applying camera settings…';
+  await fetch(
+    `${httpBase()}/cam?res=320x240&q=12&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0&vflip=0&hmirror=0`,
+    { signal: AbortSignal.timeout(3000) }
+  ).catch(() => {});
+  statusBadge.textContent = `connecting → ${camUrl}`;
+  openWs();
+
+  statusBadge.textContent = 'loading model…';
+  const runtime = await createPoseLandmarkerRuntime();
+  landmarker = runtime.landmarker;
+  logMediaPipeRuntime(runtime);
+  statusBadge.textContent = 'ESP32 · ready';
+  sessionStart = performance.now();
+  requestAnimationFrame(tick);
+}
+
+// ── Main loop ──────────────────────────────────────────────────────────────
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (appState !== 'RECORDING') return;
+  if (!landmarker || !latestBitmap) return;
+  if (now - lastTs < 40) return;   // ~25 fps cap
+  lastTs = now;
+
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // ESP32 sends 320×240 landscape JPEG — rotate 90° CW to portrait 240×320
+  const vw = 240, vh = 320;
+  const scale = Math.max(W / vw, H / vh);
+  const dw = vw * scale, dh = vh * scale;
+  const dx = (W - dw) / 2, dy = (H - dh) / 2;
+  vidTransform = { dx, dy, dw, dh };
+
+  if (showRaw) {
+    ctx.save();
+    ctx.translate(dx + dw, dy);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(latestBitmap, 0, 0, dh, dw);
+    ctx.restore();
+  }
+
+  // Update inference canvas (120×160 portrait)
+  inferCtx.save();
+  inferCtx.translate(inferCanvas.width, 0);
+  inferCtx.rotate(Math.PI / 2);
+  inferCtx.drawImage(latestBitmap, 0, 0, inferCanvas.height, inferCanvas.width);
+  inferCtx.restore();
+
+  // Dark overlay — improves skeleton visibility
+  ctx.fillStyle = 'rgba(0,0,0,0.38)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Run inference
+  const result = landmarker.detectForVideo(inferCanvas, now);
+  if (!result.landmarks.length) return;
+
+  const rawLm     = result.landmarks[0];
+  const displayLm = smoothLandmarks(rawLm);
+  const ex = EXERCISES[currentExKey];
+
+  const keyAngle = ex.getKeyAngle(rawLm);
+  totalFrames++;
+
+  // State machine
+  updateSM(keyAngle, ex);
+
+  // Evaluate form checks (always on raw landmarks)
+  const errorBoneSet = new Set();
+  const activeHints  = [];
+  let   frameHasErr  = false;
+  for (const check of ex.checks) {
+    const v   = check.getVal(rawLm);
+    const ok  = check.valid(v, repPhase);
+    if (!ok) {
+      check.bones.forEach(([a, b]) => errorBoneSet.add(boneKey(a, b)));
+      activeHints.push(check.hint);
+      hintCounts[check.hint] = (hintCounts[check.hint] || 0) + 1;
+      frameHasErr = true;
+    }
+  }
+  if (frameHasErr) {
+    errorFrames++;
+    consecErrFrames = Math.min(consecErrFrames + 1, ERR_DEBOUNCE);
+  } else {
+    consecErrFrames = Math.max(consecErrFrames - 1, 0);
+  }
+  if (consecErrFrames >= ERR_DEBOUNCE)  displayErrSet = errorBoneSet;
+  else if (consecErrFrames === 0)        displayErrSet = new Set();
+
+  // Render (display landmarks only)
+  drawSkeleton(displayLm, displayErrSet);
+  drawAngleOnCanvas(displayLm, ex);
+
+  // DOM updates
+  const showHints = consecErrFrames >= ERR_DEBOUNCE ? activeHints : [];
+  updateHintPanel(showHints, ex.checks.map(c => c.hint));
+  updatePhase(ex);
+  updateAngleStrip(displayLm, ex);
+}
+
+// ── State machine ──────────────────────────────────────────────────────────
+function updateSM(angle, ex) {
+  if (ex.restCond(angle)) {
+    if (repPhase === 'work') {
+      repCount++;
+      repNumEl.textContent = repCount;
+      // Brief flash on the counter
+      repNumEl.classList.add('flash');
+      setTimeout(() => repNumEl.classList.remove('flash'), 150);
+    }
+    repPhase = 'rest';
+  } else if (ex.workCond(angle)) {
+    repPhase = 'work';
+  }
+}
+
+// ── Landmark EMA smoothing (display only) ─────────────────────────────────
+function smoothLandmarks(raw) {
+  if (!smoothedLm || smoothedLm.length !== raw.length) {
+    smoothedLm = raw.map(p => ({ x: p.x, y: p.y, z: p.z, visibility: p.visibility }));
+    return smoothedLm;
+  }
+  for (let i = 0; i < raw.length; i++) {
+    const r = raw[i], s = smoothedLm[i];
+    if (r.visibility >= VIS) {
+      s.x = SMOOTH_ALPHA * r.x + (1 - SMOOTH_ALPHA) * s.x;
+      s.y = SMOOTH_ALPHA * r.y + (1 - SMOOTH_ALPHA) * s.y;
+      s.z = SMOOTH_ALPHA * r.z + (1 - SMOOTH_ALPHA) * s.z;
+    }
+    s.visibility = r.visibility;
+  }
+  return smoothedLm;
+}
+
+// ── Draw skeleton on canvas ────────────────────────────────────────────────
+function drawSkeleton(lm, errorBoneSet) {
+  const { dx, dy, dw, dh } = vidTransform;
+  const toX = i => dx + lm[i].x * dw;
+  const toY = i => dy + lm[i].y * dh;
+
+  ctx.lineCap  = 'round';
+  ctx.lineJoin = 'round';
+
+  // Connections
+  for (const [a, b] of BONE_PAIRS) {
+    const lowVis = lm[a].visibility < VIS || lm[b].visibility < VIS;
+    const err    = errorBoneSet.has(boneKey(a, b));
+    ctx.beginPath();
+    ctx.moveTo(toX(a), toY(a));
+    ctx.lineTo(toX(b), toY(b));
+    ctx.strokeStyle = lowVis ? C_DEFAULT : err ? C_ERR : C_OK;
+    ctx.lineWidth   = lowVis ? 2 : err ? 8 : 6;
+    ctx.globalAlpha = lowVis ? 0.4 : 1.0;
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1.0;
+
+  // Joint dots — color matches worst connected bone
+  const errorJoints = new Set();
+  for (const key of errorBoneSet) {
+    key.split('_').forEach(n => errorJoints.add(Number(n)));
+  }
+  for (const idx of ALL_JOINTS) {
+    if (lm[idx].visibility < 0.2) continue;
+    const err = errorJoints.has(idx);
+    ctx.beginPath();
+    ctx.arc(toX(idx), toY(idx), 5, 0, 2 * Math.PI);
+    ctx.fillStyle   = lm[idx].visibility < VIS ? C_DEFAULT : err ? C_ERR : C_OK;
+    ctx.globalAlpha = lm[idx].visibility < VIS ? 0.35 : 1.0;
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1.0;
+
+  // Head center anchor — nose (index 0), reserved for head-motion features
+  if (lm[0] && lm[0].visibility >= VIS) {
+    const hx = toX(0), hy = toY(0);
+    ctx.beginPath();
+    ctx.arc(hx, hy, 8, 0, 2 * Math.PI);
+    ctx.fillStyle   = 'rgba(255,255,255,0.22)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+    ctx.lineWidth   = 2;
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+// ── Angle text on skeleton ─────────────────────────────────────────────────
+function drawAngleOnCanvas(lm, ex) {
+  const { dx, dy, dw, dh } = vidTransform;
+  ctx.font      = 'bold 24px system-ui';
+  ctx.textAlign = 'center';
+
+  for (const d of ex.displayAngles) {
+    if (!d.joint || lm[d.joint].visibility < VIS) continue;
+    const x   = dx + lm[d.joint].x * dw;
+    const y   = dy + lm[d.joint].y * dh - 30;
+    const txt = `${d.fn(lm)}°`;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x - 36, y - 20, 72, 28);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(txt, x, y);
+  }
+}
+
+// ── DOM: hint panel ────────────────────────────────────────────────────────
+function updateHintPanel(activeHints, allHints) {
+  const errSet = new Set(activeHints);
+  hintPanel.innerHTML = allHints.map(h => `
+    <div class="hint-row ${errSet.has(h) ? 'hint-err' : 'hint-ok'}">
+      <span class="hint-dot"></span>${h}
+    </div>`).join('');
+}
+
+// ── DOM: phase pill ────────────────────────────────────────────────────────
+function updatePhase(ex) {
+  if (repPhase === 'neutral') {
+    phasePill.textContent = 'Ready';
+    phasePill.className   = 'pill-ready';
+  } else {
+    phasePill.textContent = ex.phaseLabel[repPhase] ?? repPhase;
+    phasePill.className   = repPhase === 'work' ? 'pill-work' : 'pill-rest';
+  }
+}
+
+// ── DOM: angle strip ───────────────────────────────────────────────────────
+function updateAngleStrip(lm, ex) {
+  angleStrip.innerHTML = ex.displayAngles.map(d => `
+    <div class="angle-box">
+      <div class="angle-label">${d.label}</div>
+      <div class="angle-val">${d.fn(lm)}°</div>
+    </div>`).join('');
+}
+
+// ── Analysis summary ───────────────────────────────────────────────────────
+function showAnalysis() {
+  if (repCount === 0 && totalFrames === 0) return;
+  appState = 'ANALYSIS';
+
+  const elapsed  = Math.round((performance.now() - sessionStart) / 1000);
+  const accuracy = totalFrames > 0
+    ? Math.round((1 - errorFrames / totalFrames) * 100)
+    : 100;
+
+  document.getElementById('sumExLabel').textContent = EXERCISES[currentExKey].label + ' - Set Complete';
+  document.getElementById('sumReps').textContent    = repCount;
+  document.getElementById('sumDur').textContent     = `${elapsed}s`;
+
+  const scoreEl = document.getElementById('sumScore');
+  scoreEl.textContent = `${accuracy}%`;
+  scoreEl.style.color = accuracy >= 80 ? '#DEFF9A' : accuracy >= 55 ? '#FFD700' : '#FF5555';
+
+  const sorted = Object.entries(hintCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const maxCnt = sorted[0]?.[1] || 1;
+  const errDiv = document.getElementById('sumErrors');
+  if (sorted.length === 0) {
+    errDiv.innerHTML = '<div id="noErrors">Good form. No obvious issues.</div>';
+  } else {
+    errDiv.innerHTML = sorted.map(([hint, cnt]) => `
+      <div class="error-item">
+        <span class="err-text">${hint}</span>
+        <div class="err-bar-wrap">
+          <div class="err-bar" style="width:${Math.round(cnt/maxCnt*100)}%"></div>
+        </div>
+      </div>`).join('');
+  }
+  analysisOverlay.removeAttribute('hidden');
+}
+
+// ── Reset ──────────────────────────────────────────────────────────────────
+function resetSession() {
+  repCount  = 0; repPhase = 'neutral';
+  hintCounts = {}; totalFrames = 0; errorFrames = 0;
+  smoothedLm = null; consecErrFrames = 0; displayErrSet = new Set();
+  sessionStart = performance.now();
+  repNumEl.textContent = '0';
+  appState = 'RECORDING';
+  analysisOverlay.setAttribute('hidden', '');
+  updatePhase(EXERCISES[currentExKey]);
+}
+
+// ── Event listeners ────────────────────────────────────────────────────────
+exSelect.addEventListener('change', () => {
+  currentExKey = exSelect.value;
+  exNoteEl.textContent = EXERCISES[currentExKey].note ?? '';
+  resetSession();
+});
+
+document.getElementById('btnFinish').addEventListener('click', showAnalysis);
+document.getElementById('btnReset').addEventListener('click', resetSession);
+document.getElementById('btnRestart').addEventListener('click', resetSession);
+document.getElementById('btnRaw').addEventListener('click', () => {
+  showRaw = !showRaw;
+  const btn = document.getElementById('btnRaw');
+  btn.textContent = showRaw ? 'raw ●' : 'raw ○';
+  btn.classList.toggle('raw-off', !showRaw);
+});
+
+document.getElementById('btnHome').addEventListener('click', () => {
+  if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  location.href = './index.html';
+});
+
+// init note for default exercise
+exNoteEl.textContent = EXERCISES[currentExKey].note ?? '';
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+init().catch(e => { statusBadge.textContent = `Error: ${e.message}`; });
+</script>
+</body>
+</html>

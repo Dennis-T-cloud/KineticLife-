@@ -1,4 +1,4 @@
-# 03 · Cloud + DTW + Classifier
+# 03 · Cloud + DTW Summary Reports
 
 > **Version**: v0.3
 > **Audience**: Backend + algorithm engineer
@@ -10,18 +10,19 @@
 
 | You own | You don't own |
 |-----------|-------------|
-| FastAPI + WebSocket service | ESP32 / browser side |
-| **DTW engine** (14 angles + dtaidistance) | MediaPipe integration |
-| Pluggable classifier interface (SVM first, swappable for CNN) | Frontend UI |
-| Server-side validation of auto-set detection | Gesture detection |
+| FastAPI REST service for completed action submissions | ESP32 / browser side |
+| **Post-set DTW report engine** (14 angles + dtaidistance) | MediaPipe integration |
+| Template loading and threshold calibration | Frontend UI |
+| Optional server-side sanity checks for completed reps | Gesture / live rep detection |
 | Async coaching advice (3 trigger points) | Advice UI |
 | Postgres + Redis data layer | |
-| Honoring [04 §3 / §4](./04_Interface_Contracts.md) WebSocket protocol | |
+| Honoring [04 §3.5 / §4](./04_Interface_Contracts.md) action submission and report contracts | |
 
 **External commitments**:
-- Main path (`client.keypoints` → `server.feedback`) P95 ≤ 250 ms (leaving budget for the 400 ms end-to-end)
+- Local browser heuristics are the live path; backend DTW must never block real-time rep counting or form hints
+- Post-set DTW report target: P95 ≤ 2 s for a normal demo set
 - DTW engine and frontend's 14-angle formula must **strictly match** (shared fixture tests)
-- Coaching advice is entirely async; **never blocks the main path**
+- Coaching advice is entirely async; **never blocks the local summary**
 
 ---
 
@@ -30,10 +31,10 @@
 | Layer | Choice | Notes |
 |---|------|------|
 | Runtime | Python 3.12 | |
-| Web framework | **FastAPI** + Uvicorn | Native WS + REST |
+| Web framework | **FastAPI** + Uvicorn | REST first; WS reserved for future modes |
 | Database | **Neon Postgres** | Free tier sufficient for demo |
 | Cache / session | **Upstash Redis** | Free tier |
-| Deploy | **Fly.io** | scale-to-zero, WS-friendly |
+| Deploy | **Fly.io** | scale-to-zero, simple REST deploy |
 | DTW | **`dtaidistance`** | C-impl, very fast |
 | ML | `scikit-learn` (SVM) + `numpy` + `scipy.signal` (peaks) | |
 | Advice generation | Low-cost text generation provider | Swappable behind `AdviceProvider` |
@@ -47,7 +48,7 @@ server/
 ├── fly.toml
 ├── app/
 │   ├── main.py             # FastAPI entry
-│   ├── ws.py               # WebSocket handler
+│   ├── reports.py          # Post-set DTW report handlers
 │   ├── contracts.py        # Pydantic models (translated from 04)
 │   ├── ml/
 │   │   ├── dtw_engine.py   # DTW main engine
@@ -79,59 +80,69 @@ server/
 
 ---
 
-## §3 API Gateway (FastAPI + WS)
+## §3 API Gateway (FastAPI REST + optional future WS)
 
 **Single-process monolith** (no need to split for <100 users).
 
 ```python
 # app/main.py
-from fastapi import FastAPI, WebSocket
-from app.ws import handle_ws
+from fastapi import FastAPI
+from app.reports import submit_action
 
 app = FastAPI(title="KineticLife API", version="0.3.0")
-
-@app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
-    await handle_ws(ws)
 
 @app.get("/health")
 async def health():
     return {"ok": True}
+
+@app.post("/api/actions")
+async def actions(body: ActionSubmit):
+    return await submit_action(body)
 ```
 
-**WS handler** (`app/ws.py`):
+**Current demo handler** (`app/reports.py`):
 
 ```python
-async def handle_ws(ws: WebSocket):
-    await ws.accept(subprotocol="kineticlife.v1")
-
-    # 1. First message MUST be client.hello
-    hello = ClientHello.model_validate_json(await ws.receive_text())
-    if hello.client_capabilities.joint_angles_version != 1:
-        await ws.close(code=4001)  # version mismatch
-        return
-
-    session = await create_session(hello)
-    await ws.send_json(ServerAck(...).model_dump())
-
-    # 2. Main loop
-    async for msg in ws.iter_text():
-        envelope = parse_envelope(msg)
-        match envelope.type:
-            case "client.keypoints":
-                await handle_keypoints(session, envelope, ws)
-            case "client.gesture":
-                await handle_gesture(session, envelope, ws)
-            case "client.action_submit":
-                await handle_action_submit(session, envelope, ws)
-            # ...
+async def submit_action(body: ActionSubmit):
+    # Validate completed-rep frames, run DTW against the hinted exercise template,
+    # store the sequence and derived report, return a summary payload.
+    return ActionResponse(...)
 ```
 
-**Pydantic models** (`app/contracts.py`) translated 1-to-1 from contracts §3/§4. Frontend and backend can **share schemas** (`pydantic2ts` to auto-generate TS).
+**Pydantic models** (`app/contracts.py`) translated 1-to-1 from contracts §3.5/§4. Frontend and backend can **share schemas** (`pydantic2ts` to auto-generate TS).
 
 ---
 
 ## §4 DTW Engine
+
+### Post-set report pipeline
+
+```text
+Browser local heuristic demo
+  │
+  │ completed reps: joint_angles[T,14]
+  ▼
+client.action_submit / POST /api/actions
+  │  exercise_hint supplied by the selected demo exercise
+  ▼
+Segmented rep [T_start, T_end] × joint_angles[T, 14]
+  │  discard if T < 0.5 s or T > 5 s (noise gate)
+  ▼
+DTW preprocessing: NaN interpolation → Savitzky-Golay smooth → downsample to 30 frames
+  │
+  ▼
+dtw_ndim.distance(user_rep, template) → dtw_distance
+dtw_ndim.warping_path(...)           → alignment path
+  │
+  ▼
+find_problem_joints() — per-joint deviation along alignment path
+  │  top-2 joints above threshold → problem_joints[]
+  ▼
+ActionResponse / report item
+  {correct, completeness, dtw_distance, problem_joints}
+```
+
+Key implication: DTW only runs on cleanly segmented reps submitted after the browser's local heuristic flow has identified them — **never on the raw continuous stream**. The local UI remains responsive even if the server is slow or offline.
 
 **Input**: `joint_angles[T, 14]` series (per contract §5, **formula identical to frontend**)
 
@@ -187,13 +198,13 @@ def find_problem_joints(user, template, joint_names) -> list[ProblemJoint]:
 - Threshold = 95th percentile of correct set's DTW distances
 - Per-action threshold, stored in `templates` table
 
-**Performance**: 30 frames × 14 dims, dtaidistance C impl, < 5 ms.
+**Performance**: 30 frames × 14 dims, dtaidistance C impl, < 5 ms per rep. End-to-end report target is ≤ 2 s including network, storage, and optional advice.
 
 ---
 
-## §5 Pluggable Classifier Interface
+## §5 Pluggable Classifier Interface (future Jump-in)
 
-**Why pluggable**: SVM is the MVP starter. Once data scales, swap to 1D-CNN / ST-GCN / Transformer **without touching anything else**.
+**Why pluggable**: The current demo uses an explicit exercise selection and local heuristic checks, so no cloud classifier is required for the live path. Keep this interface reserved for future Jump-in mode, where the system must infer the exercise from a completed or rolling angle sequence.
 
 **Interface definition** (`ml/classifier.py`):
 
@@ -220,7 +231,7 @@ class ActionClassifier(Protocol):
     def labels(self) -> list[str]: ...
 ```
 
-**Initial implementation: SVM** (`ml/classifier.py`):
+**Candidate implementation: SVM** (`ml/classifier.py`):
 
 ```python
 class SvmClassifier:
@@ -259,16 +270,16 @@ class SvmClassifier:
 2. **ST-GCN**: needs 33 keypoints, not just 14 angles — add field to `ClassifyResult` context
 3. **Transformer**: long-term
 
-**Jump-in rolling classification** (W4):
-- Server runs every 500 ms over the last 2 s window
-- 3 consecutive same-label + confidence > 0.85 → lock action type
-- DTW then queries only that action's templates
+**Jump-in classification path**:
+- Not needed for the current selected-exercise demo.
+- For future Jump-in, classify a completed rep or a short rolling window.
+- DTW then queries only that action's templates.
 
 ---
 
-## §6 Server-side Set Detection (Validation)
+## §6 Optional Server-side Sanity Checks
 
-**Contract**: Client shows optimistic UI; **server is authoritative** via `server.set_event`.
+**Contract**: The browser's heuristic state machine is authoritative for the current live UI. The server may run sanity checks on submitted completed reps to reject obvious false positives in the DTW report, but it does not control the live counter.
 
 **Algorithm** (`ml/set_detector.py`):
 
@@ -314,7 +325,7 @@ class SetDetector:
             self.emit("rest_started")
 ```
 
-**DTW double-check**: For each detected rep, run DTW on that period; if distance > threshold × 3, reject as a false positive (user might be moving but not doing this exercise) — **do not count**.
+**DTW double-check**: For each submitted rep, run DTW on that period; if distance > threshold × 3, mark it as low-confidence / likely false positive in the report. Do not retroactively change the live counter during the set.
 
 ---
 
@@ -383,7 +394,8 @@ class Action(Base):
     dtw_distance: Mapped[float]
     completeness: Mapped[float]
     problem_joints: Mapped[list[dict]] = mapped_column(JSONB)
-    joint_angles_compressed: Mapped[bytes]  # gzip(joint_angles[T,14])
+    joint_angles_compressed: Mapped[bytes]           # gzip(joint_angles[T,14])
+    world_landmarks_compressed: Mapped[bytes | None]  # gzip(world_landmarks[T,33,4]); null unless replay opt-in
     created_at: Mapped[datetime]
 
 class Template(Base):
@@ -426,8 +438,8 @@ class AiTip(Base):
 
 | Item | Implementation |
 |---|------|
-| Auth | Short-lived JWT (after login), validated on first WS frame |
-| Rate limiting | Per-session `client.keypoints` ≤ 30 Hz; over → `server.error.rate_limit` |
+| Auth | Short-lived JWT (after login), validated on post-set submission |
+| Rate limiting | Per-session `client.action_submit` / `/api/actions` submissions; reject excessive retries |
 | Logs | structlog → stdout → Fly.io logs |
 | Monitoring | Grafana Cloud free tier (P95 latency / error rate) + Sentry frontend |
 | Data sanitization | Hard rule from §8 |
@@ -438,12 +450,12 @@ class AiTip(Base):
 
 | Week | Goal | Acceptance |
 |---|---------|---------|
-| **W1** | FastAPI + WS scaffold + dummy echo | Frontend connects WS, receives `server.ack`; `/health` OK |
+| **W1** | FastAPI health + action submission scaffold | `/health` OK; `/api/actions` stores and returns a stub report |
 | **W2** | Postgres schema + recording script + 14 angles + shared unit tests pass | `joint_angles_v1.json` all green; 3 templates inserted |
-| **W3** | DTW engine + threshold + problem-joint localization | Offline test on 20 sets, correctness ≥ 80% |
-| **W4** | SVM classifier (3 actions) + server-side set_detector | SVM ≥ 90% accuracy; auto `set_event` emission |
-| **W5** | Async advice triggers + Redis cache + offline fallback | 3 triggers all return reasonable text; 10/day cap enforced |
-| **W6** | Fly.io deploy + monitoring + degradation paths | 100-concurrent WS load test passes (local sim) before Demo |
+| **W3** | DTW engine + threshold + problem-joint localization | Offline test on completed reps; report returns correctness/completeness/problem joints |
+| **W4** | Demo summary integration | Browser Finish Set can submit reps and merge the DTW report |
+| **W5** | Async advice from summary + Redis cache + offline fallback | Set-end advice uses DTW/heuristic summary; 10/day cap enforced |
+| **W6** | Fly.io deploy + monitoring + degradation paths | Post-set report load test passes before Demo |
 
 **Total estimate**: ~65 h (part-time, 10–12 h/week)
 
@@ -454,10 +466,10 @@ class AiTip(Base):
 | Risk | Mitigation |
 |-----|------|
 | DTW thresholds don't generalize across body types | Calibrate against user's own 3 baseline reps |
-| SVM accuracy < 70% on real data | Switch to 1D-CNN immediately (interface ready) |
+| Classifier accuracy < 70% on real data | Keep selected-exercise demo path; defer Jump-in classifier |
 | Advice generation cost runs away | Provider cache + per-user daily cap; monitor daily spend |
 | Fly.io scale-to-zero cold start | Ping-keep-alive 1 hour before Demo |
-| WS memory grows under 100+ concurrent | Stateless message handlers + Redis user state; add machines if needed |
+| Summary submissions spike | Stateless handlers + Redis rate limiting; add machines if needed |
 
 ---
 
@@ -467,9 +479,49 @@ class AiTip(Base):
 
 - **1D-CNN / ST-GCN classifier**: interface ready, swap implementation
 - **Multi-view template fallback**: `templates.view_angle` reserved; DTW engine needs "pick nearest view template" logic
-- **DTW history playback API**: `/api/history/{user_id}` route placeholder
 - **Horizontal scaling**: FastAPI is stateless; add ML Worker queue (Celery/RQ)
 - **Multi-provider advice routing**: `AdviceProvider` interface placeholder; route to different providers
+
+### Trajectory Replay API (post-W5)
+
+When a client submits `world_landmarks` per frame (replay opt-in), the server stores them in `actions.world_landmarks_compressed`. The history API returns them for client-side replay rendering.
+
+**New endpoint**:
+
+```python
+@app.get("/api/history/{action_id}")
+async def get_action_history(action_id: str, token: str = Depends(verify_jwt)):
+    row = await db.fetch_one(
+        "SELECT action_id, exercise, correct, dtw_distance, completeness, "
+        "problem_joints, joint_angles_compressed, world_landmarks_compressed "
+        "FROM actions WHERE action_id = :id", {"id": action_id}
+    )
+    if not row:
+        raise HTTPException(404)
+    return {
+        "action_id": row["action_id"],
+        "exercise": row["exercise"],
+        "correct": row["correct"],
+        "dtw_distance": row["dtw_distance"],
+        "problem_joints": row["problem_joints"],
+        "frames": decompress_frames(row["joint_angles_compressed"],
+                                    row["world_landmarks_compressed"]),
+        "template_frames": load_template_frames(row["exercise"]),
+    }
+```
+
+`template_frames` is the standard-action series for the exercise — the client Procrustes-aligns it to the user's body proportions and renders both skeletons in different colors.
+
+**Storage cost**: `world_landmarks_compressed` ≈ 4–6 KB per rep (gzip). Nullable; existing rows unaffected.
+
+**Alembic migration**: add nullable column — zero downtime, no backfill required.
+
+```python
+# migrations/add_world_landmarks_compressed.py
+def upgrade():
+    op.add_column("actions",
+        sa.Column("world_landmarks_compressed", sa.LargeBinary(), nullable=True))
+```
 
 ---
 
@@ -478,8 +530,8 @@ class AiTip(Base):
 | What you need | Jump to |
 |---------|------|
 | 14 joint-angle indices/formulas | [04 §5](./04_Interface_Contracts.md#5-14-d-joint-angle-definitions) |
-| WS upstream messages (you parse) | [04 §3](./04_Interface_Contracts.md#3-phone--cloud-websocket-upstream) |
-| WS downstream messages (you send) | [04 §4](./04_Interface_Contracts.md#4-cloud--phone-websocket-downstream) |
+| Action submissions (you parse) | [04 §3.5](./04_Interface_Contracts.md#35-clientaction_submit--completed-action-sequence-post-set-dtw-report) |
+| Report / summary responses (you send) | [04 §4](./04_Interface_Contracts.md#4-cloud--phone-summaryreport-responses-ws-reserved) |
 | Error codes | [04 §6.1](./04_Interface_Contracts.md#61-error-codes-servererrorcode) |
 | Problem-joint codes | [04 §6.2](./04_Interface_Contracts.md#62-problem-joint-codes-problem_jointsissue) |
 | DB schema contract | [04 §8](./04_Interface_Contracts.md#8-database-schema-contract-server-internal-but-client-needs-to-know) |

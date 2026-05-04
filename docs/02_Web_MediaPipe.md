@@ -10,20 +10,20 @@
 
 | You own | You don't own |
 |---------|---------------|
-| **SPIFFS stream page** (`data/index.html`) — ESP32-served, local HTTP, WebSocket client | ESP32 firmware |
-| **Main app** (`https://kineticlife.app`) — login, courses, history, results | DTW server implementation |
+| **Local stream/demo pages** (`pair.html`, `debug.html`, `demo.html`, `demo-table.html`) — ESP32 WebSocket client, MediaPipe, live UI | ESP32 firmware |
+| **Main app shell** — entry, pairing, demo routing, results UI | DTW server implementation |
 | MediaPipe Pose integration + 14-angle calc ([04 §5](./04_Interface_Contracts.md#5-14-d-joint-angle-definitions)) | Classifier training |
-| DTW Web Worker (client-side, 60-frame sliding window) | Server-side advice generation |
-| Gesture detection + auto rep counting (client-side) | |
-| Cloud WebSocket client in main app (honoring [04 §3 / §4](./04_Interface_Contracts.md#3-phone--cloud-websocket-upstream)) | |
+| Local heuristic rep counting and form checks | |
+| Completed-rep buffering for optional DTW summary submission | Server-side advice generation |
+| Cloud REST client for post-set DTW summary reports (honoring [04 §3.5 / §4](./04_Interface_Contracts.md#35-clientaction_submit--completed-action-sequence-post-set-dtw-report)) | |
 | Demo Day iPad UI tuning | |
 
 **External commitments**:
 
-- Stream page connects to `ws://fitcam-xxxxxx.local/ws` and renders skeleton overlay at ≥ 15 FPS
-- 14-angle calculation must **strictly match** server formulas (shared fixture tests in §4 must pass)
-- Stream page POSTs workout results to cloud API over HTTPS on session end
-- Main app redirects to `http://fitcam-xxxxxx.local/` after pairing; stream page redirects back on finish
+- Demo pages connect to `ws://fitcam-xxxxxx.local/ws` and render skeleton overlay at ≥ 15 FPS when ESP32 is available
+- Live rep counting and red/green feedback are local heuristic checks, not cloud-gated
+- 14-angle calculation for DTW reports must **strictly match** server formulas (shared fixture tests in §4 must pass)
+- On Finish Set, the page can POST completed-rep angle sequences to the cloud API over HTTPS for a DTW summary report
 
 ---
 
@@ -37,8 +37,8 @@ https://kineticlife.app          http://fitcam-xxxxxx.local/
 ────────────────────────         ──────────────────────────────
   Login / auth                     WebSocket ← binary JPEG frames
   Course library                   MediaPipe inference (local)
-  Workout history       ◄─POST─    14-angle calc + DTW
-  Results display         HTTPS    Workout results only (no video)
+  Results display       ◄─POST─    local heuristic reps + optional DTW report
+  History / summary       HTTPS    completed-rep joint angles only (no video)
 ```
 
 **Why this works**:
@@ -53,10 +53,10 @@ https://kineticlife.app          http://fitcam-xxxxxx.local/
 
 1. User visits `https://kineticlife.app` — logs in, selects exercise
 2. Pairs ESP32 via `pair.html` (Soft AP or QR)
-3. Main app redirects to `http://fitcam-xxxxxx.local/?session=<id>&ref=https://kineticlife.app`
-4. SPIFFS stream page: video streams locally, MediaPipe runs, DTW compares
-5. Workout ends → SPIFFS page POSTs `{joint_angles, dtw_score, reps}` to `https://api.kineticlife.app`
-6. Browser redirects back to `https://kineticlife.app/results`
+3. Main app opens the local demo page with `?cam=<url>`
+4. Demo page: video streams locally, MediaPipe runs, heuristic rep/form checks drive live UI
+5. User presses Finish Set → local summary appears immediately
+6. If DTW reporting is enabled, page POSTs completed-rep `joint_angles` to `https://api.kineticlife.app` and merges the returned report into the summary card
 
 ---
 
@@ -152,9 +152,9 @@ const imageLandmarks = result.landmarks[0];       // for screen rendering
 ```
 
 **Important**:
-- **DTW and contract use ONLY `worldLandmarks`** (3D meters, view-invariant)
-- `landmarks` (2D normalized) only for drawing skeleton on Canvas
-- `worldLandmarks` origin is the pelvis midpoint → automatically removes position/scale differences
+- Current live demo uses `landmarks` (2D normalized image coords) for heuristic rep/form checks because it matches the on-screen skeleton and keeps the flow simple.
+- DTW summary reporting should use the 14-D `joint_angles` contract. In the full contract those angles are computed from `worldLandmarks` for view invariance; the demo heuristic path may use 2D angles only for live UI.
+- Display landmarks may be smoothed for UX; rep counting and form checks should use raw landmarks unless explicitly noted.
 
 ---
 
@@ -222,42 +222,48 @@ describe("14 joint angles v1", () => {
 
 ---
 
-## §5 Edge DTW + Action Segmentation
+## §5 Local Heuristic Feedback + Post-set DTW Report
 
-**Purpose**: Give the user real-time tactile feedback. Does **NOT** replace cloud-side fine DTW.
+**Purpose**: Keep the live experience stable and immediate. Local heuristic logic drives the counter, red skeleton highlights, and Finish Set summary. DTW is a post-set report layer, not the real-time main path.
 
 **Full pipeline**:
 
 ```text
-Continuous dirty stream (raw WebSocket JPEG)
+Continuous stream (ESP32 WS JPEG or local camera)
   │
   ▼ (every frame)
-MediaPipe inference → worldLandmarks[33] + joint_angles[14]
+MediaPipe inference → image landmarks + optional joint_angles[14]
   │
   ▼
-Segmenter detects rep boundary  ─────────────────────────────────────┐
-  │                                                                    │
-  ▼ (per completed rep)                                               │
-client.action_submit → cloud (angles only, ~30 frames)               │
-  │                                                                    │
-  ▼                                                                    │
-server.feedback ← DTW + problem_joints  ◄────── authoritative result │
-  │                                                                    │
-  ▼                                                                    │
-Edge DTW preview (optimistic) ◄──────────────────────────────────────┘
-  (highlights joint red immediately; corrected when server.feedback arrives)
+Local heuristic checks
+  │  rest/work state machine + per-exercise form rules
+  ▼
+Live UI: skeleton, hints, rep counter
+  │
+  ├─ buffer completed reps as joint-angle sequences
+  ▼
+Finish Set
+  │
+  ├─ immediate local summary: reps, duration, heuristic form quality
+  ▼
+optional client.action_submit per completed rep → cloud DTW report items
+  │
+  ▼
+summary card aggregates: template similarity, correct_count, avg_completeness, problem_joints
 ```
 
-Key implication: The segmenter is the entry gate. DTW only runs on cleanly segmented reps — **never on the continuous stream directly**. This makes the system robust to dirty/partial poses between reps.
+Key implication: DTW only runs on completed reps or a completed set — **never on the raw continuous stream**. Local heuristic state machines remain the source of the live interaction.
 
-**Segmentation** (`edge/segmenter.ts`):
-- Compute "motion magnitude" = mean of `||worldLandmarks[t] - worldLandmarks[t-3]||`
-- 1-second sliding window; **velocity zero-crossing** (motion → still) = end of one rep
-- Discard segments shorter than 0.5 s or longer than 5 s as noise
+**Current demo segmentation** (`demo.html` / `demo-table.html`):
+- Each exercise defines a key angle, a `restCond`, and a `workCond`
+- A rep is counted on `neutral → rest → work → rest`
+- Per-exercise checks produce form hints and red bone highlights
+- Display landmarks can be EMA-smoothed; logic should use raw landmarks
 
-**Edge DTW** (`edge/edgeDtw.ts`):
-- Pure JS implementation (no npm dependency); only against squat-class templates
-- If distance exceeds rough threshold → optimistically highlight a joint red; cloud's authoritative result corrects later
+**DTW report submission**:
+- Submit only completed-rep `joint_angles[T,14]` sequences
+- Prefer one request per completed rep with browser-side aggregation, matching the current `/api/actions` shape
+- If the server is unavailable, keep the local summary and label DTW report as unavailable
 
 ---
 
@@ -286,7 +292,7 @@ Key implication: The segmenter is the entry gate. DTW only runs on cleanly segme
 
 ## §7 Auto Rep / Set Detection (Client-side)
 
-**Contract**: Server is authoritative via `server.set_event`; client shows optimistic preview.
+**Contract**: Client-side heuristic detection is authoritative for the current Demo UI. Server-side DTW may refine the post-set report but should not block counting or live feedback.
 
 **Algorithm** (`edge/repCounter.ts`):
 
@@ -315,7 +321,7 @@ stateDiagram-v2
 - Sliding mean smoothing (window 5 frames)
 - Local extremum: current value smaller/larger than 3 frames on each side AND opposite direction from previous extremum
 
-**Manual fallback**: a small grayed-out **"End set"** button is in the UI, shown only after 10 s of state-machine silence.
+**Manual fallback**: **Finish Set** remains visible. It finalizes the local summary immediately and optionally starts the DTW report request.
 
 ---
 
@@ -330,7 +336,7 @@ stateDiagram-v2
 | `/demo` | Demo | Skeleton + visual FX |
 | `/history` | History playback (post-W5, optional) | — |
 
-**Differences**:
+**Future full-app differences**:
 
 | Aspect | Jump-in | Duolingo |
 |-----|---------|---------|
@@ -352,8 +358,8 @@ stateDiagram-v2
 | Background | Dark gradient + slow-flowing grid particles (Canvas 2D + rAF) |
 | Skeleton | White gradient lines, glowing joint dots (`shadowBlur`) |
 | Trails | 2 s trailing on hands/feet (rolling buffer of last 30 frames of joint coords) |
-| Particle bursts | On correct rep (`server.feedback.correct=true`) |
-| Error highlight | Problem joints (`problem_joints`) pulse red |
+| Particle bursts | On local heuristic rep count or later DTW-confirmed correct rep |
+| Error highlight | Local form-rule failures pulse red in real time; DTW `problem_joints` may appear in the summary |
 | Big counter | Corner DOM number |
 | SFX | Web Audio API: "ding" right, "buzz" wrong |
 
@@ -377,31 +383,30 @@ stateDiagram-v2
 
 ---
 
-## §11 WebSocket Client
+## §11 Summary Report Client
 
-**Contract**: Strictly follow [04 §3 / §4](./04_Interface_Contracts.md#3-phone--cloud-websocket-upstream).
+**Contract**: Strictly follow [04 §3.5 / §4](./04_Interface_Contracts.md#35-clientaction_submit--completed-action-sequence-post-set-dtw-report) for completed action submissions and report responses.
 
-**Implementation notes** (`api/ws.ts`):
-- 20 s heartbeat
-- Reconnect exponential backoff (1s, 2s, 4s, max 30s)
-- **Offline queue** (`api/offlineQueue.ts`): on disconnect, write `client.action_submit` to IndexedDB; replay on reconnect
-- Realtime frames (`client.keypoints`): **NOT cached** when offline (no value)
-- Version: send `v: 1` in `client.hello`; if server's `negotiated_v` differs, show red banner
+**Implementation notes** (`api/reportClient.ts`, or the equivalent current demo script):
+- REST-first for current demo: submit completed reps at Finish Set
+- Retry with exponential backoff (1s, 2s, 4s, max 30s) for summary submissions
+- **Offline queue** (`api/offlineQueue.ts`): on disconnect, write completed `client.action_submit` summaries to IndexedDB; replay on reconnect
+- Realtime frames are not sent to cloud in the current demo and are never cached
+- Version: send `v: 1` in `client.action_submit`; if the report endpoint rejects the version, keep the local summary and show a non-blocking warning
 
-**TS types**: 1-to-1 translation from `04 §3 / §4` into `src/types/contracts.ts`. **Don't define your own**:
+**TS types**: 1-to-1 translation from `04 §3.5 / §4` into `src/types/contracts.ts`. **Don't define your own**:
 
 ```ts
-// src/types/contracts.ts (translated from contracts §3/§4)
-export type ClientHello = {
+// src/types/contracts.ts (translated from contracts §3.5/§4)
+export type ClientActionSubmit = {
   v: 1;
-  type: "client.hello";
+  type: "client.action_submit";
   session_id: string;
-  user_id: string | null;
-  mode: "jumpin" | "duolingo" | "demo";
-  action_hint: string | null;
+  action_id: string;
+  exercise_hint: string;
   // ...
 };
-// Same for ClientKeypoints / ServerFeedback / ...
+// Same for action response / ServerFeedback summary items / ...
 ```
 
 ---
@@ -412,9 +417,9 @@ export type ClientHello = {
 |---|---------|---------|
 | **W1** | Connect ESP32 video + skeleton render | WebSocket `/ws` receives frames; skeleton overlay renders ≥ 9 FPS |
 | **W2** | MediaPipe 3D + 14 angles + shared unit tests pass | `joint_angles_v1.json` all green (both client and server) |
-| **W3** | Edge DTW + segmenter | A squat rep can be segmented + edge DTW gives "optimistic red/green" |
-| **W4** | Gestures + auto rep + Jump-in | Hands-free full set; gesture recognition >95% |
-| **W5** | Slim Duolingo UI + Demo Mode + WS offline queue | iPad Demo Mode smooth; offline-recovery replay works |
+| **W3** | Local heuristic rep/form checks + rep buffers | A full set can be counted locally and summarized without cloud |
+| **W4** | Post-set DTW report integration | Finish Set can submit rep sequences and merge a DTW report when available |
+| **W5** | Slim UI + Demo Mode + offline queue for summaries | iPad Demo Mode smooth; offline-recovery replay of summaries works |
 | **W6** | iPad fit + on-site tuning + dry runs | Both booths' UIs work + 8-hour stability |
 
 **Total estimate**: ~80 h (part-time, 12–15 h/week)
@@ -450,7 +455,7 @@ export type ClientHello = {
 | Component | Current | Required for Replay |
 | --- | --- | --- |
 | Client recording | `joint_angles[14]` per frame | + `world_landmarks[33]` per frame buffered in memory |
-| `client.action_submit` | angles only | + `world_landmarks` per frame (see [04 §3.5](./04_Interface_Contracts.md#35-clientaction_submit--full-action-sequence-duolingo)) |
+| `client.action_submit` | angles only | + `world_landmarks` per frame (see [04 §3.5](./04_Interface_Contracts.md#35-clientaction_submit--completed-action-sequence-post-set-dtw-report)) |
 | Server DB `actions` table | `joint_angles_compressed` | + `world_landmarks_compressed` (see [04 §8](./04_Interface_Contracts.md#8-database-schema-contract-server-internal-but-client-needs-to-know)) |
 | History API | not implemented | `GET /api/history/{action_id}` returns angles + landmarks |
 | Client render | Canvas 2D skeleton | Procrustes-align template → dual-color scrubable animation |
@@ -476,8 +481,8 @@ export type ClientHello = {
 | What you need | Jump to |
 |---------|------|
 | 14 joint-angle indices/formulas | [04 §5](./04_Interface_Contracts.md#5-14-d-joint-angle-definitions) |
-| WS upstream messages | [04 §3](./04_Interface_Contracts.md#3-phone--cloud-websocket-upstream) |
-| WS downstream messages | [04 §4](./04_Interface_Contracts.md#4-cloud--phone-websocket-downstream) |
+| Action submission messages | [04 §3.5](./04_Interface_Contracts.md#35-clientaction_submit--completed-action-sequence-post-set-dtw-report) |
+| Report / summary messages | [04 §4](./04_Interface_Contracts.md#4-cloud--phone-summaryreport-responses-ws-reserved) |
 | WiFi QR string generation | [04 §2.1](./04_Interface_Contracts.md#21-wifi-qr-string-format-phone--esp32-one-shot-pairing) |
 | ESP32 `/hello` fields | [04 §2.3](./04_Interface_Contracts.md#23-http-handshake-hello) |
 | Error code handling | [04 §6.1](./04_Interface_Contracts.md#61-error-codes-servererrorcode) |

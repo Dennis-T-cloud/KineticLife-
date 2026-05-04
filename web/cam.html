@@ -1,9 +1,0 @@
-<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
-<script>
-  // cam.html is superseded by debug.html — forward with any ?cam= param preserved
-  const p = new URLSearchParams(location.search);
-  const cam = p.get("cam") || localStorage.getItem("kineticlife.camUrl") || "";
-  location.replace("./debug.html" + (cam ? "?cam=" + encodeURIComponent(cam) : ""));
-</script>
-</head><body></body></html>

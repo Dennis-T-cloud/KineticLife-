@@ -112,6 +112,7 @@
   <span class="m"><span class="ml">skip<span class="mdir mdir-l">L</span> </span><span class="mv" id="mSkip">—</span></span>
   <span class="m"><span class="ml">mode </span><span class="mv" id="mMode" style="color:#34d399">COLOR</span></span>
   <span class="m"><span class="ml">match<span class="mdir mdir-h">H</span> </span><span class="mv" id="mMatch" style="color:#f59e0b">—</span></span>
+  <span class="m"><span class="ml">ws→ </span><span id="mWsUrl" style="color:#4a5568;font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span></span>
 </div>
 
 <!-- cam params (current runtime, grouped by source file) -->
@@ -146,13 +147,14 @@
 <!-- WebSocket video stream — no img element needed -->
 
 <script type="module">
-import { PoseLandmarker, FilesetResolver, DrawingUtils }
-  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+import { createPoseLandmarkerRuntime } from "./mediapipe_loader.mjs";
+import { logMediaPipeRuntime, logPageBoot, logWsEvent, probeDevice } from "./runtime_log.mjs";
 
 // ── State ──────────────────────────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
 const DEFAULT_URL = "http://fitcam-d37d7c.local";
 let camUrl     = params.get("cam") || localStorage.getItem("kineticlife.camUrl") || DEFAULT_URL;
+logPageBoot("debug", { camUrl, sourceMode: "esp32" });
 let retryTimer = null;
 let wsConn     = null;        // active WebSocket connection
 let latestBitmap  = null;     // most recently decoded ImageBitmap
@@ -244,8 +246,10 @@ function openWs() {
   sock.binaryType = "arraybuffer";
 
   sock.onopen = () => {
-    console.log(`[ws] connected ${url}`);
+    logWsEvent("open", { url });
     statusEl.textContent = "connected";
+    const mWs = document.getElementById("mWsUrl");
+    if (mWs) { mWs.textContent = url; mWs.style.color = "#34d399"; }
   };
 
   sock.onmessage = ({ data }) => {
@@ -259,14 +263,16 @@ function openWs() {
   sock.onclose = () => {
     if (wsConn !== sock) return; // stale — a newer connect() already took over
     wsConn = null;
-    console.warn("[ws] closed — retrying in 2 s");
+    logWsEvent("close", { url, retryMs: 2000 });
     statusEl.textContent = "stream closed — retrying in 2 s";
+    const mWs = document.getElementById("mWsUrl");
+    if (mWs) mWs.style.color = "#4a5568";
     if (retryTimer) clearTimeout(retryTimer);
     retryTimer = setTimeout(applyStream, 2000);
   };
 
   sock.onerror = () => {
-    console.error("[ws] error");
+    logWsEvent("error", { url });
     statusEl.textContent = "WebSocket error";
   };
 }
@@ -281,6 +287,7 @@ function applyStream() {
   if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
   fpsHist.length = 0;
   fpsEl.textContent = "— fps";
+  probeDevice(camUrl, "debug-device");
   fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) })
     .catch(() => {})
     .finally(() => openWs());
@@ -392,9 +399,10 @@ function computeAngles(wl) {
     a[12] = angleDeg(sub(mH, mS), { x:0, y:-1, z:0 });
   }
 
-  // pelvis_tilt: L_HIP→R_HIP vs horizontal [1,0,0]
+  // pelvis_tilt: deviation of hip axis from horizontal, folded to 0–90°
   if (wl[LH].visibility >= VIS && wl[RH].visibility >= VIS) {
-    a[13] = Math.min(45, angleDeg(sub(wl[LH], wl[RH]), { x:1, y:0, z:0 }));
+    const raw = angleDeg(sub(wl[LH], wl[RH]), { x:1, y:0, z:0 });
+    a[13] = raw > 90 ? 180 - raw : raw;
   }
 
   return a.map(v => isNaN(v) ? null : parseFloat(v.toFixed(1)));
@@ -541,7 +549,7 @@ loadRefInput.addEventListener("change", e => {
 });
 
 // ── MediaPipe init ─────────────────────────────────────────────────────────
-let landmarker, drawing;
+let landmarker, drawing, PoseLandmarker;
 let lastTick = 0;
 let lastDetectMs = 0;
 const detectHist = [];   // rolling detect times (last 20 frames)
@@ -554,24 +562,11 @@ const inferCtx = inferCanvas.getContext("2d");
 
 async function init() {
   statusEl.textContent = "loading model…";
-  const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-  );
-  const modelAssetPath =
-    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
-  try {
-    landmarker = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath, delegate: "GPU" },
-      runningMode: "VIDEO", numPoses: 1,
-    });
-  } catch (_) {
-    statusEl.textContent = "GPU unavailable, using CPU…";
-    landmarker = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath, delegate: "CPU" },
-      runningMode: "VIDEO", numPoses: 1,
-    });
-  }
-  drawing = new DrawingUtils(ctx);
+  const runtime = await createPoseLandmarkerRuntime();
+  landmarker = runtime.landmarker;
+  PoseLandmarker = runtime.PoseLandmarker;
+  drawing = new runtime.DrawingUtils(ctx);
+  logMediaPipeRuntime(runtime);
 
   // Pre-compile WebGL shaders — eliminates the visible stutter on the first real frames
   statusEl.textContent = "warming up…";
