@@ -32,9 +32,18 @@ class KineticLifeHandler(SimpleHTTPRequestHandler):
         super().do_OPTIONS()
 
 
+class KineticLifeServer(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        error_type = sys.exc_info()[0]
+        if error_type in (BrokenPipeError, ConnectionResetError):
+            print(f"[web] {client_address[0]} disconnected before response completed", flush=True)
+            return
+        super().handle_error(request, client_address)
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8081
-    server = ThreadingHTTPServer(("0.0.0.0", port), KineticLifeHandler)
+    server = KineticLifeServer(("0.0.0.0", port), KineticLifeHandler)
     print(f"Serving KineticLife web with host logs on http://0.0.0.0:{port}/", flush=True)
     server.serve_forever()
 

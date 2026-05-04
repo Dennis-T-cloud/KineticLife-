@@ -332,8 +332,8 @@ body {
 </div>
 
 <script type="module">
-import { PoseLandmarker, FilesetResolver }
-  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+import { createPoseLandmarkerRuntime } from "./mediapipe_loader.mjs";
+import { logMediaPipeRuntime, logPageBoot, logWsEvent, probeDevice } from "./runtime_log.mjs";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const VIS       = 0.5;
@@ -474,6 +474,7 @@ const EXERCISES = {
 const _params = new URLSearchParams(location.search);
 const camUrl  = _params.get('cam') || '';
 let   sourceMode = camUrl ? 'esp32' : 'local';
+logPageBoot('demo-table', { camUrl: camUrl || null, sourceMode });
 
 // ── URL helpers ────────────────────────────────────────────────────────────
 function httpBase() {
@@ -553,6 +554,7 @@ function openWs() {
   wsConn = sock;
   sock.binaryType = 'arraybuffer';
   sock.onopen    = () => {
+    logWsEvent('open', { url });
     statusBadge.textContent = 'ESP32 connected';
     sourceBadge.textContent = 'ESP32'; sourceBadge.className = 'esp';
   };
@@ -563,10 +565,14 @@ function openWs() {
   sock.onclose   = () => {
     if (wsConn !== sock) return;
     wsConn = null;
+    logWsEvent('close', { url });
     statusBadge.textContent = 'stream closed — retrying…';
     retryTimer = setTimeout(openWs, 2000);
   };
-  sock.onerror   = () => { statusBadge.textContent = 'WebSocket error'; };
+  sock.onerror   = () => {
+    logWsEvent('error', { url });
+    statusBadge.textContent = 'WebSocket error';
+  };
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -576,6 +582,7 @@ async function init() {
   window.addEventListener('resize', resize);
 
   if (sourceMode === 'esp32') {
+    probeDevice(httpBase(), 'demo-table-device');
     statusBadge.textContent = 'applying camera settings…';
     await fetch(
       `${httpBase()}/cam?res=320x240&q=12&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0&vflip=0&hmirror=0`,
@@ -602,22 +609,9 @@ async function init() {
   }
 
   statusBadge.textContent = 'loading model…';
-  const vision = await FilesetResolver.forVisionTasks(
-    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-  );
-  const modelPath =
-    'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
-  try {
-    landmarker = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
-      runningMode: 'VIDEO', numPoses: 1,
-    });
-  } catch {
-    landmarker = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: modelPath, delegate: 'CPU' },
-      runningMode: 'VIDEO', numPoses: 1,
-    });
-  }
+  const runtime = await createPoseLandmarkerRuntime();
+  landmarker = runtime.landmarker;
+  logMediaPipeRuntime(runtime);
   statusBadge.textContent = sourceMode === 'esp32' ? 'ESP32 · ready' : 'local camera · ready';
   sessionStart = performance.now();
   requestAnimationFrame(tick);

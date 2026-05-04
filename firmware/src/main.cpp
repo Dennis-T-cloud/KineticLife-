@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_log.h>
+#include <Preferences.h>
 
 #include "camera_init.h"
 #include "debug_log.h"
@@ -19,6 +20,13 @@
 #define KINETICLIFE_CAMERA_MODEL "OV5640"
 #endif
 
+static const char* RESET_NVS_NAMESPACE = "reset";
+static const char* RESET_KEY_ARMED = "armed";
+static const unsigned long RESET_CLEAR_WINDOW_MS = 8000;
+
+static bool s_reset_clear_armed = false;
+static unsigned long s_reset_clear_started_ms = 0;
+
 static const char* wifi_status_name(wl_status_t status) {
     switch (status) {
         case WL_IDLE_STATUS: return "idle";
@@ -30,6 +38,52 @@ static const char* wifi_status_name(wl_status_t status) {
         case WL_DISCONNECTED: return "disconnected";
         default: return "unknown";
     }
+}
+
+static void reset_clear_disarm(const char* reason) {
+    if (!s_reset_clear_armed) return;
+
+    Preferences prefs;
+    if (prefs.begin(RESET_NVS_NAMESPACE, false)) {
+        prefs.remove(RESET_KEY_ARMED);
+        prefs.end();
+    }
+    s_reset_clear_armed = false;
+    kl_logf("[reset] clear_wifi_disarmed reason=%s window_ms=%lu\n",
+            reason,
+            RESET_CLEAR_WINDOW_MS);
+}
+
+static void reset_clear_handle() {
+    if (!s_reset_clear_armed) return;
+    if (millis() - s_reset_clear_started_ms >= RESET_CLEAR_WINDOW_MS) {
+        reset_clear_disarm("boot_stable");
+    }
+}
+
+static void reset_clear_boot_check() {
+    Preferences prefs;
+    if (!prefs.begin(RESET_NVS_NAMESPACE, false)) {
+        kl_logln("[reset] nvs_open_failed feature=double_reset_clear_wifi");
+        return;
+    }
+
+    const bool was_armed = prefs.getBool(RESET_KEY_ARMED, false);
+    if (was_armed) {
+        prefs.remove(RESET_KEY_ARMED);
+        prefs.end();
+        s_reset_clear_armed = false;
+        kl_logln("[reset] double_reset_detected action=clear_wifi_credentials");
+        wifi_clear_credentials();
+        return;
+    }
+
+    prefs.putBool(RESET_KEY_ARMED, true);
+    prefs.end();
+    s_reset_clear_armed = true;
+    s_reset_clear_started_ms = millis();
+    kl_logf("[reset] clear_wifi_armed window_ms=%lu action=press_rst_again_to_clear_wifi\n",
+            RESET_CLEAR_WINDOW_MS);
 }
 
 static void log_wifi_scan_for_target(const String& target_ssid) {
@@ -161,6 +215,7 @@ static void run_pairing_mode() {
 
     while (true) {
         status_led_handle();
+        reset_clear_handle();
         wifi_ap_config_poll();
 
         // Config-network path: user selected a network in pair.html
@@ -223,6 +278,7 @@ void setup() {
     esp_log_level_set("camera", ESP_LOG_NONE);
     esp_log_level_set("sccb", ESP_LOG_WARN);
     status_led_begin();
+    reset_clear_boot_check();
 
     kl_logf("\n\n[boot] KineticLife firmware=%s\n", KINETICLIFE_FW_VERSION);
     kl_logf("[boot] board=\"%s\" camera=\"%s\" cpu_mhz=%lu flash_mb=%lu heap_kb=%lu psram_kb=%lu psram_size_kb=%lu\n",
@@ -283,6 +339,7 @@ void loop() {
     http_server_handle();
     http_server_push_frame();
     status_led_handle();
+    reset_clear_handle();
 
     static unsigned long last_status_ms = 0;
     if (millis() - last_status_ms >= 60000) {

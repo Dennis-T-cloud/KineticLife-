@@ -25,6 +25,28 @@ K1:<TYPE_CODE>:<SSID_LEN>:<SSID><PASSWORD>
 
 The Vite dev server serves `index.html` at `/`, which redirects to the pairing flow.
 
+## Offline MediaPipe Assets
+
+`debug.html`, `demo.html`, and `demo-table.html` load MediaPipe through `mediapipe_loader.mjs`.
+By default it tries CDN resources first, then falls back to the vendored files under
+`vendor/mediapipe/`.
+
+For demo-day testing with no external internet, run a local static server and force local assets:
+
+```bash
+python3 -m http.server 8081
+```
+
+```text
+http://localhost:8081/debug.html?mp=local&cam=http://<ESP32-IP>
+http://localhost:8081/demo.html?mp=local&cam=http://<ESP32-IP>
+```
+
+Do not open these pages with `file://`; Safari and WebAssembly module loading are more reliable over `http://localhost`.
+
+Open Safari Web Inspector Console and filter for `[kl]` to see low-frequency runtime logs:
+page URL, ESP32 base URL/device IP, MediaPipe local/remote source, delegate, WS open/close/error, RSSI, frame size, JPEG quality, heap, and PSRAM.
+
 ## Camera Parameter Tuning
 
 `debug.html` exposes live camera controls (brightness, contrast, saturation, sharpness, ae\_level, JPEG quality). Use it to find the optimal values for the physical setup.

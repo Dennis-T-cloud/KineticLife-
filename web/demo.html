@@ -320,8 +320,8 @@ body {
 </div>
 
 <script type="module">
-import { PoseLandmarker, FilesetResolver }
-  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+import { createPoseLandmarkerRuntime } from "./mediapipe_loader.mjs";
+import { logMediaPipeRuntime, logPageBoot, logWsEvent, probeDevice } from "./runtime_log.mjs";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const VIS       = 0.5;
@@ -474,6 +474,7 @@ const EXERCISES = {
 // ── ESP32 camera URL (required — no local webcam fallback) ────────────────
 const _params = new URLSearchParams(location.search);
 const camUrl  = _params.get('cam') || localStorage.getItem('kineticlife.camUrl') || '';
+logPageBoot('demo', { camUrl: camUrl || null, sourceMode: camUrl ? 'esp32' : 'none' });
 
 // ── WS stream state ────────────────────────────────────────────────────────
 let wsConn        = null;
@@ -543,7 +544,10 @@ function openWs() {
   const sock = new WebSocket(url);
   wsConn = sock;
   sock.binaryType = 'arraybuffer';
-  sock.onopen    = () => { statusBadge.textContent = 'ESP32 connected'; };
+  sock.onopen    = () => {
+    logWsEvent('open', { url });
+    statusBadge.textContent = 'ESP32 connected';
+  };
   sock.onmessage = ({ data }) => {
     if (decodePending) { pendingData = data; return; }
     startDecode(data);
@@ -551,10 +555,14 @@ function openWs() {
   sock.onclose   = () => {
     if (wsConn !== sock) return;
     wsConn = null;
+    logWsEvent('close', { url });
     statusBadge.textContent = 'stream closed — retrying…';
     retryTimer = setTimeout(openWs, 2000);
   };
-  sock.onerror   = () => { statusBadge.textContent = 'WebSocket error'; };
+  sock.onerror   = () => {
+    logWsEvent('error', { url });
+    statusBadge.textContent = 'WebSocket error';
+  };
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -568,6 +576,7 @@ async function init() {
     return;
   }
 
+  probeDevice(httpBase(), 'demo-device');
   statusBadge.textContent = 'applying camera settings…';
   await fetch(
     `${httpBase()}/cam?res=320x240&q=12&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0&vflip=0&hmirror=0`,
@@ -577,22 +586,9 @@ async function init() {
   openWs();
 
   statusBadge.textContent = 'loading model…';
-  const vision = await FilesetResolver.forVisionTasks(
-    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-  );
-  const modelPath =
-    'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
-  try {
-    landmarker = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
-      runningMode: 'VIDEO', numPoses: 1,
-    });
-  } catch {
-    landmarker = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: modelPath, delegate: 'CPU' },
-      runningMode: 'VIDEO', numPoses: 1,
-    });
-  }
+  const runtime = await createPoseLandmarkerRuntime();
+  landmarker = runtime.landmarker;
+  logMediaPipeRuntime(runtime);
   statusBadge.textContent = 'ESP32 · ready';
   sessionStart = performance.now();
   requestAnimationFrame(tick);
