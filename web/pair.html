@@ -17,7 +17,7 @@
     p { margin: 0; color: #50617c; }
     .version { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px;
                padding: 4px 9px; background: #dff7ed; color: #176043; font-weight: 800; font-size: 12px; }
-    .tabs { display: flex; gap: 4px; border-bottom: 2px solid #dde4ef; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 2px solid #dde4ef; }
     .tab { border: 0; border-bottom: 2px solid transparent; margin-bottom: -2px; background: transparent;
            padding: 10px 18px; font: inherit; font-weight: 700; color: #50617c; cursor: pointer; }
     .tab.active { color: #1f6f52; border-bottom-color: #1f6f52; }
@@ -59,8 +59,16 @@
                   background: #bac6d8; margin-right: 6px; vertical-align: middle; }
     .status-dot.ok { background: #1f6f52; }
     .status-dot.err { background: #c0392b; }
+    .host-qr { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; align-items: start; }
+    .hostQrBox { min-height: 340px; border: 1px solid #dde4ef; border-radius: 8px;
+                 background: #fff; display: grid; place-items: center; padding: 18px;
+                 box-shadow: 0 12px 28px rgba(33, 49, 77, 0.10); }
+    #hostQr { width: 300px; height: 300px; display: grid; place-items: center;
+              color: #697891; font-weight: 800; text-align: center; }
+    #hostQr canvas, #hostQr img { width: 300px; height: 300px; display: block; image-rendering: pixelated; }
     @media (max-width: 760px) {
       .grid { grid-template-columns: 1fr; }
+      .host-qr { grid-template-columns: 1fr; }
       .actions { grid-template-columns: 1fr; }
       #qr, #qr canvas, #qr img { width: min(420px, 92vw); height: min(420px, 92vw); }
       .probe-row { grid-template-columns: 1fr; }
@@ -78,6 +86,7 @@
       <button class="tab active" id="tabQr"     onclick="switchTab('qr')">QR Pair</button>
       <button class="tab"        id="tabConfig"  onclick="switchTab('config')">Config Networks</button>
       <button class="tab"        id="tabDirect"  onclick="switchTab('direct')">Direct Connect</button>
+      <button class="tab"        id="tabHost"    onclick="switchTab('host')">Host QR</button>
     </div>
 
     <!-- QR Pair tab -->
@@ -181,6 +190,32 @@
         </div>
       </div>
     </section>
+
+    <!-- Host QR tab -->
+    <section id="sectionHost" class="host-qr" style="display:none">
+      <div class="direct-card" style="max-width:none">
+        <div>
+          <p style="color:#172033; font-weight:700; font-size:16px; margin-bottom:6px">Open this web host from a phone</p>
+          <p>Scan this QR on a phone that is on the same WiFi as this Mac to open <code>pair.html</code> directly.</p>
+        </div>
+
+        <label>Host pair page URL
+          <input id="hostUrl" autocomplete="off">
+        </label>
+
+        <div id="hostUrlStatus" class="notice" style="font-size:13px"></div>
+
+        <div class="actions">
+          <button class="outline" id="hostUseCurrent">Current Page</button>
+          <button class="outline" id="hostUseShared">Mac WiFi Gateway</button>
+        </div>
+        <button id="hostRefresh">Refresh Host QR</button>
+      </div>
+
+      <div class="hostQrBox">
+        <div id="hostQr">Loading host QR</div>
+      </div>
+    </section>
   </main>
 
   <script>
@@ -189,14 +224,14 @@
       document.getElementById("sectionQr").style.display     = tab === "qr"     ? "" : "none";
       document.getElementById("sectionConfig").style.display = tab === "config"  ? "" : "none";
       document.getElementById("sectionDirect").style.display = tab === "direct"  ? "" : "none";
+      document.getElementById("sectionHost").style.display   = tab === "host"   ? "" : "none";
       document.getElementById("tabQr").classList.toggle("active",     tab === "qr");
       document.getElementById("tabConfig").classList.toggle("active",  tab === "config");
       document.getElementById("tabDirect").classList.toggle("active",  tab === "direct");
+      document.getElementById("tabHost").classList.toggle("active",    tab === "host");
       localStorage.setItem("kineticlife.pair.tab", tab);
+      if (tab === "host") updateHostQr();
     }
-
-    const savedTab = localStorage.getItem("kineticlife.pair.tab") || "qr";
-    switchTab(savedTab);
 
     // ── QR Pair tab ────────────────────────────────────────────────
     const ssidEl     = document.getElementById("ssid");
@@ -231,6 +266,19 @@
       return `http://${trimmed}`;
     }
 
+    function drawQr(targetEl, text, width, height) {
+      targetEl.innerHTML = "";
+      if (!window.QRCode) { targetEl.textContent = "QR library failed to load"; return; }
+      new window.QRCode(targetEl, {
+        text,
+        width,
+        height,
+        colorDark: "#111111",
+        colorLight: "#ffffff",
+        correctLevel: window.QRCode.CorrectLevel.L
+      });
+    }
+
     function updateQr() {
       localStorage.setItem("kineticlife.pair.ssid", ssidEl.value);
       localStorage.setItem("kineticlife.pair.type", typeEl.value);
@@ -249,15 +297,7 @@
 
       qrEl.innerHTML = "";
       if (!ssid) { qrEl.textContent = "Enter SSID"; return; }
-      if (!window.QRCode) { qrEl.textContent = "QR library failed to load"; return; }
-      new window.QRCode(qrEl, {
-        text: payload,
-        width: 420,
-        height: 420,
-        colorDark: "#111111",
-        colorLight: "#ffffff",
-        correctLevel: window.QRCode.CorrectLevel.L
-      });
+      drawQr(qrEl, payload, 420, 420);
     }
 
     [ssidEl, typeEl, passwordEl].forEach((el) => el.addEventListener("input", updateQr));
@@ -394,6 +434,66 @@
       localStorage.setItem("kineticlife.camUrl", url);
       location.href = `./demo-table.html?cam=${encodeURIComponent(url)}`;
     });
+
+    // ── Host QR tab ────────────────────────────────────────────────
+    const hostUrlEl = document.getElementById("hostUrl");
+    const hostQrEl = document.getElementById("hostQr");
+    const hostUrlStatusEl = document.getElementById("hostUrlStatus");
+
+    function currentPairUrl() {
+      return new URL("pair.html", location.href).href;
+    }
+
+    function sharedGatewayPairUrl() {
+      const port = location.port ? `:${location.port}` : "";
+      return `http://192.168.2.1${port}/pair.html`;
+    }
+
+    function normalizeHostUrl(value) {
+      const trimmed = value.trim();
+      if (!trimmed) return currentPairUrl();
+      try {
+        return new URL(trimmed).href;
+      } catch (_) {
+        return `http://${trimmed.replace(/^\/+/, "")}`;
+      }
+    }
+
+    function updateHostQr() {
+      const url = normalizeHostUrl(hostUrlEl.value);
+      hostUrlEl.value = url;
+      localStorage.setItem("kineticlife.hostPairUrl", url);
+      drawQr(hostQrEl, url, 300, 300);
+
+      const host = new URL(url).hostname;
+      if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
+        hostUrlStatusEl.className = "warning";
+        hostUrlStatusEl.innerHTML =
+          `This URL points to this browser only. For phone testing, open this page on the Mac with ` +
+          `<code>${sharedGatewayPairUrl()}</code> or enter the Mac WiFi IP here.`;
+      } else {
+        hostUrlStatusEl.className = "notice";
+        hostUrlStatusEl.innerHTML =
+          `QR target: <code>${url}</code><br>` +
+          `Phone and IoT device must be on the same WiFi/subnet as this host.`;
+      }
+    }
+
+    hostUrlEl.value = localStorage.getItem("kineticlife.hostPairUrl") || currentPairUrl();
+    hostUrlEl.addEventListener("input", updateHostQr);
+    document.getElementById("hostRefresh").addEventListener("click", updateHostQr);
+    document.getElementById("hostUseCurrent").addEventListener("click", () => {
+      hostUrlEl.value = currentPairUrl();
+      updateHostQr();
+    });
+    document.getElementById("hostUseShared").addEventListener("click", () => {
+      hostUrlEl.value = sharedGatewayPairUrl();
+      updateHostQr();
+    });
+    updateHostQr();
+
+    const savedTab = localStorage.getItem("kineticlife.pair.tab") || "qr";
+    switchTab(savedTab);
   </script>
 </body>
 </html>
