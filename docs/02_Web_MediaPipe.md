@@ -111,9 +111,18 @@ web/
 │   │   └── session.ts         # Zustand
 │   └── types/
 │       └── contracts.ts       # TS types translated from §3/§4
+├── lib/                      # Current static demo shared modules
+│   ├── exercise-rules.js     # Exercise thresholds, angle math, skeleton constants
+│   ├── landmark-smoothing.js # Display-only EMA smoothing
+│   ├── pose-renderer.js      # Canvas skeleton + angle annotations
+│   └── feedback-effects.js   # Rep count, particle, scanline, error-pulse effects
+├── mediapipe_loader.mjs      # Current remote/local MediaPipe fallback
+├── runtime_log.mjs           # Current low-frequency browser diagnostics
 ├── vite.config.ts
 └── package.json
 ```
+
+The TypeScript `src/` tree remains the future app-shell direction. The current demo-day pages are static HTML entry points (`debug.html`, `demo.html`, `demo-table.html`) that import shared ES modules from `web/lib/` plus `mediapipe_loader.mjs` and `runtime_log.mjs`.
 
 ---
 
@@ -259,6 +268,10 @@ Key implication: DTW only runs on completed reps or a completed set — **never 
 - A rep is counted on `neutral → rest → work → rest`
 - Per-exercise checks produce form hints and red bone highlights
 - Display landmarks can be EMA-smoothed; logic should use raw landmarks
+- Shared exercise thresholds and angle math live in `web/lib/exercise-rules.js`
+- Shared display smoothing lives in `web/lib/landmark-smoothing.js`
+- Shared skeleton rendering lives in `web/lib/pose-renderer.js`
+- Shared non-authoritative visual effects live in `web/lib/feedback-effects.js`
 
 **DTW report submission**:
 - Submit only completed-rep `joint_angles[T,14]` sequences
@@ -359,9 +372,12 @@ stateDiagram-v2
 | Skeleton | White gradient lines, glowing joint dots (`shadowBlur`) |
 | Trails | 2 s trailing on hands/feet (rolling buffer of last 30 frames of joint coords) |
 | Particle bursts | On local heuristic rep count or later DTW-confirmed correct rep |
+| Success scanline | Lime sweep over the display skeleton after a counted rep |
 | Error highlight | Local form-rule failures pulse red in real time; DTW `problem_joints` may appear in the summary |
 | Big counter | Corner DOM number |
 | SFX | Web Audio API: "ding" right, "buzz" wrong |
+
+Current implementation: `web/lib/feedback-effects.js` provides the first demo-day effect layer without external dependencies. It adds a lime rep counter pop, a small `+N` float, a short particle burst near the torso, a lime success scanline, and a red pulse over debounced failing bones. These effects are display-only and must not change rep counting, form thresholds, or summary scoring.
 
 **Performance target**: ≥ 30 FPS on iPad Pro; degrade to 20 FPS on lower-end.
 

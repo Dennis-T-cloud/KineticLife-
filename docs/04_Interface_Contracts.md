@@ -677,7 +677,18 @@ Rep counted when state transitions: `neutral → rest → work → rest`.
 
 ### 10.5 Canvas rendering spec
 
-**Display vs. logic landmark split**: `rawLm = result.landmarks[0]` drives all rep counting, angle thresholds, and form checks. A separate `displayLm` (EMA-smoothed, α = 0.45; low-visibility joints hold last position) is used exclusively for skeleton drawing and angle annotations. Error bones/hints are debounced: 4 consecutive failing frames to turn red, 4 consecutive passing frames to clear.
+**Display vs. logic landmark split**: `rawLm = result.landmarks[0]` drives all rep counting, angle thresholds, and form checks. A separate `displayLm` (EMA-smoothed, α = 0.45; low-visibility joints hold last position) is used exclusively for skeleton drawing, angle annotations, and non-authoritative UI effects. Error bones/hints are debounced: 4 consecutive failing frames to turn red, 4 consecutive passing frames to clear.
+
+**Current shared modules**:
+
+| Module | Responsibility |
+| --- | --- |
+| `web/lib/exercise-rules.js` | Exercise definitions, threshold checks, angle math, skeleton constants |
+| `web/lib/landmark-smoothing.js` | Display-only EMA landmark smoothing |
+| `web/lib/pose-renderer.js` | Canvas skeleton and angle annotation rendering |
+| `web/lib/feedback-effects.js` | Non-authoritative visual effects for reps, success scanlines, particles, and error pulses |
+| `web/mediapipe_loader.mjs` | Remote/local MediaPipe bundle, WASM, and model fallback |
+| `web/runtime_log.mjs` | Low-frequency browser diagnostics |
 
 | Element | Style |
 | --- | --- |
@@ -688,10 +699,13 @@ Rep counted when state transitions: `neutral → rest → work → rest`.
 | Joint dots | radius 5px, same color as connected bones |
 | Head center anchor | nose (lm[0]); hollow circle radius 8, fill `rgba(255,255,255,0.22)`, stroke `rgba(255,255,255,0.65)` lineWidth 2; drawn only when visibility ≥ 0.5; reserved for head-motion features |
 | Angle annotation | white 24 px bold text drawn on canvas near vertex joint; background `rgba(0,0,0,0.55)` rect |
+| Rep-count effect | Lime counter pop, small `+N` float, 20-40 particle burst near torso center |
+| Success scanline | Lime circular glow sweep over display skeleton after a counted rep |
+| Error effect | Red pulsing glow over debounced failing bones only; no change to detection logic |
 
 ### 10.6 demo-table.html — tablet variant differences
 
-`web/demo-table.html` shares all exercise logic, thresholds, and rendering with `demo.html`. Key differences:
+`web/demo.html` and `web/demo-table.html` are sibling HTML entry points, not an inheritance hierarchy. They share exercise logic, smoothing, rendering, MediaPipe loading, runtime logging, and feedback effects through ES modules, but still keep separate page-level orchestration. Key differences:
 
 | Aspect | demo.html | demo-table.html |
 | --- | --- | --- |

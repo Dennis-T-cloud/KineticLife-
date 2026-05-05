@@ -25,6 +25,30 @@ K1:<TYPE_CODE>:<SSID_LEN>:<SSID><PASSWORD>
 
 The Vite dev server serves `index.html` at `/`, which redirects to the pairing flow.
 
+## Demo Page Module Structure
+
+The current demo pages are static HTML entry points with shared ES modules:
+
+```text
+demo.html              ESP32-only workout demo
+demo-table.html        ESP32 or local-camera tablet/desktop demo
+mediapipe_loader.mjs   remote/local MediaPipe asset fallback
+runtime_log.mjs        low-frequency browser console diagnostics
+lib/exercise-rules.js  exercise thresholds, angle math, skeleton constants
+lib/landmark-smoothing.js
+                       display-only EMA smoothing
+lib/pose-renderer.js   Canvas skeleton and angle annotation drawing
+lib/feedback-effects.js
+                       shared rep-count, particle, scanline, and error-pulse effects
+```
+
+`demo.html` and `demo-table.html` are sibling pages, not inheritance-based views.
+They share rules/rendering/effects modules, but still keep separate page orchestration
+for source setup, recording loop, summary, and UI wiring. New exercises should start
+in `lib/exercise-rules.js`; visual rendering changes should start in
+`lib/pose-renderer.js`; demo feedback animations should start in
+`lib/feedback-effects.js`.
+
 ## Offline MediaPipe Assets
 
 `debug.html`, `demo.html`, and `demo-table.html` load MediaPipe through `mediapipe_loader.mjs`.
