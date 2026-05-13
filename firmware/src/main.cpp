@@ -17,7 +17,7 @@
 #define KINETICLIFE_BOARD_MODEL "Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B"
 #endif
 #ifndef KINETICLIFE_CAMERA_MODEL
-#define KINETICLIFE_CAMERA_MODEL "OV5640"
+#define KINETICLIFE_CAMERA_MODEL "OV2640 140deg wide-angle"
 #endif
 
 static const char* RESET_NVS_NAMESPACE = "reset";

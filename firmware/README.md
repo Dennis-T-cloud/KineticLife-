@@ -5,7 +5,7 @@ ESP32-S3 firmware workspace for camera bring-up, WiFi pairing (QR + Soft AP), We
 ## Hardware Baseline
 
 - Board: Freenove ESP32-S3-WROOM Board (N16R8), FNK0085 B
-- Camera: OV5640 160° wide-angle
+- Camera: OV2640 140° wide-angle
 - Memory target: 16 MB Flash / 8 MB PSRAM
 
 ## Quick Start
@@ -71,12 +71,12 @@ Current streaming mode (`camera_init()`):
 | Parameter | Value | Notes |
 | --------- | ----- | ----- |
 | Resolution | FRAMESIZE_QVGA (320×240) | QVGA uses a wider sensor crop → larger FOV at 1m |
-| JPEG quality | 20 | Configured at connect time via `/cam?res=320x240&q=20` |
+| JPEG quality | 12 | Configured at init and reapplied by debug/demo pages via `/cam?res=320x240&q=12` |
 | Frame buffers | 2 in PSRAM | fb_count=2 eliminates DMA bus contention with WiFi |
 | XCLK | 20 MHz | Hard limit on FNK0085B — 24 MHz causes screen tearing |
 | Target fps | ~15 (67ms/frame) | `FRAME_MS=67` in `http_server.cpp` |
 
-Hardware limit: OV5640 captures ~9fps at 320×240 JPEG (`cap_avg_ms ≈ 106ms`). FRAME_MS just throttles the send rate; actual fps is camera-bound.
+Observed target: OV2640 captures around 9fps at 320×240 JPEG on the current WebSocket pipeline. FRAME_MS just throttles the send rate; actual fps is camera-bound.
 
 QR pairing mode (`camera_init_qr()`): GRAYSCALE QVGA, 1 buffer in DRAM.
 
@@ -86,8 +86,9 @@ Firmware uses **ESPAsyncWebServer + AsyncWebSocket** (non-blocking). Transport:
 
 - Endpoint: `ws://<IP>/ws`
 - Format: binary frames, each frame is one complete JPEG
-- `ws.binaryAll(buf, len)` — copies to internal queue, returns immediately (never blocks loop)
-- `esp_camera_fb_return(fb)` — called right after binaryAll, safe because data is already copied
+- Latest-frame policy: firmware sends only to clients whose WebSocket queue is empty
+- Slow clients skip stale frames instead of accumulating old JPEGs
+- `esp_camera_fb_return(fb)` — called right after per-client send attempts, safe because accepted frames are already copied
 - `ws.cleanupClients()` — called every loop tick to reclaim closed-connection memory
 
 REST endpoints: `GET /hello`, `GET /status`, `GET /capture`, `GET|POST /cam`, `GET|POST /end`
@@ -102,14 +103,14 @@ Useful serial log lines:
 [perf] wifi_connect_ms=... ip=... rssi=... attempts=...
 [perf] http_start_ms=... setup_total_ms=...
 [ws] connect id=... ip=... clients=... heap_kb=... psram_kb=...
-[ws] perf elapsed_ms=... sent=... dropped=... fps=... cap_avg_ms=... cap_max_ms=... jpeg_avg=... clients=... rssi=... heap_kb=...
+[ws] perf elapsed_ms=... sent=... dropped=... fps=... cap_avg_ms=... cap_max_ms=... jpeg_avg=... clients=... backpressure_skips=... rssi=... heap_kb=...
 [status] state=... uptime=...s ip=... rssi=...dBm heap_kb=... streams=...
 ```
 
 How to read them:
 
-- `cap_avg_ms ≈ 106ms` at 320×240 JPEG: normal, this is OV5640 hardware limit (~9fps).
-- `dropped=0`: no frames dropped — WebSocket backpressure is working.
+- `cap_avg_ms` near 100ms at 320×240 JPEG: normal for the current OV2640/140° calibration target (~9fps).
+- `dropped=0`: no whole-frame drops. Nonzero `backpressure_skips` means slow clients skipped stale frames to preserve realtime display.
 - `heap_kb` stable 164–184KB: healthy. Sudden large drop = memory leak.
 - `psram_kb` stable ~8144KB: normal. Dip below 7000KB = PSRAM pressure.
 - `rssi` better than `-65dBm` required for stable streaming.

@@ -1,10 +1,10 @@
 # KineticLife
 
-> Real-time fitness action feedback. Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B + OV5640 160° wide-angle camera + MediaPipe in the browser, local heuristic rep/form checks for live UX, and optional post-set DTW summary reports on joint-angle sequences. **Raw video never leaves the local network.**
+> Real-time fitness action feedback. Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B + OV2640 140° wide-angle camera + MediaPipe in the browser, local heuristic rep/form checks for live UX, and optional post-set DTW summary reports on joint-angle sequences. **Raw video never leaves the local network.**
 
 **Status**: v0.3 · 6-week Demo Day sprint · 3-person part-time team
 
-**Hardware baseline**: Freenove ESP32-S3-WROOM Board (N16R8), model **FNK0085 B**, with **OV5640 160° wide-angle** camera. All firmware pin mapping, camera tuning, and calibration notes should assume this board unless a document explicitly says otherwise.
+**Hardware baseline**: Freenove ESP32-S3-WROOM Board (N16R8), model **FNK0085 B**, with **OV2640 140° wide-angle** camera. All firmware pin mapping, camera tuning, and calibration notes should assume this board unless a document explicitly says otherwise.
 
 ## Repository Layout
 
@@ -100,7 +100,7 @@ End-to-end test without the cloud backend: ESP32 streams WebSocket video → bro
 
 ### What you need
 
-- Freenove ESP32-S3-WROOM (FNK0085 B) + OV5640 camera, flashed with firmware in `firmware/`
+- Freenove ESP32-S3-WROOM (FNK0085 B) + OV2640 140° camera, flashed with firmware in `firmware/`
 - iPhone (acts as WiFi hotspot)
 - macOS laptop on the same hotspot
 
@@ -146,7 +146,7 @@ cd web && python3 -m http.server 8080
 
 Enter hotspot SSID/password → QR appears. Hold phone screen at 100% brightness ~20–30 cm from ESP32 camera. Wait for serial: `[session] saved`.
 
-> OV5640 note: 160° wide-angle lens reduces QR ECC success rate. Soft AP is more reliable.
+> OV2640 note: the 140° wide-angle lens can reduce QR ECC success rate. Soft AP is more reliable.
 
 #### 4. Open the stream + debug page
 
@@ -181,7 +181,7 @@ ESP32 clears NVS credentials and reboots to pairing mode.
 | Stream not loading | mDNS failed — use IP from serial monitor directly |
 | ESP32 IP unknown | `pio device monitor`, look for `[http] ready ip=...` |
 | Soft AP not visible | Wait 10 s after boot; blue LED should be blinking |
-| QR parse fails repeatedly | Use Soft AP path instead; OV5640 160° lens degrades QR reliability |
+| QR parse fails repeatedly | Use Soft AP path instead; OV2640 140° lens can degrade QR reliability |
 | WiFi connect fails after QR | Keep phone screen on; hotspot must be 2.4 GHz |
 | `ws://` connection refused | Confirm laptop and ESP32 are on the same hotspot network |
 | No pose detected | Ensure full body visible; move 1–2 m from camera |

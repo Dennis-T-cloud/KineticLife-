@@ -18,7 +18,7 @@
 **External commitments**:
 - After power-on or pairing (QR or Soft AP), ESP32 self-reports via **HTTP /hello** and streams binary JPEG frames via **WebSocket /ws**.
 - Serves the stream + inference page from **SPIFFS** at `http://fitcam-xxxxxx.local/` so the browser can connect to `ws://` without mixed-content issues.
-- Frame rate ≥ 9 FPS at 320×240 JPEG (OV5640 hardware limit); 30+ minutes continuous operation without drops.
+- Frame rate target ≥ 9 FPS at 320×240 JPEG on the OV2640/140° calibration hardware; 30+ minutes continuous operation without drops.
 
 ---
 
@@ -26,14 +26,14 @@
 
 **Current board**: **Freenove ESP32-S3-WROOM Board (N16R8), FNK0085 B**
 
-**Camera**: **OV5640 160° wide-angle**
+**Camera**: **OV2640 140° wide-angle**
 
 **Hardware reference**: [Freenove ESP32-S3-WROOM Board GitHub](https://github.com/Freenove/Freenove_ESP32_S3_WROOM_Board)
 
 Why:
 - ESP32-S3-WROOM module with **16 MB Flash + 8 MB PSRAM** (`N16R8`), enough for WebSocket buffering and QR decode work.
 - Freenove board is the team calibration target, so firmware pin mapping and camera bring-up should be validated against **FNK0085 B** first.
-- OV5640 160° wide-angle is the active camera module for resolution, exposure, white-balance, and low-light tuning.
+- OV2640 140° wide-angle is the active camera module for resolution, exposure, white-balance, and low-light tuning.
 - Full Arduino / PlatformIO workflow remains suitable for the demo firmware.
 
 **Board assumptions to verify during bring-up**:
@@ -42,15 +42,15 @@ Why:
 |----|------|------|
 | Board model | Freenove ESP32-S3-WROOM Board (N16R8), FNK0085 B | Pin map and boot behavior |
 | Flash / PSRAM | 16 MB Flash / 8 MB PSRAM | WebSocket frame buffers, QR decode memory |
-| Camera | OV5640 160° wide-angle | Camera driver, frame size, exposure tuning |
-| Default stream | 320×240 @ 9 FPS | OV5640 hardware limit at QVGA JPEG |
+| Camera | OV2640 140° wide-angle | Camera driver, frame size, exposure tuning |
+| Default stream | 320×240 @ 9 FPS target | OV2640/140° calibration target at QVGA JPEG |
 
 **Alternatives** are not part of v0.3 calibration. If a backup board is used, create a separate pin-map note before flashing.
 
 **Auxiliary**:
 - USB-C power supply (5V/2A)
 - Small tripod or clip mount
-- **5V fill light** (REQUIRED — OV5640 noise in low light kills MediaPipe accuracy)
+- **5V fill light** (REQUIRED — OV2640 noise in low light kills MediaPipe accuracy)
 - Short USB-C cable (<30 cm, less noise)
 
 ---
@@ -65,7 +65,7 @@ firmware/
 ├── platformio.ini
 ├── src/
 │   ├── main.cpp          # setup() + loop()
-│   ├── camera_init.cpp   # esp_camera config, OV5640 defaults
+│   ├── camera_init.cpp   # esp_camera config, OV2640 defaults
 │   ├── wifi_qr.cpp       # quirc parsing + NVS write
 │   ├── http_server.cpp   # REST + WebSocket /ws
 │   ├── status_led.cpp    # RGB status indicator
@@ -123,7 +123,7 @@ Current firmware maps the RGB status LED to `STATUS_RGB_PIN=48` in `platformio.i
 
 ## §5 WebSocket Streaming
 
-**Transport**: Binary WebSocket (`ws://fitcam-xxxxxx.local/ws`). Each message is one complete JPEG frame. `ws.binaryAll()` is non-blocking — copies to internal queue and returns immediately. `esp_camera_fb_return()` is called right after, safe because the data is already copied.
+**Transport**: Binary WebSocket (`ws://fitcam-xxxxxx.local/ws`). Each message is one complete JPEG frame. Firmware uses a latest-frame policy: each frame is sent only to clients whose WebSocket queue is empty; slow clients skip stale frames instead of building a delayed queue. `esp_camera_fb_return()` is called right after send attempts, safe because accepted frames are already copied.
 
 **Key camera config**:
 
@@ -137,7 +137,7 @@ config.grab_mode    = CAMERA_GRAB_LATEST;
 config.fb_location  = CAMERA_FB_IN_PSRAM;
 ```
 
-**OV5640 sensor defaults** (set at init):
+**OV2640 sensor defaults** (set at init):
 
 ```cpp
 s->set_brightness(s, 0);   s->set_contrast(s, 1);
@@ -193,7 +193,7 @@ flowchart LR
     D --> E[NVS write + ESP.restart]
 ```
 
-**OV5640 note**: The 160° wide-angle lens introduces barrel distortion that degrades QR ECC success rate. Soft AP is the more reliable path for this camera module. QR path still works at optimal distance (~20–30 cm) with screen at 100% brightness.
+**OV2640 note**: The 140° wide-angle lens can introduce enough barrel distortion to degrade QR ECC success rate. Soft AP is the more reliable path for this camera module. QR path still works at optimal distance (~20–30 cm) with screen at 100% brightness.
 
 **Security**:
 - Password written directly to NVS, never logged to serial
@@ -246,7 +246,7 @@ flowchart LR
 
 | Risk | Likelihood | Impact | Mitigation |
 |-----|-----|------|------|
-| OV5640 low-light noise | High | High | 5V fill light + lock white balance + control venue lighting |
+| OV2640 low-light noise | High | High | 5V fill light + lock white balance + control venue lighting |
 | PSRAM config missed → boot crash | Med | Med | platformio.ini configured AND tested with full build + boot once |
 | Venue WiFi interference | Med | High | Backup 4G router; phone hotspot must be 2.4 GHz |
 | Camera connection loose | Low | High | Tape + hot glue before Demo |

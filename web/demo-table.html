@@ -334,140 +334,10 @@ body {
 <script type="module">
 import { createPoseLandmarkerRuntime } from "./mediapipe_loader.mjs";
 import { logMediaPipeRuntime, logPageBoot, logWsEvent, probeDevice } from "./runtime_log.mjs";
-
-// ── Constants ──────────────────────────────────────────────────────────────
-const VIS       = 0.5;
-const C_OK      = '#DEFF9A';
-const C_ERR     = '#FF5555';
-const C_DEFAULT = 'rgba(255,255,255,0.45)';
-
-const BONE_PAIRS = [
-  [11,12],[11,13],[13,15],[12,14],[14,16],
-  [11,23],[12,24],[23,24],
-  [23,25],[24,26],[25,27],[26,28],
-];
-const ALL_JOINTS = [...new Set(BONE_PAIRS.flat())];
-
-// ── Angle helpers ──────────────────────────────────────────────────────────
-function calcAngle(a, b, c) {
-  const rad = Math.atan2(c.y - b.y, c.x - b.x)
-            - Math.atan2(a.y - b.y, a.x - b.x);
-  let deg = Math.abs(rad * 180 / Math.PI);
-  if (deg > 180) deg = 360 - deg;
-  return Math.round(deg);
-}
-
-function boneKey(a, b) { return `${Math.min(a,b)}_${Math.max(a,b)}`; }
-function visible(lm, ...idxs) { return idxs.every(i => lm[i].visibility >= VIS); }
-
-// ── Exercise definitions ───────────────────────────────────────────────────
-const EXERCISES = {
-  squat: {
-    label:    'Bodyweight Squat',
-    getKeyAngle: lm => (calcAngle(lm[23], lm[25], lm[27])
-                       + calcAngle(lm[24], lm[26], lm[28])) / 2,
-    restCond: a => a > 160,
-    workCond: a => a < 100,
-    phaseLabel: { rest: 'Standing', work: 'Squatting' },
-    checks: [
-      {
-        id: 'sq_depth_l',
-        getVal: lm => calcAngle(lm[23], lm[25], lm[27]),
-        valid: (v, phase) => phase !== 'work' || v < 110,
-        hint: 'Squat lower on the left',
-        bones: [[23,25],[25,27]],
-      },
-      {
-        id: 'sq_depth_r',
-        getVal: lm => calcAngle(lm[24], lm[26], lm[28]),
-        valid: (v, phase) => phase !== 'work' || v < 110,
-        hint: 'Squat lower on the right',
-        bones: [[24,26],[26,28]],
-      },
-      {
-        id: 'sq_sym',
-        getVal: lm => Math.abs(calcAngle(lm[23],lm[25],lm[27]) - calcAngle(lm[24],lm[26],lm[28])),
-        valid: v => v < 20,
-        hint: 'Uneven leg drive',
-        bones: [[23,25],[25,27],[24,26],[26,28]],
-      },
-    ],
-    displayAngles: [
-      { label: 'Left Knee',  fn: lm => calcAngle(lm[23],lm[25],lm[27]), joint: 25 },
-      { label: 'Right Knee', fn: lm => calcAngle(lm[24],lm[26],lm[28]), joint: 26 },
-    ],
-  },
-
-  bicep_curl: {
-    label:    'Dumbbell Curl',
-    note:     'Use your right hand for the dumbbell',
-    getKeyAngle: lm => calcAngle(lm[12], lm[14], lm[16]),
-    restCond: a => a > 155,
-    workCond: a => a < 55,
-    phaseLabel: { rest: 'Arm Extended', work: 'Curling' },
-    checks: [
-      {
-        id: 'curl_range',
-        getVal: lm => calcAngle(lm[12], lm[14], lm[16]),
-        valid: (v, phase) => phase !== 'work' || v < 60,
-        hint: 'Curl higher',
-        bones: [[12,14],[14,16]],
-      },
-      {
-        id: 'curl_elbow',
-        getVal: lm => lm[14].y - lm[12].y,
-        valid: v => v > -0.05,
-        hint: 'Do not lift your elbow',
-        bones: [[12,14]],
-      },
-    ],
-    displayAngles: [
-      { label: 'Right Arm', fn: lm => calcAngle(lm[12],lm[14],lm[16]), joint: 14 },
-    ],
-  },
-
-  lateral_raise: {
-    label:    'Dumbbell Lateral Raise',
-    getKeyAngle: lm => (calcAngle(lm[24],lm[12],lm[14]) + calcAngle(lm[23],lm[11],lm[13])) / 2,
-    restCond: a => a < 30,
-    workCond: a => a > 75,
-    phaseLabel: { rest: 'Lowered', work: 'Raising' },
-    checks: [
-      {
-        id: 'lr_height_r',
-        getVal: lm => calcAngle(lm[24], lm[12], lm[14]),
-        valid: (v, phase) => phase !== 'work' || v > 70,
-        hint: 'Raise your right arm to shoulder height',
-        bones: [[12,14],[14,16]],
-      },
-      {
-        id: 'lr_height_l',
-        getVal: lm => calcAngle(lm[23], lm[11], lm[13]),
-        valid: (v, phase) => phase !== 'work' || v > 70,
-        hint: 'Raise your left arm to shoulder height',
-        bones: [[11,13],[13,15]],
-      },
-      {
-        id: 'lr_elbow_r',
-        getVal: lm => calcAngle(lm[12], lm[14], lm[16]),
-        valid: (v, phase) => phase !== 'work' || v < 165,
-        hint: 'Keep your right elbow slightly bent; do not lock it',
-        bones: [[14,16]],
-      },
-      {
-        id: 'lr_sym',
-        getVal: lm => Math.abs(calcAngle(lm[24],lm[12],lm[14]) - calcAngle(lm[23],lm[11],lm[13])),
-        valid: v => v < 25,
-        hint: 'Arm heights do not match',
-        bones: [[11,13],[12,14]],
-      },
-    ],
-    displayAngles: [
-      { label: 'Right Shoulder', fn: lm => calcAngle(lm[24],lm[12],lm[14]), joint: 12 },
-      { label: 'Left Shoulder',  fn: lm => calcAngle(lm[23],lm[11],lm[13]), joint: 11 },
-    ],
-  },
-};
+import { VIS, EXERCISES, calcAngle, boneKey } from "./lib/exercise-rules.js";
+import { createSmoother } from "./lib/landmark-smoothing.js";
+import { drawSkeleton, drawAngleOnCanvas } from "./lib/pose-renderer.js";
+import { createFeedbackEffects } from "./lib/feedback-effects.js";
 
 // ── Source detection ───────────────────────────────────────────────────────
 // sourceMode = 'esp32' when camUrl is set; 'local' when no camUrl (tablet front camera)
@@ -519,8 +389,7 @@ let showRaw        = true;
 let vidTransform   = { dx: 0, dy: 0, dw: 640, dh: 480 };
 
 // ── Display smoothing state ────────────────────────────────────────────────
-let smoothedLm      = null;
-const SMOOTH_ALPHA  = 0.45;
+const smoother      = createSmoother(0.45, VIS);
 let consecErrFrames = 0;
 let displayErrSet   = new Set();
 const ERR_DEBOUNCE  = 4;
@@ -535,6 +404,7 @@ const exNoteEl        = document.getElementById('exNote');
 const statusBadge     = document.getElementById('statusBadge');
 const sourceBadge     = document.getElementById('sourceBadge');
 const analysisOverlay = document.getElementById('analysisOverlay');
+const effects          = createFeedbackEffects({ repNumEl });
 
 // ── WS helpers (ESP32 mode) ────────────────────────────────────────────────
 function startDecode(data) {
@@ -684,13 +554,13 @@ function tick(now) {
   const result = landmarker.detectForVideo(inferSource, now);
   if (!result.landmarks.length) return;
 
-  const rawLm    = result.landmarks[0];
-  const displayLm = smoothLandmarks(rawLm);
+  const rawLm     = result.landmarks[0];
+  const displayLm = smoother.smooth(rawLm);
   const ex = EXERCISES[currentExKey];
   const keyAngle = ex.getKeyAngle(rawLm);
   totalFrames++;
 
-  updateSM(keyAngle, ex);
+  updateSM(keyAngle, ex, displayLm);
 
   const errorBoneSet = new Set();
   const activeHints  = [];
@@ -714,8 +584,9 @@ function tick(now) {
   if (consecErrFrames >= ERR_DEBOUNCE)  displayErrSet = errorBoneSet;
   else if (consecErrFrames === 0)        displayErrSet = new Set();
 
-  drawSkeleton(displayLm, displayErrSet);
-  drawAngleOnCanvas(displayLm, ex);
+  drawSkeleton(ctx, vidTransform, displayLm, displayErrSet);
+  drawAngleOnCanvas(ctx, vidTransform, displayLm, ex);
+  effects.draw(ctx, now, vidTransform, displayLm, displayErrSet);
   const showHints = consecErrFrames >= ERR_DEBOUNCE ? activeHints : [];
   updateHintPanel(showHints, ex.checks.map(c => c.hint));
   updatePhase(ex);
@@ -723,103 +594,18 @@ function tick(now) {
 }
 
 // ── State machine ──────────────────────────────────────────────────────────
-function updateSM(angle, ex) {
+function updateSM(angle, ex, displayLm) {
   if (ex.restCond(angle)) {
     if (repPhase === 'work') {
       repCount++;
       repNumEl.textContent = repCount;
       repNumEl.classList.add('flash');
       setTimeout(() => repNumEl.classList.remove('flash'), 150);
+      effects.onRepCounted({ repCount, lm: displayLm, vidTransform });
     }
     repPhase = 'rest';
   } else if (ex.workCond(angle)) {
     repPhase = 'work';
-  }
-}
-
-// ── Landmark EMA smoothing (display only) ─────────────────────────────────
-function smoothLandmarks(raw) {
-  if (!smoothedLm || smoothedLm.length !== raw.length) {
-    smoothedLm = raw.map(p => ({ x: p.x, y: p.y, z: p.z, visibility: p.visibility }));
-    return smoothedLm;
-  }
-  for (let i = 0; i < raw.length; i++) {
-    const r = raw[i], s = smoothedLm[i];
-    if (r.visibility >= VIS) {
-      s.x = SMOOTH_ALPHA * r.x + (1 - SMOOTH_ALPHA) * s.x;
-      s.y = SMOOTH_ALPHA * r.y + (1 - SMOOTH_ALPHA) * s.y;
-      s.z = SMOOTH_ALPHA * r.z + (1 - SMOOTH_ALPHA) * s.z;
-    }
-    s.visibility = r.visibility;
-  }
-  return smoothedLm;
-}
-
-// ── Draw skeleton on canvas ────────────────────────────────────────────────
-function drawSkeleton(lm, errorBoneSet) {
-  const { dx, dy, dw, dh } = vidTransform;
-  const toX = i => dx + lm[i].x * dw;
-  const toY = i => dy + lm[i].y * dh;
-
-  ctx.lineCap  = 'round';
-  ctx.lineJoin = 'round';
-
-  for (const [a, b] of BONE_PAIRS) {
-    const lowVis = lm[a].visibility < VIS || lm[b].visibility < VIS;
-    const err    = errorBoneSet.has(boneKey(a, b));
-    ctx.beginPath();
-    ctx.moveTo(toX(a), toY(a));
-    ctx.lineTo(toX(b), toY(b));
-    ctx.strokeStyle = lowVis ? C_DEFAULT : err ? C_ERR : C_OK;
-    ctx.lineWidth   = lowVis ? 2 : err ? 8 : 6;
-    ctx.globalAlpha = lowVis ? 0.4 : 1.0;
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1.0;
-
-  const errorJoints = new Set();
-  for (const key of errorBoneSet) {
-    key.split('_').forEach(n => errorJoints.add(Number(n)));
-  }
-  for (const idx of ALL_JOINTS) {
-    if (lm[idx].visibility < 0.2) continue;
-    const err = errorJoints.has(idx);
-    ctx.beginPath();
-    ctx.arc(toX(idx), toY(idx), 5, 0, 2 * Math.PI);
-    ctx.fillStyle   = lm[idx].visibility < VIS ? C_DEFAULT : err ? C_ERR : C_OK;
-    ctx.globalAlpha = lm[idx].visibility < VIS ? 0.35 : 1.0;
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1.0;
-
-  // Head center anchor — nose (index 0), reserved for head-motion features
-  if (lm[0] && lm[0].visibility >= VIS) {
-    const hx = toX(0), hy = toY(0);
-    ctx.beginPath();
-    ctx.arc(hx, hy, 8, 0, 2 * Math.PI);
-    ctx.fillStyle   = 'rgba(255,255,255,0.22)';
-    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-    ctx.lineWidth   = 2;
-    ctx.fill();
-    ctx.stroke();
-  }
-}
-
-// ── Angle text on skeleton ─────────────────────────────────────────────────
-function drawAngleOnCanvas(lm, ex) {
-  const { dx, dy, dw, dh } = vidTransform;
-  ctx.font      = 'bold 24px system-ui';
-  ctx.textAlign = 'center';
-
-  for (const d of ex.displayAngles) {
-    if (!d.joint || lm[d.joint].visibility < VIS) continue;
-    const x   = dx + lm[d.joint].x * dw;
-    const y   = dy + lm[d.joint].y * dh - 30;
-    const txt = `${d.fn(lm)}°`;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(x - 36, y - 20, 72, 28);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(txt, x, y);
   }
 }
 
@@ -891,7 +677,8 @@ function showAnalysis() {
 function resetSession() {
   repCount  = 0; repPhase = 'neutral';
   hintCounts = {}; totalFrames = 0; errorFrames = 0;
-  smoothedLm = null; consecErrFrames = 0; displayErrSet = new Set();
+  smoother.reset(); consecErrFrames = 0; displayErrSet = new Set();
+  effects.reset();
   sessionStart = performance.now();
   repNumEl.textContent = '0';
   appState = 'RECORDING';

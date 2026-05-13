@@ -18,6 +18,8 @@ static const char* s_fw_version  = "0.3.0";
 static const char* s_board_model = "";
 static const char* s_cam_model   = "";
 static uint32_t    s_stream_count = 0;
+static uint32_t    s_ws_client_ids[DEFAULT_MAX_WS_CLIENTS] = {0};
+static size_t      s_ws_client_count = 0;
 
 // Push rate: 67 ms ≈ 15 fps
 static const uint32_t FRAME_MS    = 67;
@@ -30,6 +32,7 @@ static uint32_t s_perf_cap_sum_ms = 0;
 static uint32_t s_perf_cap_max_ms = 0;
 static uint32_t s_perf_jpeg_sum   = 0;
 static uint32_t s_perf_jpeg_max   = 0;
+static uint32_t s_perf_backpressure_skips = 0;
 static uint32_t s_perf_window_ms  = 0;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -69,11 +72,78 @@ static String mac_string() {
     return String(buf);
 }
 
+static void ws_track_client(uint32_t client_id) {
+    for (size_t i = 0; i < s_ws_client_count; i++) {
+        if (s_ws_client_ids[i] == client_id) return;
+    }
+    if (s_ws_client_count >= DEFAULT_MAX_WS_CLIENTS) return;
+    s_ws_client_ids[s_ws_client_count++] = client_id;
+}
+
+static void ws_untrack_client(uint32_t client_id) {
+    for (size_t i = 0; i < s_ws_client_count; i++) {
+        if (s_ws_client_ids[i] != client_id) continue;
+        s_ws_client_ids[i] = s_ws_client_ids[s_ws_client_count - 1];
+        s_ws_client_ids[s_ws_client_count - 1] = 0;
+        s_ws_client_count--;
+        return;
+    }
+}
+
+static bool ws_client_ready(AsyncWebSocketClient* client) {
+    return client &&
+           client->status() == WS_CONNECTED &&
+           client->queueLen() == 0 &&
+           client->canSend();
+}
+
+static bool ws_has_ready_client() {
+    bool has_ready = false;
+    for (size_t i = 0; i < s_ws_client_count;) {
+        AsyncWebSocketClient* client = ws.client(s_ws_client_ids[i]);
+        if (!client || client->status() != WS_CONNECTED) {
+            ws_untrack_client(s_ws_client_ids[i]);
+            continue;
+        }
+        if (ws_client_ready(client)) has_ready = true;
+        i++;
+    }
+    return has_ready;
+}
+
+static size_t ws_send_latest_frame(const uint8_t* buf, size_t len,
+                                   uint32_t* skipped_clients) {
+    size_t sent = 0;
+    uint32_t skipped = 0;
+
+    for (size_t i = 0; i < s_ws_client_count;) {
+        AsyncWebSocketClient* client = ws.client(s_ws_client_ids[i]);
+        if (!client || client->status() != WS_CONNECTED) {
+            ws_untrack_client(s_ws_client_ids[i]);
+            continue;
+        }
+
+        if (!ws_client_ready(client)) {
+            skipped++;
+            i++;
+            continue;
+        }
+
+        if (client->binary(buf, len)) sent++;
+        else skipped++;
+        i++;
+    }
+
+    if (skipped_clients) *skipped_clients = skipped;
+    return sent;
+}
+
 // ── WebSocket event handler ───────────────────────────────────────────────
 static void on_ws_event(AsyncWebSocket*, AsyncWebSocketClient* client,
                         AwsEventType type, void* arg, uint8_t*, size_t) {
     if (type == WS_EVT_CONNECT) {
         s_stream_count++;
+        ws_track_client(client->id());
         status_led_set(DEVICE_STATE_STREAMING);
         kl_logf("[ws] connect id=%u ip=%s clients=%u count=%lu heap_kb=%lu psram_kb=%lu\n",
                 client->id(),
@@ -83,6 +153,7 @@ static void on_ws_event(AsyncWebSocket*, AsyncWebSocketClient* client,
                 (unsigned long)(ESP.getFreeHeap() / 1024),
                 (unsigned long)(ESP.getFreePsram() / 1024));
     } else if (type == WS_EVT_DISCONNECT) {
+        ws_untrack_client(client->id());
         if (ws.count() == 0) status_led_set(DEVICE_STATE_READY);
         kl_logf("[ws] disconnect id=%u clients=%u heap_kb=%lu psram_kb=%lu\n",
                 client->id(),
@@ -253,6 +324,12 @@ void http_server_push_frame() {
     static uint32_t last_ms = 0;
     const uint32_t now = millis();
     if (now - last_ms < FRAME_MS) return;
+    if (!ws_has_ready_client()) {
+        s_perf_dropped++;
+        s_perf_backpressure_skips += ws.count();
+        last_ms = now;
+        return;
+    }
 
     const uint32_t cap_t0 = millis();
     camera_fb_t* fb = esp_camera_fb_get();
@@ -270,13 +347,19 @@ void http_server_push_frame() {
         return;
     }
 
-    // Non-blocking broadcast: binaryAll() copies data into internal queue and
-    // returns immediately. If a client's queue is full, that client's frame is
-    // silently dropped — exactly the right backpressure for live video.
-    ws.binaryAll(fb->buf, fb->len);
+    // Keep the live stream realtime: send only to clients with an empty queue.
+    // Slow clients skip this frame instead of accumulating stale JPEGs.
+    uint32_t skipped_clients = 0;
+    const size_t sent_clients = ws_send_latest_frame(fb->buf, fb->len,
+                                                     &skipped_clients);
     const size_t jpeg_len = fb->len;
-    esp_camera_fb_return(fb); // safe: binaryAll() already copied the data
+    esp_camera_fb_return(fb); // safe: binary() already copied/enqueued the data
     last_ms = now;
+    s_perf_backpressure_skips += skipped_clients;
+    if (sent_clients == 0) {
+        s_perf_dropped++;
+        return;
+    }
 
     // Accumulate perf stats
     s_perf_sent++;
@@ -291,7 +374,8 @@ void http_server_push_frame() {
         const uint32_t avg_jpeg = s_perf_sent ? s_perf_jpeg_sum   / s_perf_sent : 0;
         kl_logf("[ws] perf elapsed_ms=%lu sent=%lu dropped=%lu fps=%.1f "
                 "cap_avg_ms=%lu cap_max_ms=%lu jpeg_avg=%lu jpeg_max=%lu "
-                "clients=%u rssi=%d quality=%d heap_kb=%lu psram_kb=%lu\n",
+                "clients=%u backpressure_skips=%lu rssi=%d quality=%d "
+                "heap_kb=%lu psram_kb=%lu\n",
                 (unsigned long)elapsed,
                 (unsigned long)s_perf_sent,
                 (unsigned long)s_perf_dropped,
@@ -301,6 +385,7 @@ void http_server_push_frame() {
                 (unsigned long)avg_jpeg,
                 (unsigned long)s_perf_jpeg_max,
                 (unsigned)ws.count(),
+                (unsigned long)s_perf_backpressure_skips,
                 WiFi.RSSI(),
                 wifi_quality_percent(WiFi.RSSI()),
                 (unsigned long)(ESP.getFreeHeap() / 1024),
@@ -308,6 +393,7 @@ void http_server_push_frame() {
         s_perf_sent = s_perf_dropped = 0;
         s_perf_cap_sum_ms = s_perf_cap_max_ms = 0;
         s_perf_jpeg_sum = s_perf_jpeg_max = 0;
+        s_perf_backpressure_skips = 0;
         s_perf_window_ms = now;
     }
 }
