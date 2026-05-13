@@ -88,4 +88,4 @@ res=320x240  q=12  brightness=0  contrast=1  saturation=0
 sharpness=1  ae_level=0  vflip=0  hmirror=0
 ```
 
-> Note: OV5640 AEC (auto-exposure) and AWB (auto white balance) run continuously in hardware and are not disabled by `/cam`. Visual brightness/color will still converge over ~5–10 s after each connection. The `/cam` parameters only control static ISP offsets (contrast ratio, sharpness kernel, etc.) and JPEG compression quality.
+> Note: OV2640 AEC (auto-exposure) and AWB (auto white balance) run continuously in hardware and are not disabled by `/cam`. Visual brightness/color will still converge over ~5–10 s after each connection. The `/cam` parameters only control static ISP offsets (contrast ratio, sharpness kernel, etc.) and JPEG compression quality.

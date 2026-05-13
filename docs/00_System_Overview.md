@@ -8,9 +8,9 @@
 
 ## §1 Project Overview
 
-**One-liner**: Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B with OV5640 streams video locally → browser runs MediaPipe and local heuristic rep/form checks for real-time feedback → optional post-set DTW summary compares submitted joint-angle sequences against templates.
+**One-liner**: Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B with OV2640 streams video locally → browser runs MediaPipe and local heuristic rep/form checks for real-time feedback → optional post-set DTW summary compares submitted joint-angle sequences against templates.
 
-**Hardware baseline**: Freenove ESP32-S3-WROOM Board (N16R8), model **FNK0085 B**, camera **OV5640 160° wide-angle**. Firmware pin mapping, camera resolution/FPS tuning, and Demo Day calibration assume this hardware.
+**Hardware baseline**: Freenove ESP32-S3-WROOM Board (N16R8), model **FNK0085 B**, camera **OV2640 140° wide-angle**. Firmware pin mapping, camera resolution/FPS tuning, and Demo Day calibration assume this hardware.
 
 **Privacy core**: Raw video never leaves the local network. MediaPipe runs entirely in the browser on the local stream page. Real-time feedback is local. Only completed-rep joint-angle sequences are sent for optional DTW summary reports; the cloud never receives video frames or raw image landmarks.
 
@@ -37,7 +37,7 @@
 ```mermaid
 flowchart TB
     subgraph Local["Local network (phone hotspot)"]
-        ESP["ESP32-S3-WROOM N16R8<br/>OV5640 160° wide-angle<br/>WebSocket ws://"]
+        ESP["ESP32-S3-WROOM N16R8<br/>OV2640 140° wide-angle<br/>WebSocket ws://"]
         StreamPage["Stream page<br/>served from ESP32 SPIFFS<br/>http://fitcam-xxxxxx.local/"]
         ESP -- "binary JPEG frames<br/>ws:// WebSocket" --> StreamPage
         StreamPage -- "MediaPipe inference<br/>local heuristic checks<br/>rep counting" --> StreamPage
@@ -94,7 +94,7 @@ No relay server is needed for video. The relay approach was evaluated and reject
 
 | Item | Setup |
 |----|------|
-| Hardware | Freenove ESP32-S3-WROOM FNK0085 B + OV5640 unit #1 + demo phone |
+| Hardware | Freenove ESP32-S3-WROOM FNK0085 B + OV2640/140° unit #1 + demo phone |
 | Modes | Duolingo + Jump-in + QR pairing |
 | Experience | Visitors use the demo phone, OR scan a QR to connect their own phone (new-user flow) |
 | Focus | Full pairing + demo flow, local live feedback, optional DTW summary report |
@@ -104,7 +104,7 @@ No relay server is needed for video. The relay approach was evaluated and reject
 
 | Item | Setup |
 |----|------|
-| Hardware | Freenove ESP32-S3-WROOM FNK0085 B + OV5640 unit #2 + iPad (landscape) |
+| Hardware | Freenove ESP32-S3-WROOM FNK0085 B + OV2640/140° unit #2 + iPad (landscape) |
 | Mode | **Demo Mode** (skeleton + visual FX, no video) |
 | Experience | Visitor performs a complete set, system shows full analysis |
 | Focus | **Privacy** (no video on screen) + stable real-time heuristic feedback + DTW-backed post-set analysis |

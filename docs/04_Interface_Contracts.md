@@ -108,7 +108,7 @@ Web tries to resolve on launch; falls back to manual IP entry on failure.
   "fw_version": "0.3.0",
   "mac": "aa:bb:cc:a1:b2:c3",
   "board_model": "Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B",
-  "cam_model": "OV5640",
+  "cam_model": "OV2640 140deg wide-angle",
   "state": "ready",
   "supported_resolutions": ["160x120@20", "240x240@15", "320x240@10"],
   "default_resolution": "240x240@15",
@@ -134,7 +134,7 @@ Web tries to resolve on launch; falls back to manual IP entry on failure.
   "device_id": "a1b2c3",
   "fw_version": "0.3.0",
   "board_model": "Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B",
-  "cam_model": "OV5640",
+  "cam_model": "OV2640 140deg wide-angle",
   "camera_mode": "stream",
   "pixel_format": "JPEG",
   "frame_size": "240x240",
@@ -155,7 +155,7 @@ Web tries to resolve on launch; falls back to manual IP entry on failure.
 
 **Endpoint**: `ws://fitcam-<mac6>.local/ws`
 
-**Transport**: Binary WebSocket. Each WebSocket message is one complete JPEG frame (raw JPEG bytes, no wrapper). `ws.binaryAll()` is non-blocking — copies to internal queue immediately; ESP32 returns the camera framebuffer right after.
+**Transport**: Binary WebSocket. Each WebSocket message is one complete JPEG frame (raw JPEG bytes, no wrapper). Firmware uses a latest-frame policy: it sends only to clients whose WebSocket send queue is empty. If a client is still draining an older frame, the current frame is skipped for that client instead of being queued behind stale data.
 
 **Before connecting**, client should apply camera settings:
 
@@ -165,9 +165,9 @@ GET http://fitcam-<mac6>.local/cam?res=320x240&q=12&brightness=0&contrast=1&satu
 
 **Constraints**:
 - Each binary message = one complete JPEG; client decodes with `createImageBitmap()` or `URL.createObjectURL()`
-- Frame rate ≈ 9 FPS at QVGA JPEG (OV5640 hardware limit, `cap_avg_ms ≈ 106 ms`)
+- Frame rate target ≈ 9 FPS at QVGA JPEG on the OV2640/140° calibration hardware
 - Max JPEG size 256 KB (frames exceeding this are dropped by firmware)
-- Client must implement backpressure: only decode one frame at a time; drop intermediate frames if decode is in progress
+- Firmware and client both implement backpressure: firmware skips clients with pending send queues; client decodes one frame at a time and keeps only the newest pending frame
 - ESP32 calls `ws.cleanupClients()` every loop tick to reclaim closed-connection memory
 
 ### 2.6 End session `/end`
