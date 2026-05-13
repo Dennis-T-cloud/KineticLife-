@@ -168,7 +168,7 @@ bool camera_init() {
     // fb_count=2 in PSRAM eliminates DMA bus contention between camera and WiFi.
     // XCLK=20MHz — FNK0085B board limit; 24MHz causes tearing regardless of sensor.
     // Start at q=12; tune live via /cam?q= from debug.html.
-    return camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_QVGA, 12, 2,
+    return camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_QVGA, 25, 2,
                             CAMERA_FB_IN_PSRAM);
 }
 
