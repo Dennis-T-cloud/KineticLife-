@@ -39,21 +39,21 @@ export const EXERCISES = {
     label:    'Bodyweight Squat',
     getKeyAngle: lm => (calcAngle(lm[23], lm[25], lm[27])
                        + calcAngle(lm[24], lm[26], lm[28])) / 2,
-    restCond: a => a > 160,   // standing
-    workCond: a => a < 100,   // deep squat
+    restCond: a => a > 155,   // standing (relaxed from 160)
+    workCond: a => a < 120,   // squat depth (relaxed from 100 — half-squat counts)
     phaseLabel: { rest: 'Standing', work: 'Squatting' },
     checks: [
       {
         id: 'sq_depth_l',
         getVal: lm => calcAngle(lm[23], lm[25], lm[27]),
-        valid: (v, phase) => phase !== 'work' || v < 110,
+        valid: (v, phase) => phase !== 'work' || v < 130,
         hint: 'Squat lower on the left',
         bones: [[23,25],[25,27]],
       },
       {
         id: 'sq_depth_r',
         getVal: lm => calcAngle(lm[24], lm[26], lm[28]),
-        valid: (v, phase) => phase !== 'work' || v < 110,
+        valid: (v, phase) => phase !== 'work' || v < 130,
         hint: 'Squat lower on the right',
         bones: [[24,26],[26,28]],
       },

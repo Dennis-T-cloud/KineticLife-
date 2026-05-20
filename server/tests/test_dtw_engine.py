@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import unittest
 
 from app.ml.dtw_engine import (

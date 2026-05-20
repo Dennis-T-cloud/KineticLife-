@@ -123,6 +123,9 @@
         <div class="actions" style="grid-template-columns:1fr">
           <button class="outline" id="openDemoTable">Demo (Tablet) — ESP32 + local cam fallback</button>
         </div>
+        <div class="actions" style="grid-template-columns:1fr">
+          <button id="openKineTrak" style="background:#deff9a;color:#111;font-weight:900;">⚡ KineTrak Demo — Full UI Showcase</button>
+        </div>
         <div class="actions">
           <button class="secondary" id="refreshQr">Refresh QR</button>
         </div>
@@ -187,6 +190,9 @@
         </div>
         <div class="actions" style="grid-template-columns:1fr">
           <button class="outline" id="directDemoTable">Demo (Tablet) — ESP32 + local cam fallback</button>
+        </div>
+        <div class="actions" style="grid-template-columns:1fr">
+          <button id="directKineTrak" style="background:#deff9a;color:#111;font-weight:900;">⚡ KineTrak Demo — Full UI Showcase</button>
         </div>
       </div>
     </section>
@@ -328,6 +334,11 @@
       localStorage.setItem("kineticlife.camUrl", camUrl);
       location.href = `./demo-table.html?cam=${encodeURIComponent(camUrl)}`;
     });
+    document.getElementById("openKineTrak").addEventListener("click", () => {
+      const camUrl = normalizeCamUrl(camUrlEl.value);
+      localStorage.setItem("kineticlife.camUrl", camUrl);
+      location.href = `./kinetic-demo.html?cam=${encodeURIComponent(camUrl)}`;
+    });
     updateQr();
 
     // ── Config Networks tab ────────────────────────────────────────
@@ -433,6 +444,11 @@
       const url = normalizeCamUrl(directUrlEl.value);
       localStorage.setItem("kineticlife.camUrl", url);
       location.href = `./demo-table.html?cam=${encodeURIComponent(url)}`;
+    });
+    document.getElementById("directKineTrak").addEventListener("click", () => {
+      const url = normalizeCamUrl(directUrlEl.value);
+      localStorage.setItem("kineticlife.camUrl", url);
+      location.href = `./kinetic-demo.html?cam=${encodeURIComponent(url)}`;
     });
 
     // ── Host QR tab ────────────────────────────────────────────────

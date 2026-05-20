@@ -4,6 +4,7 @@
 #include <Preferences.h>
 
 #include "camera_init.h"
+#include "config.h"
 #include "debug_log.h"
 #include "http_server.h"
 #include "status_led.h"
@@ -294,8 +295,31 @@ void setup() {
     const unsigned long nvs_start_ms = millis();
     if (!wifi_load_credentials(&creds)) {
         kl_logf("[perf] nvs_load_ms=%lu active_session=0\n", millis() - nvs_start_ms);
-        kl_logln("[boot] no_saved_wifi action=start_qr_pairing");
-        run_pairing_mode();
+
+        // Before entering pairing mode, try known networks from config.h.
+        // This lets the device auto-connect at known venues without a QR scan.
+        bool config_connected = false;
+        for (int i = 0; i < kConfigNetworkCount; i++) {
+            kl_logf("[boot] trying config_network idx=%d ssid=\"%s\"\n",
+                    i, kConfigNetworks[i].ssid);
+            WifiCredentials cfg;
+            cfg.ssid      = kConfigNetworks[i].ssid;
+            cfg.password  = kConfigNetworks[i].password;
+            cfg.auth_type = kConfigNetworks[i].auth_type;
+            if (connect_wifi(cfg)) {
+                kl_logf("[boot] config_network_connected ssid=\"%s\" action=save_and_continue\n",
+                        kConfigNetworks[i].ssid);
+                wifi_save_credentials(cfg);
+                creds = cfg;
+                config_connected = true;
+                break;
+            }
+        }
+
+        if (!config_connected) {
+            kl_logln("[boot] no_saved_wifi action=start_qr_pairing");
+            run_pairing_mode();
+        }
     }
     kl_logf("[perf] nvs_load_ms=%lu active_session=1\n", millis() - nvs_start_ms);
     kl_logf("[session] active_session_loaded ssid=\"%s\" auth=%s\n",
@@ -317,7 +341,7 @@ void setup() {
             (unsigned long)(ESP.getFreeHeap() / 1024),
             (unsigned long)(ESP.getFreePsram() / 1024));
 
-    if (!connect_wifi(creds)) {
+    if (WiFi.status() != WL_CONNECTED && !connect_wifi(creds)) {
         kl_logln("[session] active_session_invalid action=clear_and_reboot_to_pairing");
         wifi_clear_credentials();
         delay(1000);
