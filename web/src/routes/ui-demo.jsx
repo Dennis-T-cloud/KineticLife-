@@ -596,9 +596,178 @@ const css = `
     height: 1px; background: var(--border);
     margin: 1.25rem 0;
   }
+
+  /* AUTH SCREEN */
+  .auth-wrap {
+    flex: 1; display: flex; flex-direction: column;
+    justify-content: space-between;
+    padding: 3.5rem 0 2.5rem;
+  }
+
+  .auth-logo-block {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 0.5rem;
+    padding-top: 1rem;
+  }
+
+  .auth-logo-icon {
+    width: 52px; height: 52px;
+    border: 2px solid var(--green);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 0.25rem;
+    position: relative;
+  }
+
+  .auth-logo-icon::before {
+    content: '';
+    display: block; width: 18px; height: 26px;
+    border-left: 2.5px solid var(--green);
+    border-bottom: 2.5px solid var(--green);
+    border-radius: 0 0 0 4px;
+    margin-left: 5px;
+  }
+
+  .auth-logo-text {
+    font-family: var(--font-display);
+    font-size: 2rem; letter-spacing: 0.1em;
+    color: var(--text);
+  }
+
+  .auth-logo-sub {
+    font-size: 0.65rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .auth-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.75rem 1.5rem;
+  }
+
+  .auth-card-title {
+    font-family: var(--font-display);
+    font-size: 1.9rem; letter-spacing: 0.04em;
+    color: var(--text);
+    margin-bottom: 0.3rem;
+  }
+
+  .auth-card-sub {
+    font-size: 0.8rem; color: var(--text-muted);
+    margin-bottom: 1.5rem;
+  }
+
+  .auth-field-label {
+    font-size: 0.68rem; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--green-dim); margin-bottom: 0.5rem;
+    display: block;
+  }
+
+  .auth-footer-stats {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 0; border-top: 1px solid var(--border);
+    padding-top: 1.5rem;
+    margin-top: 0.25rem;
+  }
+
+  .auth-stat {
+    text-align: center;
+    padding: 0 0.5rem;
+    border-right: 1px solid var(--border);
+  }
+
+  .auth-stat:last-child { border-right: none; }
+
+  .auth-stat-val {
+    font-family: var(--font-display);
+    font-size: 1.6rem; color: var(--text);
+    letter-spacing: 0.04em;
+  }
+
+  .auth-stat-label {
+    font-size: 0.65rem; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-top: 1px;
+  }
+
+  .auth-powered {
+    font-size: 0.65rem; color: var(--text-muted);
+    text-align: center; opacity: 0.5;
+    letter-spacing: 0.06em;
+  }
+
+  .input-field.auth-input {
+    font-size: 1rem; font-weight: 500;
+    padding: 0.95rem 1rem;
+    margin-bottom: 1rem;
+    color: var(--text);
+  }
 `;
 
-function WelcomeScreen({ onStart }) {
+function AuthScreen({ onEnter }) {
+  const [name, setName] = useState("");
+  const trimmed = name.trim();
+
+  function handleSubmit() {
+    if (trimmed) onEnter(trimmed);
+  }
+
+  return (
+    <div className="screen">
+      <div className="auth-wrap">
+        <div className="auth-logo-block">
+          <div className="auth-logo-icon" />
+          <span className="auth-logo-text">KineticLife</span>
+          <span className="auth-logo-sub">Edge AI · Fitness Intelligence</span>
+        </div>
+
+        <div className="auth-card">
+          <h2 className="auth-card-title">Welcome back</h2>
+          <p className="auth-card-sub">Enter your athlete ID to begin</p>
+          <label className="auth-field-label" htmlFor="athlete-id">Athlete ID</label>
+          <input
+            id="athlete-id"
+            className="input-field auth-input"
+            placeholder="Your name"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleSubmit()}
+            autoFocus
+          />
+          <button
+            className="btn-primary"
+            disabled={!trimmed}
+            onClick={handleSubmit}
+          >
+            Enter Session →
+          </button>
+        </div>
+
+        <div>
+          <div className="auth-footer-stats">
+            <div className="auth-stat">
+              <div className="auth-stat-val">47</div>
+              <div className="auth-stat-label">Sessions</div>
+            </div>
+            <div className="auth-stat">
+              <div className="auth-stat-val">92%</div>
+              <div className="auth-stat-label">Avg Form</div>
+            </div>
+            <div className="auth-stat">
+              <div className="auth-stat-val">12</div>
+              <div className="auth-stat-label">Day Streak</div>
+            </div>
+          </div>
+          <div style={{ height: "1rem" }} />
+          <p className="auth-powered">Powered by Social Squat Wrist AI · On-Device Inference</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WelcomeScreen({ onStart, athlete }) {
   return (
     <div className="screen">
       <div className="welcome-wrap">
@@ -609,7 +778,7 @@ function WelcomeScreen({ onStart }) {
           </div>
         </div>
         <div className="welcome-hero">
-          <p className="welcome-eyebrow">Real-time form analysis</p>
+          <p className="welcome-eyebrow">Welcome back, {athlete}</p>
           <h1 className="welcome-heading">
             LIFT<br />
             <span>SMARTER.</span>
@@ -896,7 +1065,8 @@ function AnalysisScreen({ sessionData, onReset }) {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState("welcome");
+  const [screen, setScreen] = useState("auth");
+  const [athlete, setAthlete] = useState(null);
   const [config, setConfig] = useState(null);
   const [sessionData, setSessionData] = useState(null);
 
@@ -907,8 +1077,11 @@ export default function App() {
         <div className="grid-bg" />
         <div className="scanline" />
 
+        {screen === "auth" && (
+          <AuthScreen onEnter={name => { setAthlete(name); setScreen("welcome"); }} />
+        )}
         {screen === "welcome" && (
-          <WelcomeScreen onStart={() => setScreen("connect")} />
+          <WelcomeScreen athlete={athlete} onStart={() => setScreen("connect")} />
         )}
         {screen === "connect" && (
           <ConnectScreen
