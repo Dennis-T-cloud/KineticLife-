@@ -346,6 +346,27 @@
   <!-- Dark gradient overlay -->
   <div class="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/70 pointer-events-none" style="z-index:10;"></div>
 
+  <!-- BLE connect overlay (shown when sourceMode=ble and not yet connected) -->
+  <div id="ble-overlay" class="absolute inset-0 flex items-center justify-center" style="z-index:50; background:rgba(0,0,0,0.88); display:none;">
+    <div class="bg-gray-900 rounded-2xl p-8 border border-gray-800 text-center w-full max-w-xs mx-6">
+      <div class="w-12 h-12 rounded-2xl lime-bg flex items-center justify-center mx-auto mb-4">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path d="M6 8l5 4-5 4M13 8l5 4-5 4" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h3 class="text-lg font-bold text-white mb-2">Connect BLE Camera</h3>
+      <p class="text-gray-400 text-sm mb-6 leading-relaxed">Make sure the ESP32 is in BLE mode.<br>Use pair.html → Direct Connect → Switch to BLE Mode if needed.</p>
+      <button id="ble-connect-btn"
+        class="w-full lime-bg text-gray-900 font-bold py-3 rounded-xl text-sm hover:brightness-105 active:scale-95 transition-all duration-150">
+        Connect BLE Camera
+      </button>
+      <button onclick="goTo('view-dashboard')"
+        class="w-full mt-3 text-gray-500 text-sm py-2 font-medium">
+        ← Back to Dashboard
+      </button>
+    </div>
+  </div>
+
   <!-- Phase pill (centre) -->
   <div id="phase-pill">Ready</div>
 
@@ -400,6 +421,12 @@
       <div class="mt-2 pt-2 border-t border-white/10">
         <div class="text-xs text-gray-500 mb-1">MediaPipe</div>
         <div id="mp-status" class="text-xs text-gray-600">Loading…</div>
+      </div>
+      <div id="btn-switch-wifi-wrap" class="mt-2 pt-2 border-t border-white/10" style="display:none;">
+        <button id="btn-switch-wifi"
+          class="w-full text-xs text-gray-400 bg-gray-800 hover:bg-gray-700 rounded-lg px-3 py-1.5 transition-colors">
+          → Switch to WiFi mode
+        </button>
       </div>
     </div>
   </div>
@@ -833,10 +860,13 @@ import { createFeedbackEffects } from "./lib/feedback-effects.js";
 // ── Config ─────────────────────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
 const camUrl  = params.get('cam') || localStorage.getItem('kineticlife.camUrl') || '';
+const sourceMode = params.get('source') === 'ble' ? 'ble' : camUrl ? 'wifi' : 'none';
 
 // Show cam URL on login screen
 const loginNote = document.getElementById('cam-status-login');
-if (loginNote) loginNote.textContent = camUrl ? `ESP32: ${camUrl}` : 'No ESP32 URL — add ?cam= to URL or set via pair.html';
+if (loginNote) loginNote.textContent =
+  sourceMode === 'ble' ? 'BLE mode — connect camera after entering session' :
+  camUrl ? `ESP32: ${camUrl}` : 'No ESP32 URL — add ?cam= to URL or set via pair.html';
 
 // ── Session state ───────────────────────────────────────────────────────
 let currentExKey    = 'squat';
@@ -870,6 +900,14 @@ let retryTimer      = null;
 let mpReady         = false;
 let wsReady         = false;
 
+// ── BLE state ────────────────────────────────────────────────────────────
+const BLE_SERVICE_UUID = '9b8f0001-6f4d-4d4f-9c9a-4b4c49464501';
+const BLE_TX_UUID      = '9b8f0002-6f4d-4d4f-9c9a-4b4c49464501';
+const BLE_RX_UUID      = '9b8f0003-6f4d-4d4f-9c9a-4b4c49464501';
+let bleDevice = null;
+let bleRx     = null;
+let bleFrame  = { expected: 0, received: 0, chunks: [], id: 0 };
+
 // ── Canvas / inference ──────────────────────────────────────────────────
 const liveCanvas  = document.getElementById('live-canvas');
 const ctx         = liveCanvas.getContext('2d');
@@ -890,6 +928,10 @@ const phasePillEl   = document.getElementById('phase-pill');
 const hintPanelEl   = document.getElementById('hint-panel');
 const sessionStatusEl = document.getElementById('session-status');
 const camPlaceholder  = document.getElementById('cam-placeholder');
+const bleOverlayEl    = document.getElementById('ble-overlay');
+const bleConnectBtn   = document.getElementById('ble-connect-btn');
+const switchWifiWrap  = document.getElementById('btn-switch-wifi-wrap');
+const switchWifiBtn   = document.getElementById('btn-switch-wifi');
 
 const REPS_PER_SET  = 8;
 const TOTAL_SETS    = 3;
@@ -957,6 +999,93 @@ function openWs() {
   };
   sock.onerror   = () => setEspStatus('WebSocket error', false);
 }
+
+// ── BLE helpers ─────────────────────────────────────────────────────────
+async function bleWrite(text) {
+  if (!bleRx) throw new Error('BLE not connected');
+  const data = new TextEncoder().encode(text);
+  if (bleRx.writeValueWithoutResponse) await bleRx.writeValueWithoutResponse(data);
+  else await bleRx.writeValue(data);
+}
+
+function handleBleCameraPacket(bytes) {
+  // Header packet: "CAM:<id>:<total_bytes>:..."
+  if (bytes.length >= 4 && bytes[0] === 67 && bytes[1] === 65 && bytes[2] === 77 && bytes[3] === 58) {
+    const parts = new TextDecoder().decode(bytes).split(':');
+    bleFrame.expected = Number(parts[2]) || 0;
+    bleFrame.received = 0;
+    bleFrame.chunks   = [];
+    bleFrame.id       = Number(parts[1]) || 0;
+    return;
+  }
+  if (!bleFrame.expected) return;
+  const needed = bleFrame.expected - bleFrame.received;
+  const chunk  = bytes.length > needed ? bytes.slice(0, needed) : bytes.slice();
+  bleFrame.chunks.push(chunk);
+  bleFrame.received += chunk.byteLength;
+  if (bleFrame.received < bleFrame.expected) return;
+
+  const blob = new Blob(bleFrame.chunks, { type: 'image/jpeg' });
+  createImageBitmap(blob).then(bmp => {
+    if (latestBitmap) latestBitmap.close();
+    latestBitmap = bmp;
+    if (!wsReady) {
+      wsReady = true;
+      if (camPlaceholder) camPlaceholder.style.opacity = '0';
+      setTimeout(() => { if (camPlaceholder) camPlaceholder.style.display = 'none'; }, 600);
+    }
+  }).catch(() => {});
+  bleFrame.expected = 0; bleFrame.received = 0; bleFrame.chunks = [];
+}
+
+async function connectBleCamera() {
+  if (!navigator.bluetooth) {
+    setEspStatus('Web Bluetooth unavailable', false);
+    return;
+  }
+  setEspStatus('Opening BLE chooser…', false);
+  try {
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'KineticLife-BLE' }],
+      optionalServices: [BLE_SERVICE_UUID],
+    });
+    bleDevice.addEventListener('gattserverdisconnected', () => {
+      bleRx = null;
+      setEspStatus('BLE disconnected', false);
+      if (bleOverlayEl) bleOverlayEl.style.display = 'flex';
+      if (switchWifiWrap) switchWifiWrap.style.display = 'none';
+    });
+
+    const server  = await bleDevice.gatt.connect();
+    const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+    const tx  = await service.getCharacteristic(BLE_TX_UUID);
+    bleRx     = await service.getCharacteristic(BLE_RX_UUID);
+    await tx.startNotifications();
+    tx.addEventListener('characteristicvaluechanged', (evt) => {
+      const v = evt.target.value;
+      handleBleCameraPacket(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
+    });
+
+    setEspStatus('BLE connected · live', true);
+    if (bleOverlayEl) bleOverlayEl.style.display = 'none';
+    if (switchWifiWrap) switchWifiWrap.style.display = '';
+    await bleWrite('size=180');
+    await bleWrite('gap=12');
+    await bleWrite('cam=0');
+  } catch (e) {
+    setEspStatus(`BLE error: ${e.message || e}`, false);
+  }
+}
+
+if (bleConnectBtn) bleConnectBtn.addEventListener('click', connectBleCamera);
+if (switchWifiBtn) switchWifiBtn.addEventListener('click', async () => {
+  try {
+    setEspStatus('Switching to WiFi… (rebooting)', false);
+    await bleWrite('mode=wifi');
+  } catch (e) {
+    setEspStatus(`Switch error: ${e.message || e}`, false);
+  }
+});
 
 // ── Main tick ───────────────────────────────────────────────────────────
 function tick(now) {
@@ -1135,12 +1264,26 @@ window.initRealSession = async function() {
   effects.reset();
   appState = 'RECORDING';
 
-  // Reset placeholder
+  // Reset placeholder and BLE frame buffer
   if (camPlaceholder) { camPlaceholder.style.opacity = '1'; camPlaceholder.style.display = ''; }
   wsReady = false;
+  bleFrame = { expected: 0, received: 0, chunks: [], id: 0 };
 
-  // Apply cam settings then open WS
-  if (camUrl) {
+  // Connect to IoT device
+  if (sourceMode === 'ble') {
+    if (bleRx) {
+      // Already connected from a previous exercise — restart stream
+      if (bleOverlayEl) bleOverlayEl.style.display = 'none';
+      if (switchWifiWrap) switchWifiWrap.style.display = '';
+      setEspStatus('BLE connected · live', true);
+      await bleWrite('cam=0').catch(() => {});
+    } else {
+      // First time — show connect overlay, user clicks the button
+      if (bleOverlayEl) bleOverlayEl.style.display = 'flex';
+      if (switchWifiWrap) switchWifiWrap.style.display = 'none';
+      if (sessionStatusEl) sessionStatusEl.textContent = 'Click "Connect BLE Camera" to begin…';
+    }
+  } else if (camUrl) {
     setEspStatus('Applying camera settings…', false);
     if (sessionStatusEl) sessionStatusEl.textContent = `Connecting to ${camUrl}…`;
     await fetch(
@@ -1174,6 +1317,7 @@ window.stopRealSession = function() {
   appState = 'DONE';
   if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  if (sourceMode === 'ble' && bleRx) bleWrite('stop').catch(() => {});
 };
 
 window.getSessionData = function() {
@@ -1193,7 +1337,7 @@ window.getSessionData = function() {
 requestAnimationFrame(tick);
 
 // Pre-load MediaPipe in background on page load
-if (camUrl) {
+if (camUrl || sourceMode === 'ble') {
   createPoseLandmarkerRuntime().then(runtime => {
     landmarker = runtime.landmarker;
     mpReady    = true;
