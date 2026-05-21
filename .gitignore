@@ -83,3 +83,6 @@ data/templates/*
 data/recordings/
 *.sqlite
 *.db
+
+web/design.txt
+web/designHANDOFF.txt

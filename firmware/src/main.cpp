@@ -24,6 +24,9 @@
 #ifndef KINETICLIFE_BLE_CAMERA_BOOT_DELAY_MS
 #define KINETICLIFE_BLE_CAMERA_BOOT_DELAY_MS 6000
 #endif
+#ifndef KINETICLIFE_DEFAULT_MODE
+#define KINETICLIFE_DEFAULT_MODE "ble"
+#endif
 
 static const char* RESET_NVS_NAMESPACE = "reset";
 static const char* RESET_KEY_ARMED = "armed";
@@ -82,8 +85,13 @@ static void reset_clear_boot_check() {
         prefs.remove(RESET_KEY_ARMED);
         prefs.end();
         s_reset_clear_armed = false;
-        kl_logln("[reset] double_reset_detected action=clear_wifi_credentials");
+        kl_logln("[reset] double_reset_detected action=clear_wifi_credentials_and_switch_to_ble");
         wifi_clear_credentials();
+        Preferences mode_prefs;
+        if (mode_prefs.begin(MODE_NVS_NS, false)) {
+            mode_prefs.putString(MODE_NVS_KEY, KINETICLIFE_DEFAULT_MODE);
+            mode_prefs.end();
+        }
         return;
     }
 
@@ -287,13 +295,21 @@ void setup() {
     esp_log_level_set("camera", ESP_LOG_NONE);
     esp_log_level_set("sccb", ESP_LOG_WARN);
     status_led_begin();
+    // Must run before NVS read: double-reset may write "ble" to kl_mode/mode.
+    reset_clear_boot_check();
     {
         Preferences p;
-        p.begin(MODE_NVS_NS, true);
-        s_ble_mode = (p.getString(MODE_NVS_KEY, "wifi") == "ble");
-        p.end();
+        // Default to BLE; only override if NVS explicitly stores "wifi".
+        // getString() returns "" (not the supplied default) on some Arduino-ESP32
+        // versions when the namespace was never written (e.g. after flash erase),
+        // so we guard explicitly instead of relying on the default argument.
+        s_ble_mode = true;
+        if (p.begin(MODE_NVS_NS, true)) {
+            const String stored = p.getString(MODE_NVS_KEY, "");
+            if (stored == "wifi") s_ble_mode = false;
+            p.end();
+        }
     }
-    reset_clear_boot_check();
 
     if (s_ble_mode) {
         kl_logf("[ble_cam] boot_camera_wait_ms=%lu reason=ov2640_power_stabilize\n",
