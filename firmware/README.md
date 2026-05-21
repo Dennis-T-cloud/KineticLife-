@@ -93,6 +93,42 @@ Firmware uses **ESPAsyncWebServer + AsyncWebSocket** (non-blocking). Transport:
 
 REST endpoints: `GET /hello`, `GET /status`, `GET /capture`, `GET|POST /cam`, `GET|POST /end`
 
+## Optional BLE Throughput Test
+
+ESP32-S3 supports BLE, not Bluetooth Classic. The BLE code is isolated behind a separate PlatformIO environment so the normal WiFi/AP camera firmware stays unchanged at runtime. The BLE test firmware waits briefly for OV2640 power stabilization, initializes the camera in low-resolution snapshot mode, verifies one captured frame, then advertises the GATT service. It intentionally skips WiFi/AP, HTTP, and WebSocket startup.
+
+```bash
+pio run
+pio run -e freenove_esp32s3_wroom_n16r8_ble_test --target upload
+pio device monitor
+```
+
+When flashed with the BLE test environment, the device advertises as:
+
+```text
+KineticLife-BLE-<mac6>
+```
+
+GATT contract:
+
+| Item | UUID | Direction |
+| ---- | ---- | --------- |
+| Service | `9b8f0001-6f4d-4d4f-9c9a-4b4c49464501` | discover |
+| TX notify | `9b8f0002-6f4d-4d4f-9c9a-4b4c49464501` | ESP32 -> phone |
+| RX control | `9b8f0003-6f4d-4d4f-9c9a-4b4c49464501` | phone -> ESP32 |
+
+Control commands written as UTF-8 text:
+
+```text
+size=<8..180>
+gap=<4..100>
+start=<1000..60000>
+cam=<1000..60000>
+stop
+```
+
+`start` sends synthetic notification payloads. `cam` initializes the OV2640 at 160x120 JPEG quality 30, then sends repeated JPEG snapshots as `CAM:<frame_id>:<bytes>:<chunks>:<size>:<q>` metadata followed by raw JPEG chunks. Open `web/pair.html` -> **BLE Test** to run the browser-side counter and camera snapshot preview, or open `web/demo-table.html?source=ble` for the experimental BLE -> JPEG decode -> MediaPipe -> exercise-feedback path. Web Bluetooth generally works on Android Chrome from a secure context (HTTPS or localhost). iOS Safari does not expose Web Bluetooth; use a native BLE app such as nRF Connect for phone-side smoke tests.
+
 ## Performance Log Guide
 
 Useful serial log lines:

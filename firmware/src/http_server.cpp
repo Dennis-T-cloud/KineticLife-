@@ -6,6 +6,7 @@
 #include <esp_mac.h>
 #include <Arduino.h>
 #include <WiFi.h>
+#include <Preferences.h>
 #include "camera_init.h"
 #include "debug_log.h"
 #include "status_led.h"
@@ -279,6 +280,23 @@ static void handle_end_session(AsyncWebServerRequest* req) {
     ESP.restart();
 }
 
+static void handle_mode_switch(AsyncWebServerRequest* req) {
+    String m = req->hasParam("set") ? req->getParam("set")->value() : "";
+    if (m != "wifi" && m != "ble") {
+        req->send(400, "application/json", "{\"ok\":false,\"error\":\"use ?set=wifi or ?set=ble\"}");
+        return;
+    }
+    Preferences p;
+    p.begin("kl_mode", false);
+    p.putString("mode", m);
+    p.end();
+    kl_logf("[mode] switching_to=%s action=reboot\n", m.c_str());
+    req->send(200, "application/json",
+              String("{\"ok\":true,\"switching_to\":\"") + m + "\"}");
+    delay(300);
+    ESP.restart();
+}
+
 // ── Public API ────────────────────────────────────────────────────────────
 void http_server_start(const char* fw_version, const char* board_model,
                        const char* cam_model) {
@@ -302,6 +320,7 @@ void http_server_start(const char* fw_version, const char* board_model,
     server.on("/capture", HTTP_GET,              handle_capture);
     server.on("/cam",     HTTP_GET | HTTP_POST,  handle_cam_config);
     server.on("/end",     HTTP_GET | HTTP_POST,  handle_end_session);
+    server.on("/mode",    HTTP_GET | HTTP_POST,  handle_mode_switch);
 
     // OPTIONS preflight + 404
     server.onNotFound([](AsyncWebServerRequest* req) {

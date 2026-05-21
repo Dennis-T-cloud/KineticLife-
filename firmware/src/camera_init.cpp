@@ -31,6 +31,7 @@ static int         s_jpeg_quality   = -1;
 static const char* frame_size_name(framesize_t frame_size) {
     switch (frame_size) {
         case FRAMESIZE_QQVGA:   return "160x120";
+        case FRAMESIZE_HQVGA:   return "240x176";
         case FRAMESIZE_240X240: return "240x240";
         case FRAMESIZE_QVGA:    return "320x240";
         case FRAMESIZE_VGA:     return "640x480";
@@ -123,6 +124,7 @@ static bool camera_init_with(pixformat_t pixel_format, framesize_t frame_size,
 bool camera_set_framesize(const char* size_str) {
     framesize_t fs = FRAMESIZE_INVALID;
     if      (strcmp(size_str, "160x120") == 0) fs = FRAMESIZE_QQVGA;
+    else if (strcmp(size_str, "240x176") == 0) fs = FRAMESIZE_HQVGA;
     else if (strcmp(size_str, "240x240") == 0) fs = FRAMESIZE_240X240;
     else if (strcmp(size_str, "320x240") == 0) fs = FRAMESIZE_QVGA;
     else if (strcmp(size_str, "640x480") == 0) fs = FRAMESIZE_VGA;
@@ -163,6 +165,21 @@ bool camera_set_quality(int q) {
     return true;
 }
 
+bool camera_set_sensor_param(const char* name, int val) {
+    sensor_t* s = esp_camera_sensor_get();
+    if (!s) return false;
+    if      (strcmp(name, "brightness") == 0) s->set_brightness(s, val);
+    else if (strcmp(name, "contrast")   == 0) s->set_contrast(s, val);
+    else if (strcmp(name, "saturation") == 0) s->set_saturation(s, val);
+    else if (strcmp(name, "sharpness")  == 0) s->set_sharpness(s, val);
+    else if (strcmp(name, "ae_level")   == 0) s->set_ae_level(s, val);
+    else if (strcmp(name, "vflip")      == 0) s->set_vflip(s, val);
+    else if (strcmp(name, "hmirror")    == 0) s->set_hmirror(s, val);
+    else return false;
+    kl_logf("[camera] set_sensor_param name=%s val=%d\n", name, val);
+    return true;
+}
+
 bool camera_init() {
     s_camera_mode = "stream";
     // fb_count=2 in PSRAM eliminates DMA bus contention between camera and WiFi.
@@ -172,10 +189,59 @@ bool camera_init() {
                             CAMERA_FB_IN_PSRAM);
 }
 
+bool camera_init_ble() {
+    s_camera_mode = "ble_snapshot";
+    bool ok = camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_HQVGA, 25, 1,
+                               CAMERA_FB_IN_PSRAM);
+    if (ok) {
+        sensor_t* s = esp_camera_sensor_get();
+        if (s) {
+            s->set_vflip(s, 1);
+            s->set_sharpness(s, 10);
+        }
+    }
+    return ok;
+}
+
 bool camera_init_qr() {
     s_camera_mode = "pairing";
     return camera_init_with(PIXFORMAT_GRAYSCALE, FRAMESIZE_QVGA, 12, 1,
                             CAMERA_FB_IN_DRAM);
+}
+
+void camera_deinit() {
+    esp_camera_deinit();
+    s_camera_mode    = "not_initialized";
+    s_frame_size     = FRAMESIZE_INVALID;
+    s_init_frame_size = FRAMESIZE_INVALID;
+    s_pixel_format   = PIXFORMAT_RGB565;
+    s_jpeg_quality   = -1;
+}
+
+bool camera_capture_self_test(uint8_t attempts, uint32_t retry_delay_ms) {
+    for (uint8_t i = 0; i < attempts; i++) {
+        const uint32_t t0 = millis();
+        camera_fb_t* fb = esp_camera_fb_get();
+        const uint32_t cap_ms = millis() - t0;
+        if (fb) {
+            const size_t len = fb->len;
+            const pixformat_t fmt = fb->format;
+            esp_camera_fb_return(fb);
+            kl_logf("[camera] self_test ok attempt=%u cap_ms=%lu bytes=%lu format=%s frame=%s q=%d\n",
+                    (unsigned)(i + 1),
+                    (unsigned long)cap_ms,
+                    (unsigned long)len,
+                    pixel_format_name(fmt),
+                    camera_frame_size_name(),
+                    camera_jpeg_quality());
+            return true;
+        }
+        kl_logf("[camera] self_test failed attempt=%u cap_ms=%lu action=retry\n",
+                (unsigned)(i + 1),
+                (unsigned long)cap_ms);
+        if (i + 1 < attempts) delay(retry_delay_ms);
+    }
+    return false;
 }
 
 const char* camera_mode_name() {
