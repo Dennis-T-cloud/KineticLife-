@@ -55,15 +55,13 @@ const MUSCLE_INTENSITY_BY_EXERCISE = {
 
 const MUSCLE_DECAY_PER_DAY = 0.1;
 
-const PLAN_MUSCLES = [
-  "chest", "upper_back", "lower_back", "biceps", "triceps", "core", "quads", "hamstrings", "cardio", "shoulders",
+const PLAN_PRESET = [
+  { exerciseKey: "squat", exercise: "Bodyweight Squat", sets: 3, targetReps: 10 },
+  { exerciseKey: "lateral_raise", exercise: "Lateral Raise", sets: 2, targetReps: 12 },
+  { exerciseKey: "bicep_curl", exercise: "Dumbbell Curl", sets: 2, targetReps: 12 },
 ];
 
-const PLAN_PRESET = [
-  { exercise: "Bodyweight Squat", sets: 3, targetReps: 10 },
-  { exercise: "Lateral Raise", sets: 2, targetReps: 12 },
-  { exercise: "Dumbbell Curl", sets: 2, targetReps: 12 },
-];
+const BACK_VIEW_MUSCLES = new Set(["upper_back", "lower_back", "triceps", "hamstrings", "rear_calves"]);
 
 function makeDefaultProfile(name) {
   return {
@@ -232,6 +230,11 @@ function recommendedExerciseForMode(mode) {
   if (mode === "plan") return exerciseById("lateral_raise");
   if (mode === "home") return exerciseById("squat");
   return exerciseById("squat");
+}
+
+function defaultBodyViewForMuscles(ids) {
+  const list = Array.isArray(ids) ? ids : Object.keys(ids ?? {});
+  return list.some(id => BACK_VIEW_MUSCLES.has(id)) ? "back" : "front";
 }
 
 const INITIAL_PROFILE = readAthleteProfile();
@@ -469,6 +472,9 @@ const css = `
   .body-map-label { fill: rgba(200,230,180,0.42); font: 700 9px system-ui, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; pointer-events: none; }
   .body-map-legend { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.55rem; color: var(--text-muted); font-size: 0.66rem; }
   .legend-track { flex: 1; height: 5px; align-self: center; border-radius: 999px; background: linear-gradient(90deg, rgba(127,255,0,0.08), rgba(127,255,0,0.72)); }
+  .focus-summary { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.75rem; }
+  .focus-pill { border: 1px solid var(--border); border-radius: 999px; padding: 0.32rem 0.58rem; color: var(--text-muted); font-size: 0.68rem; background: rgba(255,255,255,0.025); }
+  .focus-pill.active { color: var(--green); border-color: var(--border-bright); background: rgba(127,255,0,0.07); }
   .heatmap-detail { margin-top: 0.8rem; padding-top: 0.75rem; border-top: 1px solid var(--border); display: grid; grid-template-columns: 1fr auto; gap: 0.45rem 0.8rem; align-items: center; animation: fadeInUp 0.22s ease; }
   .heatmap-detail-title { color: var(--text); font-size: 0.84rem; font-weight: 700; }
   .heatmap-detail-value { font-family: var(--font-display); color: var(--green); font-size: 1.45rem; line-height: 1; }
@@ -487,6 +493,8 @@ const css = `
   .muscle-chip.active { border-color: var(--green); color: var(--green); background: rgba(127,255,0,0.07); }
   .plan-row { display: grid; grid-template-columns: 1fr auto; gap: 0.35rem 0.75rem; align-items: center; padding: 0.72rem 0; border-bottom: 1px solid var(--border); }
   .plan-row:last-child { border-bottom: none; }
+  .plan-row-btn { width: 100%; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background 0.16s ease; }
+  .plan-row-btn.active { background: rgba(127,255,0,0.055); margin: 0 -0.45rem; padding-left: 0.45rem; padding-right: 0.45rem; border-radius: 8px; border-bottom-color: transparent; }
   .plan-name { color: var(--text); font-size: 0.88rem; }
   .plan-meta { color: var(--text-muted); font-size: 0.72rem; }
   .home-workout-screen { background: #efffdd; color: #13220f; }
@@ -1080,12 +1088,28 @@ function AutoClassifyScreen({ connectionStatus, statusText, deviceSettings, onCa
 
 function PlanConfigScreen({ connectionStatus, statusText, deviceSettings, onBack, onBegin }) {
   const [selected, setSelected] = useState(["quads", "shoulders"]);
+  const [previewExerciseKey, setPreviewExerciseKey] = useState("lateral_raise");
+  const [bodyView, setBodyView] = useState(defaultBodyViewForMuscles(MUSCLE_INTENSITY_BY_EXERCISE.lateral_raise));
   const hasVideoLink = connectionStatus === "wifi_only" || connectionStatus === "dual_active" || connectionStatus === "ble_only";
+  const previewTargets = MUSCLE_INTENSITY_BY_EXERCISE[previewExerciseKey] ?? {};
+  const selectedExercise = exerciseById(previewExerciseKey);
+  const planMuscleRows = MUSCLE_DEFS.map(muscle => {
+    const targetWeight = Number(previewTargets[muscle.id]) || 0;
+    return {
+      ...muscle,
+      value: selected.includes(muscle.id) ? Math.max(0.74, targetWeight * 3) : Math.min(0.72, targetWeight * 3),
+    };
+  });
 
   function toggleMuscle(muscle) {
     setSelected(prev => prev.includes(muscle)
       ? prev.filter(item => item !== muscle)
       : [...prev, muscle]);
+  }
+
+  function choosePreviewExercise(exerciseKey) {
+    setPreviewExerciseKey(exerciseKey);
+    setBodyView(defaultBodyViewForMuscles(MUSCLE_INTENSITY_BY_EXERCISE[exerciseKey]));
   }
 
   return (
@@ -1103,33 +1127,69 @@ function PlanConfigScreen({ connectionStatus, statusText, deviceSettings, onBack
         <div className="profile-card">
           <p className="profile-card-title">AI recommended plan</p>
           {PLAN_PRESET.map(item => (
-            <div className="plan-row" key={item.exercise}>
+            <button
+              className={`plan-row plan-row-btn${previewExerciseKey === item.exerciseKey ? " active" : ""}`}
+              key={item.exercise}
+              onClick={() => choosePreviewExercise(item.exerciseKey)}
+            >
               <span className="plan-name">{item.exercise}</span>
               <span className="plan-meta">{item.sets} sets · {item.targetReps} reps</span>
-            </div>
+            </button>
           ))}
         </div>
-        <div>
-          <p className="section-label">Customize focus</p>
-          <div className="muscle-chip-grid">
-            {PLAN_MUSCLES.map(muscle => (
+        <div className="profile-card heatmap-card">
+          <div className="heatmap-head">
+            <div>
+              <p className="profile-card-title" style={{ marginBottom: "0.35rem" }}>Target muscles</p>
+              <p className="heatmap-caption">
+                Showing {selectedExercise.label}. Tap muscle regions to customize your plan focus.
+              </p>
+            </div>
+            <div className="heatmap-summary">
+              <div className="heatmap-summary-value">{selected.length}</div>
+              <div className="heatmap-summary-label">Focus</div>
+            </div>
+          </div>
+          <div className="body-view-toggle" aria-label="Plan muscle map view">
+            <button
+              className={`body-view-btn${bodyView === "front" ? " active" : ""}`}
+              onClick={() => setBodyView("front")}
+            >
+              Front
+            </button>
+            <button
+              className={`body-view-btn${bodyView === "back" ? " active" : ""}`}
+              onClick={() => setBodyView("back")}
+            >
+              Back
+            </button>
+          </div>
+          <MuscleBodyMap
+            view={bodyView}
+            muscleRows={planMuscleRows}
+            selectedIds={selected}
+            onSelect={toggleMuscle}
+            legendLabels={["Low", "Primary"]}
+          />
+          <div className="focus-summary">
+            {MUSCLE_DEFS.map(muscle => (
               <button
-                key={muscle}
-                className={`muscle-chip${selected.includes(muscle) ? " active" : ""}`}
-                onClick={() => toggleMuscle(muscle)}
+                key={muscle.id}
+                className={`focus-pill${selected.includes(muscle.id) ? " active" : ""}`}
+                onClick={() => toggleMuscle(muscle.id)}
               >
-                {muscle}
+                {muscle.label}
               </button>
             ))}
           </div>
         </div>
         <div className="spacer" />
-        <button
-          className="btn-primary"
-          disabled={!hasVideoLink}
-          onClick={() => onBegin(recommendedExerciseForMode("plan"))}
-        >
-          One-Tap Start →
+          <button
+            className="btn-primary"
+            disabled={!hasVideoLink}
+            onClick={() => onBegin(selectedExercise)}
+          >
+            One-Tap Start →
         </button>
       </div>
     </div>
@@ -1211,10 +1271,10 @@ function heatBand(value) {
   return "Rested";
 }
 
-function MuscleShape({ id, d, marker, row, selectedId, onSelect, recentCutoff }) {
+function MuscleShape({ id, d, marker, row, selectedId, selectedIds = [], onSelect, recentCutoff }) {
   const value = row?.value ?? 0;
-  const isActive = selectedId === id;
-  const isRecent = row?.lastTrainedAt && row.lastTrainedAt > recentCutoff;
+  const isActive = selectedId === id || selectedIds.includes(id);
+  const isRecent = recentCutoff && row?.lastTrainedAt && row.lastTrainedAt > recentCutoff;
   const fill = `rgba(127,255,0,${0.12 + value * 0.72})`;
   const stroke = isActive ? "var(--green)" : `rgba(127,255,0,${0.16 + value * 0.32})`;
 
@@ -1248,7 +1308,15 @@ function MuscleShape({ id, d, marker, row, selectedId, onSelect, recentCutoff })
   );
 }
 
-function MuscleBodyMap({ view, muscleRows, selectedId, onSelect, recentCutoff }) {
+function MuscleBodyMap({
+  view,
+  muscleRows,
+  selectedId = null,
+  selectedIds = [],
+  onSelect,
+  recentCutoff = null,
+  legendLabels = ["Rested", "Loaded"],
+}) {
   const rows = Object.fromEntries(muscleRows.map(item => [item.id, item]));
   const front = view === "front";
   const shapes = front
@@ -1285,6 +1353,7 @@ function MuscleBodyMap({ view, muscleRows, selectedId, onSelect, recentCutoff })
             marker={shape.marker}
             row={rows[shape.id]}
             selectedId={selectedId}
+            selectedIds={selectedIds}
             onSelect={onSelect}
             recentCutoff={recentCutoff}
           />
@@ -1292,9 +1361,9 @@ function MuscleBodyMap({ view, muscleRows, selectedId, onSelect, recentCutoff })
         <text className="body-map-label" x="110" y="330" textAnchor="middle">{front ? "Front chain" : "Back chain"}</text>
       </svg>
       <div className="body-map-legend">
-        <span>Rested</span>
+        <span>{legendLabels[0]}</span>
         <div className="legend-track" />
-        <span>Loaded</span>
+        <span>{legendLabels[1]}</span>
       </div>
     </div>
   );
