@@ -3,6 +3,7 @@
 #include <esp_log.h>
 #include <Preferences.h>
 
+#include "ble_test.h"
 #include "camera_init.h"
 #include "config.h"
 #include "debug_log.h"
@@ -20,6 +21,9 @@
 #ifndef KINETICLIFE_CAMERA_MODEL
 #define KINETICLIFE_CAMERA_MODEL "OV2640 140deg wide-angle"
 #endif
+#ifndef KINETICLIFE_BLE_CAMERA_BOOT_DELAY_MS
+#define KINETICLIFE_BLE_CAMERA_BOOT_DELAY_MS 6000
+#endif
 
 static const char* RESET_NVS_NAMESPACE = "reset";
 static const char* RESET_KEY_ARMED = "armed";
@@ -27,6 +31,10 @@ static const unsigned long RESET_CLEAR_WINDOW_MS = 8000;
 
 static bool s_reset_clear_armed = false;
 static unsigned long s_reset_clear_started_ms = 0;
+
+static const char* MODE_NVS_NS  = "kl_mode";
+static const char* MODE_NVS_KEY = "mode";
+static bool        s_ble_mode   = false;
 
 static const char* wifi_status_name(wl_status_t status) {
     switch (status) {
@@ -279,7 +287,39 @@ void setup() {
     esp_log_level_set("camera", ESP_LOG_NONE);
     esp_log_level_set("sccb", ESP_LOG_WARN);
     status_led_begin();
+    {
+        Preferences p;
+        p.begin(MODE_NVS_NS, true);
+        s_ble_mode = (p.getString(MODE_NVS_KEY, "wifi") == "ble");
+        p.end();
+    }
     reset_clear_boot_check();
+
+    if (s_ble_mode) {
+        kl_logf("[ble_cam] boot_camera_wait_ms=%lu reason=ov2640_power_stabilize\n",
+                (unsigned long)KINETICLIFE_BLE_CAMERA_BOOT_DELAY_MS);
+        delay(KINETICLIFE_BLE_CAMERA_BOOT_DELAY_MS);
+        const unsigned long ble_camera_start_ms = millis();
+        if (camera_init_ble()) {
+            kl_logf("[perf] ble_camera_init_ms=%lu mode=%s format=%s frame=%s q=%d heap_kb=%lu psram_kb=%lu\n",
+                    millis() - ble_camera_start_ms,
+                    camera_mode_name(),
+                    camera_pixel_format_name(),
+                    camera_frame_size_name(),
+                    camera_jpeg_quality(),
+                    (unsigned long)(ESP.getFreeHeap() / 1024),
+                    (unsigned long)(ESP.getFreePsram() / 1024));
+            if (camera_capture_self_test(2, 1000)) {
+                ble_test_mark_camera_ready();
+            } else {
+                kl_logln("[ble_cam] boot_camera_self_test_failed action=ble_without_camera");
+                camera_deinit();
+            }
+        } else {
+            kl_logln("[ble_cam] boot_camera_init_failed action=ble_without_camera");
+        }
+        ble_test_begin();
+    }
 
     kl_logf("\n\n[boot] KineticLife firmware=%s\n", KINETICLIFE_FW_VERSION);
     kl_logf("[boot] board=\"%s\" camera=\"%s\" cpu_mhz=%lu flash_mb=%lu heap_kb=%lu psram_kb=%lu psram_size_kb=%lu\n",
@@ -290,6 +330,15 @@ void setup() {
             (unsigned long)(ESP.getFreeHeap() / 1024),
             (unsigned long)(ESP.getFreePsram() / 1024),
             (unsigned long)(ESP.getPsramSize() / 1024));
+
+    if (s_ble_mode) {
+        status_led_set(DEVICE_STATE_READY);
+        kl_logf("[boot] mode=ble action=skip_wifi_camera_http setup_total_ms=%lu heap_kb=%lu psram_kb=%lu\n",
+                millis() - setup_start_ms,
+                (unsigned long)(ESP.getFreeHeap() / 1024),
+                (unsigned long)(ESP.getFreePsram() / 1024));
+        return;
+    }
 
     WifiCredentials creds;
     const unsigned long nvs_start_ms = millis();
@@ -360,7 +409,16 @@ void setup() {
 }
 
 void loop() {
+    if (s_ble_mode) {
+        ble_test_handle();
+        status_led_handle();
+        reset_clear_handle();
+        delay(1);
+        return;
+    }
+
     http_server_handle();
+    ble_test_handle();
     http_server_push_frame();
     status_led_handle();
     reset_clear_handle();
