@@ -66,12 +66,21 @@
     #hostQr { width: 300px; height: 300px; display: grid; place-items: center;
               color: #697891; font-weight: 800; text-align: center; }
     #hostQr canvas, #hostQr img { width: 300px; height: 300px; display: block; image-rendering: pixelated; }
+    .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .metric { border: 1px solid #dde4ef; border-radius: 7px; background: #f8fafc; padding: 12px; }
+    .metric b { display: block; color: #172033; font-size: 22px; line-height: 1.1; }
+    .metric span { color: #697891; font-size: 12px; font-weight: 700; }
+    .inline-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .ble-preview { width: 100%; min-height: 180px; border: 1px solid #dde4ef; border-radius: 7px;
+                   background: #f8fafc; display: grid; place-items: center; overflow: hidden; color: #697891; font-weight: 700; }
+    .ble-preview img { width: 100%; max-height: 320px; object-fit: contain; display: block; }
     @media (max-width: 760px) {
       .grid { grid-template-columns: 1fr; }
       .host-qr { grid-template-columns: 1fr; }
       .actions { grid-template-columns: 1fr; }
       #qr, #qr canvas, #qr img { width: min(420px, 92vw); height: min(420px, 92vw); }
       .probe-row { grid-template-columns: 1fr; }
+      .metric-grid, .inline-controls { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -86,6 +95,7 @@
       <button class="tab active" id="tabQr"     onclick="switchTab('qr')">QR Pair</button>
       <button class="tab"        id="tabConfig"  onclick="switchTab('config')">Config Networks</button>
       <button class="tab"        id="tabDirect"  onclick="switchTab('direct')">Direct Connect</button>
+      <button class="tab"        id="tabBle"     onclick="switchTab('ble')">BLE Test</button>
       <button class="tab"        id="tabHost"    onclick="switchTab('host')">Host QR</button>
     </div>
 
@@ -122,6 +132,9 @@
         </div>
         <div class="actions" style="grid-template-columns:1fr">
           <button class="outline" id="openDemoTable">Demo (Tablet) — ESP32 + local cam fallback</button>
+        </div>
+        <div class="actions" style="grid-template-columns:1fr">
+          <button id="openkineticlife" style="background:#deff9a;color:#111;font-weight:900;">⚡ kineticlife Demo — Full UI Showcase</button>
         </div>
         <div class="actions">
           <button class="secondary" id="refreshQr">Refresh QR</button>
@@ -188,6 +201,60 @@
         <div class="actions" style="grid-template-columns:1fr">
           <button class="outline" id="directDemoTable">Demo (Tablet) — ESP32 + local cam fallback</button>
         </div>
+        <div class="actions" style="grid-template-columns:1fr">
+          <button id="directkineticlife" style="background:#deff9a;color:#111;font-weight:900;">⚡ kineticlife Demo — Full UI Showcase</button>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #dde4ef;margin:16px 0">
+        <p style="font-weight:700;font-size:14px;color:#172033;margin-bottom:6px">Switch ESP32 mode</p>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:10px">Enter the camera address above, then switch modes. The device will reboot (~3 s).</p>
+        <div class="actions">
+          <button id="directSwitchBle" class="outline">Switch to BLE Mode</button>
+          <button id="directSwitchWifi" class="outline">Switch to WiFi Mode</button>
+        </div>
+        <div id="switchStatus" style="display:none;font-size:13px;padding:6px 0;color:#1f6f52"></div>
+      </div>
+    </section>
+
+    <!-- BLE Test tab -->
+    <section id="sectionBle" style="display:none">
+      <div class="direct-card" style="max-width:620px">
+        <div>
+          <p style="color:#172033; font-weight:700; font-size:16px; margin-bottom:6px">BLE camera mode</p>
+          <p>Switch the ESP32 to BLE mode via <b>Direct Connect → Switch to BLE Mode</b>, then connect here. Android Chrome requires HTTPS or localhost; iOS Safari does not support Web Bluetooth.</p>
+        </div>
+
+        <div class="inline-controls">
+          <label>Payload bytes
+            <input id="blePayload" type="number" min="8" max="180" step="1" value="120">
+          </label>
+          <label>Duration ms
+            <input id="bleDuration" type="number" min="1000" max="60000" step="1000" value="10000">
+          </label>
+          <label>Notify gap ms
+            <input id="bleGap" type="number" min="4" max="100" step="1" value="12">
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="bleConnect">Connect BLE</button>
+          <button id="bleStart" class="secondary" disabled>Start Test</button>
+        </div>
+        <button id="bleCamera" class="secondary" disabled>Start Camera Snapshot</button>
+        <button id="bleDemo" style="background:#deff9a;color:#111;font-weight:900;">Open BLE MediaPipe Demo</button>
+        <button id="bleDemoKineTrak" style="background:#deff9a;color:#111;font-weight:900;margin-top:6px;">⚡ KineTrak Demo (BLE)</button>
+        <button id="bleStop" class="outline" disabled>Stop Test</button>
+
+        <div class="metric-grid">
+          <div class="metric"><b id="bleKBps">0.00</b><span>KB/s</span></div>
+          <div class="metric"><b id="bleKbps">0.0</b><span>kbit/s</span></div>
+          <div class="metric"><b id="bleBytes">0</b><span>bytes received</span></div>
+          <div class="metric"><b id="blePackets">0</b><span>notifications</span></div>
+          <div class="metric"><b id="bleFrames">0</b><span>camera frames</span></div>
+        </div>
+
+        <div class="ble-preview" id="blePreview">Camera snapshots will appear here</div>
+        <div id="bleStatus" class="notice" style="font-size:13px">Idle.</div>
       </div>
     </section>
 
@@ -224,10 +291,12 @@
       document.getElementById("sectionQr").style.display     = tab === "qr"     ? "" : "none";
       document.getElementById("sectionConfig").style.display = tab === "config"  ? "" : "none";
       document.getElementById("sectionDirect").style.display = tab === "direct"  ? "" : "none";
+      document.getElementById("sectionBle").style.display    = tab === "ble"    ? "" : "none";
       document.getElementById("sectionHost").style.display   = tab === "host"   ? "" : "none";
       document.getElementById("tabQr").classList.toggle("active",     tab === "qr");
       document.getElementById("tabConfig").classList.toggle("active",  tab === "config");
       document.getElementById("tabDirect").classList.toggle("active",  tab === "direct");
+      document.getElementById("tabBle").classList.toggle("active",     tab === "ble");
       document.getElementById("tabHost").classList.toggle("active",    tab === "host");
       localStorage.setItem("kineticlife.pair.tab", tab);
       if (tab === "host") updateHostQr();
@@ -327,6 +396,11 @@
       const camUrl = normalizeCamUrl(camUrlEl.value);
       localStorage.setItem("kineticlife.camUrl", camUrl);
       location.href = `./demo-table.html?cam=${encodeURIComponent(camUrl)}`;
+    });
+    document.getElementById("openkineticlife").addEventListener("click", () => {
+      const camUrl = normalizeCamUrl(camUrlEl.value);
+      localStorage.setItem("kineticlife.camUrl", camUrl);
+      location.href = `./kinetic-demo.html?cam=${encodeURIComponent(camUrl)}`;
     });
     updateQr();
 
@@ -433,6 +507,211 @@
       const url = normalizeCamUrl(directUrlEl.value);
       localStorage.setItem("kineticlife.camUrl", url);
       location.href = `./demo-table.html?cam=${encodeURIComponent(url)}`;
+    });
+    document.getElementById("directkineticlife").addEventListener("click", () => {
+      const url = normalizeCamUrl(directUrlEl.value);
+      localStorage.setItem("kineticlife.camUrl", url);
+      location.href = `./kinetic-demo.html?cam=${encodeURIComponent(url)}`;
+    });
+
+    async function switchEsp32Mode(mode) {
+      const url = normalizeCamUrl(directUrlEl.value);
+      const statusEl = document.getElementById("switchStatus");
+      statusEl.style.display = "";
+      statusEl.style.color = "#1f6f52";
+      statusEl.textContent = `Switching to ${mode} mode… (device will reboot)`;
+      try {
+        await fetch(`${url}/mode?set=${mode}`, { signal: AbortSignal.timeout(4000) });
+        statusEl.textContent = `✓ Switched to ${mode} mode. Device rebooting (~3 s)…`;
+        if (mode === "ble") setTimeout(() => switchTab("ble"), 3500);
+      } catch (e) {
+        statusEl.style.color = "#c0392b";
+        statusEl.textContent = `Error: ${e.message || e} — is the camera address correct?`;
+      }
+    }
+    document.getElementById("directSwitchBle").addEventListener("click",  () => switchEsp32Mode("ble"));
+    document.getElementById("directSwitchWifi").addEventListener("click", () => switchEsp32Mode("wifi"));
+
+    // ── BLE Test tab ──────────────────────────────────────────────
+    const BLE_SERVICE_UUID = "9b8f0001-6f4d-4d4f-9c9a-4b4c49464501";
+    const BLE_TX_UUID = "9b8f0002-6f4d-4d4f-9c9a-4b4c49464501";
+    const BLE_RX_UUID = "9b8f0003-6f4d-4d4f-9c9a-4b4c49464501";
+    const bleStatusEl = document.getElementById("bleStatus");
+    const blePayloadEl = document.getElementById("blePayload");
+    const bleDurationEl = document.getElementById("bleDuration");
+    const bleGapEl = document.getElementById("bleGap");
+    const bleStartBtn = document.getElementById("bleStart");
+    const bleCameraBtn = document.getElementById("bleCamera");
+    const bleStopBtn = document.getElementById("bleStop");
+    const blePreviewEl = document.getElementById("blePreview");
+    let bleDevice = null;
+    let bleRx = null;
+    let bleStats = { bytes: 0, packets: 0, firstMs: 0, lastMs: 0, timer: 0 };
+    let bleCam = { expected: 0, received: 0, chunks: [], frames: 0, frameId: 0, objectUrl: "" };
+
+    function bleShow(cls, html) {
+      bleStatusEl.className = cls;
+      bleStatusEl.innerHTML = html;
+    }
+
+    function bleResetStats(resetCamera = false) {
+      bleStats = { bytes: 0, packets: 0, firstMs: 0, lastMs: 0, timer: bleStats.timer };
+      if (resetCamera) {
+        if (bleCam.objectUrl) URL.revokeObjectURL(bleCam.objectUrl);
+        bleCam = { expected: 0, received: 0, chunks: [], frames: 0, frameId: 0, objectUrl: "" };
+        blePreviewEl.textContent = "Camera snapshots will appear here";
+      }
+      bleRenderStats();
+    }
+
+    function bleRenderStats() {
+      const elapsedMs = bleStats.firstMs ? Math.max(1, (bleStats.lastMs || performance.now()) - bleStats.firstMs) : 1;
+      const bytesPerSecond = bleStats.bytes * 1000 / elapsedMs;
+      document.getElementById("bleKBps").textContent = (bytesPerSecond / 1024).toFixed(2);
+      document.getElementById("bleKbps").textContent = (bytesPerSecond * 8 / 1000).toFixed(1);
+      document.getElementById("bleBytes").textContent = String(bleStats.bytes);
+      document.getElementById("blePackets").textContent = String(bleStats.packets);
+      document.getElementById("bleFrames").textContent = String(bleCam.frames);
+    }
+
+    function bleMaybeHandleCameraPacket(bytes) {
+      if (bytes.length >= 4 && bytes[0] === 67 && bytes[1] === 65 && bytes[2] === 77 && bytes[3] === 58) {
+        const parts = new TextDecoder().decode(bytes).split(":");
+        bleCam.expected = Number(parts[2]) || 0;
+        bleCam.received = 0;
+        bleCam.chunks = [];
+        bleCam.frameId = Number(parts[1]) || 0;
+        bleShow("notice", `Receiving camera frame ${bleCam.frameId}: ${bleCam.expected} bytes, ${parts[3]} chunks, ${parts[4]} q=${parts[5]}`);
+        return true;
+      }
+
+      if (!bleCam.expected) return false;
+
+      const needed = bleCam.expected - bleCam.received;
+      const chunk = bytes.length > needed ? bytes.slice(0, needed) : bytes.slice();
+      bleCam.chunks.push(chunk);
+      bleCam.received += chunk.byteLength;
+
+      if (bleCam.received >= bleCam.expected) {
+        const blob = new Blob(bleCam.chunks, { type: "image/jpeg" });
+        if (bleCam.objectUrl) URL.revokeObjectURL(bleCam.objectUrl);
+        bleCam.objectUrl = URL.createObjectURL(blob);
+        blePreviewEl.innerHTML = `<img alt="BLE camera frame ${bleCam.frameId}">`;
+        blePreviewEl.querySelector("img").src = bleCam.objectUrl;
+        bleCam.frames += 1;
+        bleCam.expected = 0;
+        bleCam.received = 0;
+        bleCam.chunks = [];
+        bleRenderStats();
+      }
+      return true;
+    }
+
+    function bleOnNotify(event) {
+      const now = performance.now();
+      const value = event.target.value;
+      const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+      if (!bleStats.firstMs) bleStats.firstMs = now;
+      bleStats.lastMs = now;
+      bleStats.bytes += bytes.byteLength;
+      bleStats.packets += 1;
+      bleMaybeHandleCameraPacket(bytes);
+    }
+
+    async function bleWrite(text) {
+      if (!bleRx) throw new Error("BLE is not connected");
+      const data = new TextEncoder().encode(text);
+      if (bleRx.writeValueWithoutResponse) await bleRx.writeValueWithoutResponse(data);
+      else await bleRx.writeValue(data);
+    }
+
+    document.getElementById("bleConnect").addEventListener("click", async () => {
+      if (!navigator.bluetooth) {
+        bleShow("error", "Web Bluetooth is unavailable here. Use Android Chrome on HTTPS/localhost, or test with a native BLE app such as nRF Connect.");
+        return;
+      }
+      bleShow("notice", "Opening Bluetooth chooser...");
+      try {
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: "KineticLife-BLE" }],
+          optionalServices: [BLE_SERVICE_UUID]
+        });
+        bleDevice.addEventListener("gattserverdisconnected", () => {
+          bleRx = null;
+          bleStartBtn.disabled = true;
+          bleCameraBtn.disabled = true;
+          bleStopBtn.disabled = true;
+          if (bleStats.timer) clearInterval(bleStats.timer);
+          bleShow("warning", "BLE disconnected.");
+        });
+
+        const server = await bleDevice.gatt.connect();
+        const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+        const tx = await service.getCharacteristic(BLE_TX_UUID);
+        bleRx = await service.getCharacteristic(BLE_RX_UUID);
+        await tx.startNotifications();
+        tx.addEventListener("characteristicvaluechanged", bleOnNotify);
+        bleStartBtn.disabled = false;
+        bleCameraBtn.disabled = false;
+        bleStopBtn.disabled = false;
+        bleShow("notice", `Connected to <b>${bleDevice.name || "ESP32 BLE"}</b>.`);
+      } catch (e) {
+        bleShow("error", `BLE connect failed: ${e.message || e}`);
+      }
+    });
+
+    bleStartBtn.addEventListener("click", async () => {
+      const payload = Math.max(8, Math.min(180, Number(blePayloadEl.value) || 120));
+      const duration = Math.max(1000, Math.min(60000, Number(bleDurationEl.value) || 10000));
+      const gap = Math.max(4, Math.min(100, Number(bleGapEl.value) || 12));
+      blePayloadEl.value = payload;
+      bleDurationEl.value = duration;
+      bleGapEl.value = gap;
+      bleResetStats(true);
+      if (bleStats.timer) clearInterval(bleStats.timer);
+      bleStats.timer = setInterval(bleRenderStats, 250);
+      try {
+        await bleWrite(`size=${payload}`);
+        await bleWrite(`gap=${gap}`);
+        await bleWrite(`start=${duration}`);
+        bleShow("notice", `Running ${duration} ms throughput test with ${payload} byte notifications and ${gap} ms gap...`);
+      } catch (e) {
+        bleShow("error", `BLE start failed: ${e.message || e}`);
+      }
+    });
+
+    bleCameraBtn.addEventListener("click", async () => {
+      const payload = Math.max(8, Math.min(180, Number(blePayloadEl.value) || 120));
+      const duration = Math.max(1000, Math.min(60000, Number(bleDurationEl.value) || 10000));
+      const gap = Math.max(4, Math.min(100, Number(bleGapEl.value) || 12));
+      blePayloadEl.value = payload;
+      bleDurationEl.value = duration;
+      bleGapEl.value = gap;
+      bleResetStats(true);
+      if (bleStats.timer) clearInterval(bleStats.timer);
+      bleStats.timer = setInterval(bleRenderStats, 250);
+      try {
+        await bleWrite(`size=${payload}`);
+        await bleWrite(`gap=${gap}`);
+        await bleWrite(`cam=${duration}`);
+        bleShow("notice", `Running ${duration} ms camera snapshot test...`);
+      } catch (e) {
+        bleShow("error", `BLE camera failed: ${e.message || e}`);
+      }
+    });
+
+    bleStopBtn.addEventListener("click", async () => {
+      try { await bleWrite("stop"); } catch (_) {}
+      if (bleStats.timer) clearInterval(bleStats.timer);
+      bleRenderStats();
+      bleShow("notice", "Stopped.");
+    });
+
+    document.getElementById("bleDemo").addEventListener("click", () => {
+      location.href = "./demo-table.html?source=ble";
+    });
+    document.getElementById("bleDemoKineTrak").addEventListener("click", () => {
+      location.href = "./kinetic-demo.html?source=ble";
     });
 
     // ── Host QR tab ────────────────────────────────────────────────

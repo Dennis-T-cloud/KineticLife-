@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KineTrak</title>
+<script src="vendor/tailwind.min.js"></script>
+<script src="vendor/chart.umd.min.js"></script>
+<link rel="stylesheet" href="vendor/inter.css" />
+<style>
+
+  * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  :root { --lime: #deff9a; }
+
+  body { background: #111111; color: #fff; overflow-x: hidden; }
+
+  .lime { color: var(--lime); }
+  .lime-bg { background-color: var(--lime); }
+
+  @keyframes pulse-ring {
+    0%  { transform: scale(1);   opacity: 1; }
+    70% { transform: scale(1.7); opacity: 0; }
+    100%{ transform: scale(1);   opacity: 0; }
+  }
+  .pulse-dot::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--lime);
+    animation: pulse-ring 1.6s ease-out infinite;
+  }
+  .pulse-dot { position: relative; display: inline-block; }
+
+  .glass {
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(222,255,154,0.18);
+  }
+
+  .journey-line {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 3px;
+    background: linear-gradient(to bottom, #deff9a 0%, rgba(222,255,154,0.15) 100%);
+    z-index: 0;
+  }
+
+  @keyframes rep-pop {
+    0%   { transform: scale(1); }
+    40%  { transform: scale(1.3); color: var(--lime); }
+    100% { transform: scale(1); }
+  }
+  .rep-pop { animation: rep-pop 350ms cubic-bezier(.2,.9,.2,1); }
+
+  @keyframes shimmer {
+    0%   { background-position: -800px 0; }
+    100% { background-position:  800px 0; }
+  }
+  .cam-shimmer {
+    background: linear-gradient(90deg, #1a1a1a 0%, #222 40%, #2a2a2a 50%, #222 60%, #1a1a1a 100%);
+    background-size: 800px 100%;
+    animation: shimmer 2.4s infinite linear;
+  }
+
+  @keyframes btn-hover { 0%,100%{transform:scale(1)} 50%{transform:scale(1.04)} }
+  .end-btn:hover { animation: btn-hover 600ms ease infinite; }
+
+  .view { transition: opacity 0.28s ease; }
+  .view.hidden { opacity: 0; pointer-events: none; display: none !important; }
+
+  @keyframes ring-fill {
+    from { stroke-dashoffset: 283; }
+    to   { stroke-dashoffset: 23; }
+  }
+  .score-ring { animation: ring-fill 1.4s cubic-bezier(.4,0,.2,1) 0.3s both; }
+
+  .chart-glow { box-shadow: 0 0 40px rgba(222,255,154,0.06); }
+
+  .mode-card {
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .mode-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(222,255,154,0.4);
+    box-shadow: 0 8px 32px rgba(222,255,154,0.08);
+  }
+  .mode-card:active { transform: translateY(0); }
+
+  .journey-node { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+  .journey-node:hover { transform: scale(1.05); }
+  .journey-node-active {
+    box-shadow: 0 0 0 4px rgba(222,255,154,0.25), 0 0 24px rgba(222,255,154,0.2);
+    cursor: pointer;
+  }
+  .journey-node-active:hover {
+    transform: scale(1.07);
+    box-shadow: 0 0 0 5px rgba(222,255,154,0.35), 0 0 32px rgba(222,255,154,0.3);
+  }
+
+  input[type="text"]:focus, select:focus {
+    outline: none;
+    border-color: var(--lime);
+    box-shadow: 0 0 0 3px rgba(222,255,154,0.15);
+  }
+
+  /* Live canvas fills view-session */
+  #live-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    z-index: 0;
+  }
+
+  #cam-placeholder {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    transition: opacity 0.5s ease;
+  }
+
+  /* Phase pill for session */
+  #phase-pill {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 25;
+    padding: 5px 20px;
+    border-radius: 20px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    pointer-events: none;
+    transition: opacity 0.3s, background 0.2s;
+    white-space: nowrap;
+    background: rgba(255,255,255,0.10);
+    color: rgba(255,255,255,0.55);
+  }
+  #phase-pill.phase-work  { background: rgba(222,255,154,0.22); color: #deff9a; }
+  #phase-pill.phase-rest  { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.85); }
+
+  /* Hint panel */
+  #hint-panel {
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 25;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 180px;
+    pointer-events: none;
+  }
+  .hint-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: rgba(0,0,0,0.60);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.75rem;
+    border-left: 3px solid;
+  }
+  .hint-ok  { border-color: #deff9a; color: rgba(255,255,255,0.6); }
+  .hint-err { border-color: #FF5555; color: #fff; font-weight: 600; }
+  .hint-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+  .hint-ok  .hint-dot { background: #deff9a; }
+  .hint-err .hint-dot { background: #FF5555; }
+
+  ::-webkit-scrollbar { display: none; }
+  scrollbar-width: none;
+</style>
+</head>
+<body class="min-h-screen select-none">
+
+<!-- ═══════════════════════ VIEW 1: LOGIN ═══════════════════════════════ -->
+<div id="view-login" class="view min-h-screen flex flex-col items-center justify-center px-6">
+  <div class="w-full max-w-sm">
+    <div class="text-center mb-12">
+      <div class="inline-flex items-center gap-2 mb-4">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+          <rect width="36" height="36" rx="8" fill="#deff9a" fill-opacity="0.12"/>
+          <path d="M8 18 L14 10 L18 16 L22 8 L28 18" stroke="#deff9a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="18" cy="26" r="3.5" fill="#deff9a"/>
+        </svg>
+        <span class="text-4xl font-black tracking-tight lime">KineTrak</span>
+      </div>
+      <p class="text-gray-400 text-sm font-medium tracking-wide uppercase">Edge AI · Fitness Intelligence</p>
+    </div>
+
+    <div class="bg-gray-900 rounded-2xl p-8 border border-gray-800">
+      <h2 class="text-lg font-semibold text-white mb-1">Welcome back</h2>
+      <p class="text-gray-500 text-sm mb-6">Enter your athlete ID to begin</p>
+      <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Athlete ID</label>
+      <input id="athlete-name" type="text" value="Dennis"
+        class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white font-medium text-sm transition-all duration-200 mb-6" />
+      <button onclick="goTo('view-dashboard')"
+        class="w-full lime-bg text-gray-900 font-bold py-3.5 rounded-xl text-sm tracking-wide hover:brightness-105 active:scale-95 transition-all duration-150">
+        Enter Session →
+      </button>
+      <div class="mt-6 pt-5 border-t border-gray-800 flex items-center justify-center gap-6">
+        <div class="text-center"><div class="text-lg font-bold text-white">47</div><div class="text-xs text-gray-500">Sessions</div></div>
+        <div class="w-px h-8 bg-gray-800"></div>
+        <div class="text-center"><div class="text-lg font-bold lime">92%</div><div class="text-xs text-gray-500">Avg Form</div></div>
+        <div class="w-px h-8 bg-gray-800"></div>
+        <div class="text-center"><div class="text-lg font-bold text-white">12</div><div class="text-xs text-gray-500">Day Streak</div></div>
+      </div>
+    </div>
+    <p id="cam-status-login" class="text-center text-gray-600 text-xs mt-4"></p>
+    <p class="text-center text-gray-700 text-xs mt-1">Powered by Seeed Grove Vision AI · On-Device Inference</p>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════ VIEW 2: DASHBOARD ════════════════════════════ -->
+<div id="view-dashboard" class="view hidden min-h-screen flex flex-col">
+  <header class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+    <div class="flex items-center gap-2">
+      <span class="text-xl font-black lime">KineTrak</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="text-right hidden sm:block">
+        <div class="text-xs text-gray-400">Last Workout</div>
+        <div class="text-sm font-semibold"><span class="lime">85%</span> Form Accuracy</div>
+      </div>
+      <div class="w-9 h-9 rounded-full lime-bg flex items-center justify-center text-gray-900 font-bold text-sm">D</div>
+    </div>
+  </header>
+
+  <main class="flex-1 px-6 py-6 max-w-3xl mx-auto w-full">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold text-white mb-1">Good morning, <span class="lime">Dennis</span> 👋</h1>
+      <p class="text-gray-400 text-sm">Day 12 of your Barbell Squat program. Keep it up.</p>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4 mb-8">
+      <div class="mode-card bg-gray-900 rounded-2xl p-5 cursor-pointer" onclick="startPlan()">
+        <div class="w-10 h-10 rounded-xl bg-gray-800 flex items-center justify-center mb-3">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M10 3L13 8H7L10 3Z" fill="#deff9a"/>
+            <rect x="7" y="9" width="6" height="8" rx="1" fill="#deff9a" fill-opacity="0.6"/>
+          </svg>
+        </div>
+        <div class="text-sm font-bold text-white mb-1">Jump-In</div>
+        <div class="text-xs text-gray-500 leading-relaxed">Start today's workout with live AI feedback.</div>
+        <div class="mt-4 text-xs lime font-semibold">Start now →</div>
+      </div>
+
+      <div class="mode-card bg-gray-900 rounded-2xl p-5 cursor-pointer" onclick="document.getElementById('journey-section').scrollIntoView({behavior:'smooth',block:'center'})">
+        <div class="w-10 h-10 rounded-xl bg-gray-800 flex items-center justify-center mb-3">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M10 2C10 2 4 7 4 12C4 15.3 6.7 18 10 18C13.3 18 16 15.3 16 12C16 7 10 2 10 2Z" stroke="#deff9a" stroke-width="1.5" fill="none"/>
+            <circle cx="10" cy="12" r="2.5" fill="#deff9a"/>
+          </svg>
+        </div>
+        <div class="text-sm font-bold text-white mb-1">Journey</div>
+        <div class="text-xs text-gray-500 leading-relaxed">Structured program. Follow your daily workout path.</div>
+        <div class="mt-4 text-xs lime font-semibold">Continue →</div>
+      </div>
+    </div>
+
+    <div id="journey-section">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-bold text-white">Your Journey</h2>
+        <span class="text-xs text-gray-500 bg-gray-800 px-3 py-1 rounded-full">Week 2 · Fitness Program</span>
+      </div>
+      <div class="relative">
+        <div class="journey-line" style="top:28px;bottom:28px;"></div>
+        <div class="flex flex-col gap-4 relative z-10">
+
+          <div class="journey-node flex items-center gap-4">
+            <div class="w-12 h-12 rounded-full bg-gray-800 border-2 flex items-center justify-center flex-shrink-0 ml-auto mr-auto relative z-10" style="border-color:rgba(222,255,154,0.3)">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3.5 3.5L13 5" stroke="#deff9a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/></svg>
+            </div>
+            <div class="flex-1"><div class="text-xs text-gray-600 font-medium">Day 10 · Completed</div><div class="text-sm text-gray-500">Goblet Squat · Form: 88%</div></div>
+          </div>
+
+          <div class="journey-node flex items-center gap-4">
+            <div class="w-12 h-12 rounded-full bg-gray-800 border-2 flex items-center justify-center flex-shrink-0 ml-auto mr-auto relative z-10" style="border-color:rgba(222,255,154,0.3)">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3.5 3.5L13 5" stroke="#deff9a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/></svg>
+            </div>
+            <div class="flex-1"><div class="text-xs text-gray-600 font-medium">Day 11 · Completed</div><div class="text-sm text-gray-500">Box Squat · Form: 91%</div></div>
+          </div>
+
+          <!-- Day 12 — ACTIVE (starts full plan) -->
+          <div class="journey-node journey-node-active flex items-center gap-4" onclick="startPlan()">
+            <div class="w-14 h-14 rounded-full lime-bg flex items-center justify-center flex-shrink-0 ml-auto mr-auto relative z-10">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 3v6l4 2" stroke="#111" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div class="flex-1">
+              <div class="text-xs lime font-bold uppercase tracking-wider">Day 12 · Today</div>
+              <div class="text-sm font-bold text-white">Full-Body Circuit</div>
+              <div class="text-xs text-gray-400 mt-0.5">3 exercises · 3 reps each · AI form tracking</div>
+            </div>
+            <div class="text-gray-400"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          </div>
+
+          <div class="journey-node flex items-center gap-4 opacity-35">
+            <div class="w-12 h-12 rounded-full bg-gray-900 border-2 border-gray-700 flex items-center justify-center flex-shrink-0 ml-auto mr-auto relative z-10">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="6" width="8" height="6" rx="1.5" stroke="#666" stroke-width="1.5"/><path d="M5 6V4.5a2 2 0 014 0V6" stroke="#666" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="flex-1"><div class="text-xs text-gray-600 font-medium">Day 13 · Locked</div><div class="text-sm text-gray-600">Pause Squat</div></div>
+          </div>
+
+          <div class="journey-node flex items-center gap-4 opacity-20">
+            <div class="w-12 h-12 rounded-full bg-gray-900 border-2 border-gray-700 flex items-center justify-center flex-shrink-0 ml-auto mr-auto relative z-10">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="6" width="8" height="6" rx="1.5" stroke="#666" stroke-width="1.5"/><path d="M5 6V4.5a2 2 0 014 0V6" stroke="#666" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="flex-1"><div class="text-xs text-gray-600 font-medium">Day 14 · Locked</div><div class="text-sm text-gray-600">1-Rep Max Test</div></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+
+<!-- ═══════════════════════ VIEW 3: LIVE SESSION ════════════════════════ -->
+<div id="view-session" class="view hidden min-h-screen relative overflow-hidden" style="background:#111;">
+
+  <!-- Real pose canvas (background, drawn by module script) -->
+  <canvas id="live-canvas"></canvas>
+
+  <!-- Fallback shimmer — hidden once video arrives -->
+  <div id="cam-placeholder" class="cam-shimmer flex items-center justify-center">
+    <div class="text-center">
+      <div class="w-14 h-14 rounded-2xl bg-black bg-opacity-50 border border-gray-700 flex items-center justify-center mx-auto mb-2">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <rect x="1" y="6" width="15" height="12" rx="2" stroke="#555" stroke-width="1.5"/>
+          <path d="M16 9.5l6-2.5v10l-6-2.5V9.5Z" stroke="#555" stroke-width="1.5" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <p id="session-status" class="text-gray-600 text-xs">Connecting to ESP32…</p>
+    </div>
+  </div>
+
+  <!-- Dark gradient overlay -->
+  <div class="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/70 pointer-events-none" style="z-index:10;"></div>
+
+  <!-- BLE connect overlay (shown when sourceMode=ble and not yet connected) -->
+  <div id="ble-overlay" class="absolute inset-0 flex items-center justify-center" style="z-index:50; background:rgba(0,0,0,0.88); display:none;">
+    <div class="bg-gray-900 rounded-2xl p-8 border border-gray-800 text-center w-full max-w-xs mx-6">
+      <div class="w-12 h-12 rounded-2xl lime-bg flex items-center justify-center mx-auto mb-4">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path d="M6 8l5 4-5 4M13 8l5 4-5 4" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h3 class="text-lg font-bold text-white mb-2">Connect BLE Camera</h3>
+      <p class="text-gray-400 text-sm mb-6 leading-relaxed">Make sure the ESP32 is in BLE mode.<br>Use pair.html → Direct Connect → Switch to BLE Mode if needed.</p>
+      <button id="ble-connect-btn"
+        class="w-full lime-bg text-gray-900 font-bold py-3 rounded-xl text-sm hover:brightness-105 active:scale-95 transition-all duration-150">
+        Connect BLE Camera
+      </button>
+      <button onclick="goTo('view-dashboard')"
+        class="w-full mt-3 text-gray-500 text-sm py-2 font-medium">
+        ← Back to Dashboard
+      </button>
+    </div>
+  </div>
+
+  <!-- Phase pill (centre) -->
+  <div id="phase-pill">Ready</div>
+
+  <!-- Hint panel (right side) -->
+  <div id="hint-panel"></div>
+
+  <!-- Top-Left: session info -->
+  <div class="absolute top-4 left-4" style="z-index:25;">
+    <div class="glass rounded-2xl px-4 py-3 min-w-52">
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-1.5">
+          <div class="w-1.5 h-1.5 rounded-full lime-bg"></div>
+          <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Live</span>
+        </div>
+        <select id="session-ex-select"
+          class="bg-transparent text-xs text-gray-300 border-0 outline-none cursor-pointer"
+          onchange="if(window.setCurrentExercise) window.setCurrentExercise(this.value);">
+          <option value="squat">Squat</option>
+          <option value="bicep_curl">Curl</option>
+          <option value="lateral_raise">Lateral Raise</option>
+        </select>
+      </div>
+      <div class="flex items-center gap-3 pt-2 border-t border-white/10">
+        <div>
+          <div class="text-xs text-gray-500">Reps</div>
+          <div id="rep-counter" class="text-xl font-black text-white">0<span class="text-gray-500 text-base font-semibold">/3</span></div>
+        </div>
+        <div class="w-px h-8 bg-white/10"></div>
+        <div>
+          <div class="text-xs text-gray-500">Set</div>
+          <div id="set-counter" class="text-xl font-black"><span class="lime">1</span><span class="text-gray-500 text-base font-semibold">/3</span></div>
+        </div>
+        <div class="w-px h-8 bg-white/10"></div>
+        <div>
+          <div class="text-xs text-gray-500">Form</div>
+          <div id="form-score" class="text-xl font-black text-white">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top-Right: device status -->
+  <div class="absolute top-4 right-4" style="z-index:25;">
+    <div class="glass rounded-2xl px-4 py-3">
+      <div class="flex items-center gap-2.5">
+        <span id="esp-dot" class="pulse-dot w-2.5 h-2.5 rounded-full bg-gray-500 block" style="animation:none;"></span>
+        <div>
+          <div class="text-xs font-semibold text-white">ESP32 Edge</div>
+          <div id="esp-status-text" class="text-xs text-gray-400">Connecting…</div>
+        </div>
+      </div>
+      <div class="mt-2 pt-2 border-t border-white/10">
+        <div class="text-xs text-gray-500 mb-1">MediaPipe</div>
+        <div id="mp-status" class="text-xs text-gray-600">Loading…</div>
+      </div>
+      <div id="btn-switch-wifi-wrap" class="mt-2 pt-2 border-t border-white/10" style="display:none;">
+        <button id="btn-switch-wifi"
+          class="w-full text-xs text-gray-400 bg-gray-800 hover:bg-gray-700 rounded-lg px-3 py-1.5 transition-colors">
+          → Switch to WiFi mode
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom: end session -->
+  <div class="absolute bottom-10 left-0 right-0 flex flex-col items-center z-20" style="z-index:25;">
+    <button id="end-session-btn" onclick="endSession()"
+      class="end-btn bg-red-600/90 hover:bg-red-500 text-white font-bold px-10 py-4 rounded-2xl text-sm tracking-wide border border-red-500/50 transition-colors duration-150">
+      ⬛ End Session
+    </button>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════ VIEW 4: SUMMARY ══════════════════════════════ -->
+<div id="view-summary" class="view hidden min-h-screen flex flex-col px-6 py-8 max-w-2xl mx-auto w-full">
+
+  <!-- Score ring -->
+  <div class="text-center mb-8">
+    <div class="inline-flex items-center justify-center mb-4">
+      <svg width="120" height="120" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="45" fill="none" stroke="#1f1f1f" stroke-width="8"/>
+        <circle id="score-ring-el" class="score-ring" cx="50" cy="50" r="45"
+          fill="none" stroke="#deff9a" stroke-width="8" stroke-linecap="round"
+          stroke-dasharray="283" stroke-dashoffset="23" transform="rotate(-90 50 50)"/>
+        <text id="score-ring-text" x="50" y="44" text-anchor="middle" fill="#deff9a"
+          font-size="18" font-weight="900" font-family="Inter,sans-serif">—%</text>
+        <text x="50" y="58" text-anchor="middle" fill="#666"
+          font-size="7" font-family="Inter,sans-serif" letter-spacing="1">FORM SCORE</text>
+      </svg>
+    </div>
+    <h1 class="text-2xl font-black text-white mb-1">Session Complete</h1>
+    <p id="sum-subtitle" class="text-gray-400 text-sm">Bodyweight Squat</p>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-3 gap-3 mb-6">
+    <div class="bg-gray-900 rounded-xl p-3 text-center border border-gray-800">
+      <div id="summary-reps" class="text-2xl font-black text-white">—</div>
+      <div class="text-xs text-gray-500 mt-0.5">Total Reps</div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-3 text-center border border-gray-800">
+      <div id="summary-duration" class="text-2xl font-black lime">—</div>
+      <div class="text-xs text-gray-500 mt-0.5">Duration</div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-3 text-center border border-gray-800">
+      <div id="summary-accuracy" class="text-2xl font-black text-white">—</div>
+      <div class="text-xs text-gray-500 mt-0.5">Form Score</div>
+    </div>
+  </div>
+
+  <!-- DTW Chart -->
+  <div class="bg-gray-900 rounded-2xl p-5 border border-gray-800 chart-glow mb-5">
+    <div class="flex items-start justify-between mb-4">
+      <div>
+        <div class="text-sm font-bold text-white">DTW Rhythm Analysis</div>
+        <div class="text-xs text-gray-500 mt-0.5">Dynamic Time Warping · Key Angle vs Time</div>
+      </div>
+      <span id="dtw-match-badge" class="text-xs lime font-semibold bg-gray-800 px-2.5 py-1 rounded-full">Analyzing…</span>
+    </div>
+    <div style="position:relative;height:180px;width:100%;">
+      <canvas id="dtw-chart" style="position:absolute;top:0;left:0;width:100%;height:100%;"></canvas>
+    </div>
+    <div class="flex items-center gap-5 mt-3 pt-3 border-t border-gray-800">
+      <div class="flex items-center gap-1.5">
+        <div class="w-5 h-0 border-t-2 border-dashed" style="border-color:#deff9a;"></div>
+        <span class="text-xs text-gray-400">Golden Standard</span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <div class="w-5 h-0.5 bg-white rounded-full"></div>
+        <span class="text-xs text-gray-400">Your Rhythm</span>
+      </div>
+    </div>
+    <div id="dtw-server-note" class="text-xs text-gray-600 mt-2"></div>
+  </div>
+
+  <!-- Form issues -->
+  <div class="bg-gray-900 rounded-2xl p-5 border border-gray-800 mb-6">
+    <div class="text-sm font-bold text-white mb-3">Form Notes</div>
+    <div id="form-notes-list" class="space-y-2">
+      <div class="text-xs text-gray-500">No data yet.</div>
+    </div>
+  </div>
+
+  <div class="flex flex-col gap-3">
+    <button id="summary-next-btn" onclick="nextExercise()"
+      class="w-full lime-bg text-gray-900 font-bold py-4 rounded-2xl text-sm tracking-wide hover:brightness-105 active:scale-95 transition-all duration-150">
+      Next Exercise →
+    </button>
+    <button onclick="goTo('view-dashboard')"
+      class="w-full bg-transparent text-gray-500 font-medium py-2 text-sm">
+      ← Back to Home
+    </button>
+  </div>
+  <p class="text-center text-gray-700 text-xs mt-4">All inference ran on-device · No video uploaded to cloud</p>
+</div>
+
+
+<!-- ════════════════════════ NAVIGATION SCRIPT ══════════════════════════ -->
+<script>
+const WORKOUT_PLAN = [
+  { exKey: 'squat',         label: 'Bodyweight Squat', reps: 3 },
+  { exKey: 'bicep_curl',    label: 'Bicep Curl',        reps: 3 },
+  { exKey: 'lateral_raise', label: 'Lateral Raise',     reps: 3 },
+];
+window.REPS_TARGET = WORKOUT_PLAN[0].reps;   // read by module script
+
+let planIndex      = 0;
+let allSessionsData = [];
+let chartInstance  = null;
+let _sessionData   = null;   // populated by module script via window.getSessionData()
+
+function goTo(viewId) {
+  document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+  document.getElementById(viewId).classList.remove('hidden');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (viewId === 'view-summary') buildSummary();
+}
+
+// Start a session — always uses WORKOUT_PLAN[planIndex]
+function startSession() {
+  const step = WORKOUT_PLAN[planIndex];
+  window.REPS_TARGET = step.reps;
+  if (window.setCurrentExercise) window.setCurrentExercise(step.exKey);
+  resetSessionState();
+  goTo('view-session');
+  if (window.initRealSession) window.initRealSession();
+}
+
+// Start the full plan from the beginning
+function startPlan() {
+  planIndex = 0;
+  allSessionsData = [];
+  startSession();
+}
+
+// Reset all session UI counters
+function resetSessionState() {
+  const step = WORKOUT_PLAN[planIndex];
+  document.getElementById('rep-counter').innerHTML =
+    `0<span class="text-gray-500 text-base font-semibold">/${step.reps}</span>`;
+  document.getElementById('set-counter').innerHTML =
+    `<span class="lime">${planIndex + 1}</span><span class="text-gray-500 text-base font-semibold">/${WORKOUT_PLAN.length}</span>`;
+  document.getElementById('form-score').textContent = '—';
+  document.getElementById('phase-pill').textContent = 'Ready';
+  document.getElementById('phase-pill').className = '';
+  document.getElementById('hint-panel').innerHTML = '';
+  // Sync dropdown to current plan exercise
+  const sel = document.getElementById('session-ex-select');
+  if (sel) sel.value = step.exKey;
+}
+
+function endSession() {
+  if (window.stopRealSession) window.stopRealSession();
+  _sessionData = window.getSessionData ? window.getSessionData() : null;
+  if (_sessionData) allSessionsData.push({ ..._sessionData, planStep: planIndex });
+  goTo('view-summary');
+}
+
+// Called automatically by module script when rep target is reached
+window.autoEndSession = function() {
+  endSession();
+};
+
+// Move to next exercise in plan (called from Summary "Next" button)
+function nextExercise() {
+  planIndex++;
+  if (planIndex >= WORKOUT_PLAN.length) {
+    planIndex = 0;
+    allSessionsData = [];
+    goTo('view-dashboard');
+    return;
+  }
+  startSession();
+}
+
+// ── Summary / View 4 ─────────────────────────────────────────────────
+function buildSummary() {
+  const d = _sessionData;
+  const accuracy  = d ? d.accuracy : 92;
+  const reps      = d ? d.repCount : 8;
+  const elapsed   = d ? d.elapsed  : 102;
+  const sorted    = d ? d.sorted   : [];
+  const exLabel   = d ? d.exLabel  : 'Bodyweight Squat';
+  const angleData = d ? d.keyAngleBuffer : [];
+
+  // Summary heading and step indicator
+  const isLast = planIndex >= WORKOUT_PLAN.length - 1;
+  document.getElementById('sum-subtitle').textContent =
+    `${exLabel}  ·  Set ${planIndex + 1} / ${WORKOUT_PLAN.length}`;
+  const nextBtn = document.getElementById('summary-next-btn');
+  if (nextBtn) {
+    nextBtn.textContent = isLast
+      ? 'Finish Workout ✓'
+      : `Next: ${WORKOUT_PLAN[planIndex + 1].label} →`;
+    nextBtn.style.display = '';
+  }
+
+  document.getElementById('summary-reps').textContent = reps;
+  document.getElementById('summary-duration').textContent =
+    elapsed >= 60 ? `${Math.floor(elapsed/60)}m${elapsed%60}s` : `${elapsed}s`;
+  document.getElementById('summary-accuracy').textContent = accuracy + '%';
+  document.getElementById('score-ring-text').textContent  = accuracy + '%';
+
+  // Score ring: dashoffset maps 0-100% → 283-0
+  const offset = 283 * (1 - accuracy / 100);
+  document.getElementById('score-ring-el').style.strokeDashoffset = offset;
+  document.getElementById('score-ring-el').style.stroke =
+    accuracy >= 80 ? '#deff9a' : accuracy >= 55 ? '#ffd700' : '#ff5555';
+
+  // Form notes
+  const notesList = document.getElementById('form-notes-list');
+  if (!sorted || sorted.length === 0) {
+    notesList.innerHTML = `<div class="text-xs text-gray-500">Great form! No major issues detected.</div>`;
+  } else {
+    const maxCnt = sorted[0][1] || 1;
+    notesList.innerHTML = sorted.map(([hint, cnt]) => `
+      <div class="flex items-center justify-between">
+        <span class="text-xs text-gray-400 flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-red-500 inline-block flex-shrink-0"></span>${hint}
+        </span>
+        <div class="flex items-center gap-2">
+          <div class="w-20 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div class="h-full rounded-full bg-red-500" style="width:${Math.round(cnt/maxCnt*100)}%"></div>
+          </div>
+          <span class="text-xs text-gray-500 w-10 text-right">${Math.round(cnt/maxCnt*100)}%</span>
+        </div>
+      </div>`).join('');
+  }
+
+  // Build DTW chart after layout settles (longer on mobile)
+  setTimeout(() => initChart(angleData, d ? d.exKey : 'squat'), 300);
+
+  // Try server DTW (non-blocking)
+  if (d && d.repFrames && d.repFrames.length > 0) {
+    submitDtwAsync(d);
+  }
+}
+
+// ── DTW chart ────────────────────────────────────────────────────────
+const EX_ANGLE_RANGE = {
+  squat:         { min: 80,  max: 175, restVal: 165, workVal: 95  },
+  bicep_curl:    { min: 25,  max: 165, restVal: 160, workVal: 40  },
+  lateral_raise: { min: 10,  max: 85,  restVal: 18,  workVal: 78  },
+};
+
+function buildGolden(exKey, n) {
+  const r = EX_ANGLE_RANGE[exKey] || EX_ANGLE_RANGE.squat;
+  const pts = [];
+  const reps = Math.max(1, Math.round(n / 30));
+  for (let i = 0; i < n; i++) {
+    const t     = i / n;
+    const cycle = t * reps * 2 * Math.PI;
+    const frac  = 0.5 - 0.5 * Math.cos(cycle);
+    pts.push(r.restVal + (r.workVal - r.restVal) * frac);
+  }
+  return pts;
+}
+
+function initChart(angleData, exKey) {
+  const ctx = document.getElementById('dtw-chart').getContext('2d');
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+
+  // < 4 points: camera never really started → show "No data"
+  // 4–29 points: camera ran briefly, user moved some → mock curve with deviation
+  // >= 30 points: real session data → use actual curve
+  const count = angleData ? angleData.length : 0;
+  const NO_DATA_THRESHOLD  = 4;
+  const REAL_DATA_THRESHOLD = 30;
+
+  if (count < NO_DATA_THRESHOLD) {
+    document.getElementById('dtw-match-badge').textContent = 'No data';
+    chartInstance = new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: { x: { display: false }, y: { display: false } },
+      },
+      plugins: [{
+        id: 'nodata',
+        afterDraw(chart) {
+          const { ctx: c, chartArea: { left, top, right, bottom } } = chart;
+          c.save();
+          c.fillStyle = 'rgba(156,163,175,0.5)';
+          c.font = '13px Inter, system-ui, sans-serif';
+          c.textAlign = 'center';
+          c.textBaseline = 'middle';
+          c.fillText('No movement data recorded', (left + right) / 2, (top + bottom) / 2);
+          c.restore();
+        },
+      }],
+    });
+    return;
+  }
+
+  const N = 60;
+  let userCurve;
+
+  if (count >= REAL_DATA_THRESHOLD) {
+    // Real data: downsample to N points
+    userCurve = [];
+    for (let i = 0; i < N; i++) {
+      const srcIdx = Math.round(i / (N - 1) * (count - 1));
+      userCurve.push(angleData[srcIdx]);
+    }
+  } else {
+    // Some data but brief session — show mock curve with slight deviation
+    const r = EX_ANGLE_RANGE[exKey] || EX_ANGLE_RANGE.squat;
+    userCurve = buildGolden(exKey, N).map((v, i) => {
+      const noise = (Math.random() - 0.5) * 10;
+      if (i >= 12 && i <= 17) return v - 8 + noise;
+      return Math.max(r.min, Math.min(r.max, v + noise));
+    });
+  }
+
+  const golden = buildGolden(exKey, N);
+  const labels = Array.from({ length: N }, (_, i) => (i / 20).toFixed(1));
+
+  // Simple DTW match score
+  let totalErr = 0;
+  for (let i = 0; i < N; i++) totalErr += Math.abs(userCurve[i] - golden[i]);
+  const avgErr = totalErr / N;
+  const matchPct = Math.round(Math.max(0, Math.min(100, 100 - avgErr / 0.9)));
+  document.getElementById('dtw-match-badge').textContent = `Match: ${matchPct}%`;
+
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Golden Standard',
+          data: golden,
+          borderColor: 'rgba(222,255,154,0.75)',
+          borderWidth: 2,
+          borderDash: [6, 4],
+          pointRadius: 0,
+          tension: 0.45,
+          fill: false,
+        },
+        {
+          label: 'Your Rhythm',
+          data: userCurve,
+          borderColor: 'rgba(255,255,255,0.85)',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.35,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 900, easing: 'easeInOutQuart' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(0,0,0,0.85)',
+          titleColor: '#deff9a',
+          bodyColor: '#ccc',
+          callbacks: {
+            title: items => `t = ${items[0].label}s`,
+            label: item => ` ${item.dataset.label}: ${Math.round(item.raw)}°`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid:  { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#555', font: { size: 10 }, maxTicksLimit: 7 },
+          title: { display: true, text: 'Time (s)', color: '#444', font: { size: 10 } },
+        },
+        y: {
+          grid:  { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#555', font: { size: 10 }, callback: v => v + '°' },
+          title: { display: true, text: 'Key Angle', color: '#444', font: { size: 10 } },
+        },
+      },
+    },
+  });
+}
+
+// ── Server DTW (optional) ────────────────────────────────────────────
+async function submitDtwAsync(d) {
+  const noteEl = document.getElementById('dtw-server-note');
+  noteEl.textContent = 'Sending to DTW server…';
+  try {
+    const payload = {
+      v: 1,
+      type: 'client.action_submit',
+      session_id: crypto.randomUUID(),
+      action_id: `act-${Date.now()}`,
+      exercise_hint: d.exKey,
+      ts_start_ms: d.tsStart,
+      ts_end_ms: d.tsEnd,
+      frames: d.repFrames,
+    };
+    const res = await fetch('https://api.kineticlife.app/api/actions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const badge = document.getElementById('dtw-match-badge');
+    if (json.dtw_distance != null) {
+      const serverMatch = Math.round(Math.max(0, Math.min(100, 100 - json.dtw_distance * 8)));
+      badge.textContent = `Match: ${serverMatch}% (server)`;
+    }
+    noteEl.textContent = `Server DTW: distance=${json.dtw_distance?.toFixed(2) ?? '—'} · completeness=${json.completeness?.toFixed(2) ?? '—'}`;
+  } catch (e) {
+    noteEl.textContent = 'Server unavailable — local analysis only.';
+  }
+}
+</script>
+
+
+<!-- ════════════════════════ MODULE SCRIPT (real pipeline) ════════════ -->
+<script type="module">
+import { createPoseLandmarkerRuntime } from "./mediapipe_loader.mjs";
+import { EXERCISES, boneKey, VIS, calcAngle } from "./lib/exercise-rules.js";
+import { createSmoother } from "./lib/landmark-smoothing.js";
+import { drawSkeleton, drawAngleOnCanvas } from "./lib/pose-renderer.js";
+import { createFeedbackEffects } from "./lib/feedback-effects.js";
+
+// ── Config ─────────────────────────────────────────────────────────────
+const params = new URLSearchParams(location.search);
+const camUrl  = params.get('cam') || localStorage.getItem('kineticlife.camUrl') || '';
+const sourceMode = params.get('source') === 'ble' ? 'ble' : camUrl ? 'wifi' : 'none';
+
+// Show cam URL on login screen
+const loginNote = document.getElementById('cam-status-login');
+if (loginNote) loginNote.textContent =
+  sourceMode === 'ble' ? 'BLE mode — connect camera after entering session' :
+  camUrl ? `ESP32: ${camUrl}` : 'No ESP32 URL — add ?cam= to URL or set via pair.html';
+
+// ── Session state ───────────────────────────────────────────────────────
+let currentExKey    = 'squat';
+let appState        = 'IDLE';   // IDLE | RECORDING | DONE
+let repCount        = 0;
+let repPhase        = 'neutral';
+let hintCounts      = {};
+let totalFrames     = 0;
+let errorFrames     = 0;
+let sessionStart    = null;
+let consecErrFrames = 0;
+let displayErrSet   = new Set();
+const ERR_DEBOUNCE  = 4;
+const smoother      = createSmoother(0.45, VIS);
+
+// Key angle buffer for DTW chart (downsampled every 2nd frame)
+let keyAngleBuffer  = [];
+// Per-rep frame buffer for server DTW submission
+let repFrames       = [];
+let currentRepBuf   = [];
+let tsStart         = 0;
+let tsEnd           = 0;
+
+// ── MediaPipe + WS state ────────────────────────────────────────────────
+let landmarker      = null;
+let wsConn          = null;
+let latestBitmap    = null;
+let decodePending   = false;
+let pendingData     = null;
+let retryTimer      = null;
+let mpReady         = false;
+let wsReady         = false;
+
+// ── BLE state ────────────────────────────────────────────────────────────
+const BLE_SERVICE_UUID = '9b8f0001-6f4d-4d4f-9c9a-4b4c49464501';
+const BLE_TX_UUID      = '9b8f0002-6f4d-4d4f-9c9a-4b4c49464501';
+const BLE_RX_UUID      = '9b8f0003-6f4d-4d4f-9c9a-4b4c49464501';
+let bleDevice = null;
+let bleRx     = null;
+let bleFrame  = { expected: 0, received: 0, chunks: [], id: 0 };
+
+// ── Canvas / inference ──────────────────────────────────────────────────
+const liveCanvas  = document.getElementById('live-canvas');
+const ctx         = liveCanvas.getContext('2d');
+const inferCanvas = document.createElement('canvas');
+inferCanvas.width = 120; inferCanvas.height = 160;
+const inferCtx    = inferCanvas.getContext('2d');
+let vidTransform  = { dx: 0, dy: 0, dw: 640, dh: 480 };
+let lastTs        = -1;
+
+// ── DOM refs ────────────────────────────────────────────────────────────
+const repCounterEl  = document.getElementById('rep-counter');
+const setCounterEl  = document.getElementById('set-counter');
+const formScoreEl   = document.getElementById('form-score');
+const espStatusEl   = document.getElementById('esp-status-text');
+const espDotEl      = document.getElementById('esp-dot');
+const mpStatusEl    = document.getElementById('mp-status');
+const phasePillEl   = document.getElementById('phase-pill');
+const hintPanelEl   = document.getElementById('hint-panel');
+const sessionStatusEl = document.getElementById('session-status');
+const camPlaceholder  = document.getElementById('cam-placeholder');
+const bleOverlayEl    = document.getElementById('ble-overlay');
+const bleConnectBtn   = document.getElementById('ble-connect-btn');
+const switchWifiWrap  = document.getElementById('btn-switch-wifi-wrap');
+const switchWifiBtn   = document.getElementById('btn-switch-wifi');
+
+const REPS_PER_SET  = 8;
+const TOTAL_SETS    = 3;
+
+// Feedback effects (needs the rep counter DOM element)
+const effects = createFeedbackEffects({ repNumEl: repCounterEl });
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+function httpBase() {
+  const n = camUrl.trim().replace(/\/+$/, '');
+  if (!n) return '';
+  return /^https?:\/\//i.test(n) ? n : `http://${n}`;
+}
+
+function setEspStatus(text, connected) {
+  if (espStatusEl) espStatusEl.textContent = text;
+  if (espDotEl) {
+    espDotEl.style.background = connected ? 'var(--lime)' : '#6b7280';
+    espDotEl.style.animation  = connected ? '' : 'none';
+  }
+}
+
+function setMpStatus(text) {
+  if (mpStatusEl) mpStatusEl.textContent = text;
+}
+
+// ── WS stream ───────────────────────────────────────────────────────────
+function startDecode(data) {
+  decodePending = true;
+  pendingData   = null;
+  createImageBitmap(new Blob([data], { type: 'image/jpeg' })).then(bmp => {
+    if (latestBitmap) latestBitmap.close();
+    latestBitmap  = bmp;
+    decodePending = false;
+    if (!wsReady) {
+      wsReady = true;
+      if (camPlaceholder) camPlaceholder.style.opacity = '0';
+      setTimeout(() => { if (camPlaceholder) camPlaceholder.style.display = 'none'; }, 600);
+    }
+    if (pendingData) startDecode(pendingData);
+  });
+}
+
+function openWs() {
+  if (!camUrl) {
+    setEspStatus('No URL — add ?cam= to URL', false);
+    if (sessionStatusEl) sessionStatusEl.textContent = 'No ESP32 URL. Go to pair.html first.';
+    return;
+  }
+  const url = httpBase().replace(/^http:\/\//i, 'ws://') + '/ws';
+  const sock = new WebSocket(url);
+  wsConn = sock;
+  sock.binaryType = 'arraybuffer';
+  sock.onopen    = () => setEspStatus('Connected · live', true);
+  sock.onmessage = ({ data }) => {
+    if (decodePending) { pendingData = data; return; }
+    startDecode(data);
+  };
+  sock.onclose   = () => {
+    if (wsConn !== sock) return;
+    wsConn = null;
+    wsReady = false;
+    setEspStatus('Reconnecting…', false);
+    retryTimer = setTimeout(openWs, 2000);
+  };
+  sock.onerror   = () => setEspStatus('WebSocket error', false);
+}
+
+// ── BLE helpers ─────────────────────────────────────────────────────────
+async function bleWrite(text) {
+  if (!bleRx) throw new Error('BLE not connected');
+  const data = new TextEncoder().encode(text);
+  if (bleRx.writeValueWithoutResponse) await bleRx.writeValueWithoutResponse(data);
+  else await bleRx.writeValue(data);
+}
+
+function handleBleCameraPacket(bytes) {
+  // Header packet: "CAM:<id>:<total_bytes>:..."
+  if (bytes.length >= 4 && bytes[0] === 67 && bytes[1] === 65 && bytes[2] === 77 && bytes[3] === 58) {
+    const parts = new TextDecoder().decode(bytes).split(':');
+    bleFrame.expected = Number(parts[2]) || 0;
+    bleFrame.received = 0;
+    bleFrame.chunks   = [];
+    bleFrame.id       = Number(parts[1]) || 0;
+    return;
+  }
+  if (!bleFrame.expected) return;
+  const needed = bleFrame.expected - bleFrame.received;
+  const chunk  = bytes.length > needed ? bytes.slice(0, needed) : bytes.slice();
+  bleFrame.chunks.push(chunk);
+  bleFrame.received += chunk.byteLength;
+  if (bleFrame.received < bleFrame.expected) return;
+
+  const blob = new Blob(bleFrame.chunks, { type: 'image/jpeg' });
+  createImageBitmap(blob).then(bmp => {
+    if (latestBitmap) latestBitmap.close();
+    latestBitmap = bmp;
+    if (!wsReady) {
+      wsReady = true;
+      if (camPlaceholder) camPlaceholder.style.opacity = '0';
+      setTimeout(() => { if (camPlaceholder) camPlaceholder.style.display = 'none'; }, 600);
+    }
+  }).catch(() => {});
+  bleFrame.expected = 0; bleFrame.received = 0; bleFrame.chunks = [];
+}
+
+async function connectBleCamera() {
+  if (!navigator.bluetooth) {
+    setEspStatus('Web Bluetooth unavailable', false);
+    return;
+  }
+  setEspStatus('Opening BLE chooser…', false);
+  try {
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'KineticLife-BLE' }],
+      optionalServices: [BLE_SERVICE_UUID],
+    });
+    bleDevice.addEventListener('gattserverdisconnected', () => {
+      bleRx = null;
+      setEspStatus('BLE disconnected', false);
+      if (bleOverlayEl) bleOverlayEl.style.display = 'flex';
+      if (switchWifiWrap) switchWifiWrap.style.display = 'none';
+    });
+
+    const server  = await bleDevice.gatt.connect();
+    const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+    const tx  = await service.getCharacteristic(BLE_TX_UUID);
+    bleRx     = await service.getCharacteristic(BLE_RX_UUID);
+    await tx.startNotifications();
+    tx.addEventListener('characteristicvaluechanged', (evt) => {
+      const v = evt.target.value;
+      handleBleCameraPacket(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
+    });
+
+    setEspStatus('BLE connected · live', true);
+    if (bleOverlayEl) bleOverlayEl.style.display = 'none';
+    if (switchWifiWrap) switchWifiWrap.style.display = '';
+    await bleWrite('size=180');
+    await bleWrite('gap=12');
+    await bleWrite('cam=0');
+  } catch (e) {
+    setEspStatus(`BLE error: ${e.message || e}`, false);
+  }
+}
+
+if (bleConnectBtn) bleConnectBtn.addEventListener('click', connectBleCamera);
+if (switchWifiBtn) switchWifiBtn.addEventListener('click', async () => {
+  try {
+    setEspStatus('Switching to WiFi… (rebooting)', false);
+    await bleWrite('mode=wifi');
+  } catch (e) {
+    setEspStatus(`Switch error: ${e.message || e}`, false);
+  }
+});
+
+// ── Main tick ───────────────────────────────────────────────────────────
+function tick(now) {
+  requestAnimationFrame(tick);
+
+  // Keep canvas sized to window
+  if (liveCanvas.width !== window.innerWidth)  liveCanvas.width  = window.innerWidth;
+  if (liveCanvas.height !== window.innerHeight) liveCanvas.height = window.innerHeight;
+
+  if (appState !== 'RECORDING') return;
+  if (!landmarker || !latestBitmap) return;
+  if (now - lastTs < 40) return;   // ~25 fps cap
+  lastTs = now;
+
+  const W = liveCanvas.width, H = liveCanvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // ESP32 sends 320×240 landscape JPEG — rotate 90° CW to 240×320 portrait
+  const vw = 240, vh = 320;
+  const scale = Math.max(W / vw, H / vh);
+  const dw = vw * scale, dh = vh * scale;
+  const dx = (W - dw) / 2, dy = (H - dh) / 2;
+  vidTransform = { dx, dy, dw, dh };
+
+  // Solid dark background — raw video intentionally not shown, skeleton only
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, W, H);
+
+  // Inference canvas still needs the raw frame for pose detection
+  inferCtx.save();
+  inferCtx.translate(inferCanvas.width, 0);
+  inferCtx.rotate(Math.PI / 2);
+  inferCtx.drawImage(latestBitmap, 0, 0, inferCanvas.height, inferCanvas.width);
+  inferCtx.restore();
+
+  const result = landmarker.detectForVideo(inferCanvas, now);
+  if (!result.landmarks.length) return;
+
+  const rawLm     = result.landmarks[0];
+  const displayLm = smoother.smooth(rawLm);
+  const ex        = EXERCISES[currentExKey];
+  const keyAngle  = ex.getKeyAngle(rawLm);
+  totalFrames++;
+
+  // Buffer angle every other frame for DTW chart
+  if (totalFrames % 2 === 0) keyAngleBuffer.push(keyAngle);
+
+  // Per-frame data for server DTW (simplified: key angle only, others null)
+  const frameAngles = Array(14).fill(null);
+  if (currentExKey === 'squat') {
+    frameAngles[0] = calcAngle(rawLm[23], rawLm[25], rawLm[27]);  // left_knee
+    frameAngles[1] = calcAngle(rawLm[24], rawLm[26], rawLm[28]);  // right_knee
+  } else if (currentExKey === 'bicep_curl') {
+    frameAngles[3] = calcAngle(rawLm[12], rawLm[14], rawLm[16]);  // right_elbow
+  } else if (currentExKey === 'lateral_raise') {
+    frameAngles[6] = calcAngle(rawLm[24], rawLm[12], rawLm[14]);  // right_shoulder
+    frameAngles[7] = calcAngle(rawLm[23], rawLm[11], rawLm[13]);  // left_shoulder
+  }
+  currentRepBuf.push({ frame_id: totalFrames, ts_ms: Math.round(now), joint_angles: frameAngles });
+
+  // State machine
+  updateSM(keyAngle, ex, displayLm, now);
+
+  // Form checks
+  const errorBoneSet = new Set();
+  let   frameHasErr  = false;
+  for (const check of ex.checks) {
+    const v  = check.getVal(rawLm);
+    const ok = check.valid(v, repPhase);
+    if (!ok) {
+      check.bones.forEach(([a, b]) => errorBoneSet.add(boneKey(a, b)));
+      hintCounts[check.hint] = (hintCounts[check.hint] || 0) + 1;
+      frameHasErr = true;
+    }
+  }
+  if (frameHasErr) {
+    errorFrames++;
+    consecErrFrames = Math.min(consecErrFrames + 1, ERR_DEBOUNCE);
+  } else {
+    consecErrFrames = Math.max(consecErrFrames - 1, 0);
+  }
+  if (consecErrFrames >= ERR_DEBOUNCE) displayErrSet = errorBoneSet;
+  else if (consecErrFrames === 0)       displayErrSet = new Set();
+
+  // Render
+  drawSkeleton(ctx, vidTransform, displayLm, displayErrSet);
+  drawAngleOnCanvas(ctx, vidTransform, displayLm, ex);
+  effects.draw(ctx, now, vidTransform, displayLm, displayErrSet);
+
+  // Update DOM counters
+  const accuracy = totalFrames > 0 ? Math.round((1 - errorFrames / totalFrames) * 100) : 100;
+  if (formScoreEl) formScoreEl.textContent = accuracy + '%';
+  updateHintPanel(ex);
+  updatePhasePill(ex);
+}
+
+// ── State machine ───────────────────────────────────────────────────────
+function updateSM(angle, ex, displayLm, now) {
+  if (ex.restCond(angle)) {
+    if (repPhase === 'work') {
+      repCount++;
+      // Archive this rep's frames for DTW
+      if (currentRepBuf.length > 0) {
+        repFrames.push(...currentRepBuf);
+      }
+      currentRepBuf = [];
+
+      // Update counters
+      const target = window.REPS_TARGET || 3;
+      if (repCounterEl) {
+        repCounterEl.innerHTML =
+          `${repCount}<span class="text-gray-500 text-base font-semibold">/${target}</span>`;
+        repCounterEl.classList.remove('rep-pop');
+        void repCounterEl.offsetWidth;
+        repCounterEl.classList.add('rep-pop');
+      }
+      effects.onRepCounted({ repCount, lm: displayLm, vidTransform, now });
+
+      // Auto-end when rep target is reached
+      if (repCount >= target) {
+        appState = 'DONE';
+        setTimeout(() => { if (typeof window.autoEndSession === 'function') window.autoEndSession(); }, 700);
+      }
+    }
+    repPhase = 'rest';
+  } else if (ex.workCond(angle)) {
+    repPhase = 'work';
+  }
+}
+
+// ── DOM helpers ─────────────────────────────────────────────────────────
+function updateHintPanel(ex) {
+  const activeHints = new Set();
+  if (consecErrFrames >= ERR_DEBOUNCE) {
+    for (const check of ex.checks) {
+      if (!check.valid(check.getVal, repPhase)) {
+        // Use hint from displayErrSet bones
+      }
+    }
+  }
+  if (!hintPanelEl) return;
+  hintPanelEl.innerHTML = ex.checks.map(check => {
+    const isActive = consecErrFrames >= ERR_DEBOUNCE &&
+                     [...displayErrSet].some(k =>
+                       check.bones.some(([a,b]) => k === boneKey(a, b)));
+    return `<div class="hint-row ${isActive ? 'hint-err' : 'hint-ok'}">
+      <span class="hint-dot"></span>${check.hint}
+    </div>`;
+  }).join('');
+}
+
+function updatePhasePill(ex) {
+  if (!phasePillEl) return;
+  if (repPhase === 'neutral') {
+    phasePillEl.textContent  = 'Ready';
+    phasePillEl.className    = '';
+  } else {
+    phasePillEl.textContent  = ex.phaseLabel[repPhase] ?? repPhase;
+    phasePillEl.className    = repPhase === 'work' ? 'phase-work' : 'phase-rest';
+  }
+}
+
+// ── Public API (called by navigation script) ────────────────────────────
+window.setCurrentExercise = function(key) {
+  currentExKey = key;
+};
+
+window.initRealSession = async function() {
+  // Reset state
+  repCount    = 0; repPhase = 'neutral';
+  hintCounts  = {}; totalFrames = 0; errorFrames = 0;
+  keyAngleBuffer = []; repFrames = []; currentRepBuf = [];
+  tsStart = performance.now();
+  consecErrFrames = 0; displayErrSet = new Set();
+  smoother.reset();
+  effects.reset();
+  appState = 'RECORDING';
+
+  // Reset placeholder and BLE frame buffer
+  if (camPlaceholder) { camPlaceholder.style.opacity = '1'; camPlaceholder.style.display = ''; }
+  wsReady = false;
+  bleFrame = { expected: 0, received: 0, chunks: [], id: 0 };
+
+  // Connect to IoT device
+  if (sourceMode === 'ble') {
+    if (bleRx) {
+      // Already connected from a previous exercise — restart stream
+      if (bleOverlayEl) bleOverlayEl.style.display = 'none';
+      if (switchWifiWrap) switchWifiWrap.style.display = '';
+      setEspStatus('BLE connected · live', true);
+      await bleWrite('cam=0').catch(() => {});
+    } else {
+      // First time — show connect overlay, user clicks the button
+      if (bleOverlayEl) bleOverlayEl.style.display = 'flex';
+      if (switchWifiWrap) switchWifiWrap.style.display = 'none';
+      if (sessionStatusEl) sessionStatusEl.textContent = 'Click "Connect BLE Camera" to begin…';
+    }
+  } else if (camUrl) {
+    setEspStatus('Applying camera settings…', false);
+    if (sessionStatusEl) sessionStatusEl.textContent = `Connecting to ${camUrl}…`;
+    await fetch(
+      `${httpBase()}/cam?res=320x240&q=12&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0&vflip=0&hmirror=0`,
+      { signal: AbortSignal.timeout(3000) }
+    ).catch(() => {});
+    if (!wsConn) openWs();
+  } else {
+    setEspStatus('No URL — add ?cam= to URL', false);
+    if (sessionStatusEl) sessionStatusEl.textContent = 'No ESP32 URL. Go to pair.html first.';
+  }
+
+  // Load MediaPipe (once)
+  if (!landmarker) {
+    setMpStatus('Loading…');
+    try {
+      const runtime = await createPoseLandmarkerRuntime();
+      landmarker     = runtime.landmarker;
+      mpReady        = true;
+      setMpStatus('Ready · PoseLandmarker');
+    } catch(e) {
+      setMpStatus('Failed: ' + e.message);
+    }
+  } else {
+    setMpStatus('Ready · PoseLandmarker');
+  }
+};
+
+window.stopRealSession = function() {
+  tsEnd    = performance.now();
+  appState = 'DONE';
+  if (wsConn) { wsConn.onclose = null; wsConn.close(); wsConn = null; }
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  if (sourceMode === 'ble' && bleRx) bleWrite('stop').catch(() => {});
+};
+
+window.getSessionData = function() {
+  const elapsed  = Math.round((tsEnd - (tsStart || tsEnd)) / 1000);
+  const accuracy = totalFrames > 0 ? Math.round((1 - errorFrames / totalFrames) * 100) : 100;
+  const sorted   = Object.entries(hintCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const exLabel  = EXERCISES[currentExKey]?.label ?? currentExKey;
+  return {
+    repCount, elapsed, accuracy, sorted, exLabel, exKey: currentExKey,
+    keyAngleBuffer: [...keyAngleBuffer],
+    repFrames: [...repFrames],
+    tsStart, tsEnd,
+  };
+};
+
+// ── Start tick loop ─────────────────────────────────────────────────────
+requestAnimationFrame(tick);
+
+// Pre-load MediaPipe in background on page load
+if (camUrl || sourceMode === 'ble') {
+  createPoseLandmarkerRuntime().then(runtime => {
+    landmarker = runtime.landmarker;
+    mpReady    = true;
+    setMpStatus('Ready · PoseLandmarker');
+  }).catch(() => {});
+}
+</script>
+</body>
+</html>

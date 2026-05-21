@@ -92,6 +92,12 @@ body {
   font-size: 0.78rem;
 }
 #btnRaw.raw-off { color: rgba(255,255,255,0.2); }
+#btnOrient {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.45);
+  font-size: 0.78rem;
+}
+#btnOrient.orient-locked { color: #DEFF9A; }
 #btnHome {
   background: rgba(255,255,255,0.08);
   color: rgba(255,255,255,0.5);
@@ -108,6 +114,7 @@ body {
 }
 #sourceBadge.esp { background: rgba(52,211,153,0.15); color: #34d399; }
 #sourceBadge.local { background: rgba(96,165,250,0.15); color: #60a5fa; }
+#sourceBadge.ble { background: rgba(222,255,154,0.15); color: #DEFF9A; }
 
 #statusBadge {
   font-size: 0.75rem;
@@ -207,6 +214,37 @@ body {
 }
 #analysisOverlay[hidden] { display: none; }
 
+#bleOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(0,0,0,0.82);
+}
+#bleOverlay[hidden] { display: none; }
+#blePanel {
+  width: min(420px, 90vw);
+  background: #111;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 16px;
+  padding: 26px;
+  display: grid;
+  gap: 14px;
+  text-align: center;
+}
+#blePanel h2 { font-size: 1.2rem; }
+#blePanel p { color: rgba(255,255,255,0.58); font-size: 0.9rem; line-height: 1.45; }
+#btnBleConnect {
+  border: none;
+  border-radius: 10px;
+  padding: 13px;
+  background: #DEFF9A;
+  color: #111;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 #summaryCard {
   background: #111;
   border: 1px solid rgba(255,255,255,0.1);
@@ -300,7 +338,9 @@ body {
   <button class="hdr-btn" id="btnFinish">Finish Set</button>
   <button class="hdr-btn" id="btnReset">Reset</button>
   <button class="hdr-btn" id="btnRaw">raw ●</button>
+  <button class="hdr-btn" id="btnOrient">⟳ orient</button>
   <button class="hdr-btn" id="btnHome">← Home</button>
+  <button class="hdr-btn" id="btnSwitchWifi" style="display:none;color:#60a5fa;border-color:#60a5fa">WiFi Mode</button>
   <span id="sourceBadge">—</span>
   <span id="statusBadge">loading…</span>
 </div>
@@ -331,6 +371,14 @@ body {
   </div>
 </div>
 
+<div id="bleOverlay" hidden>
+  <div id="blePanel">
+    <h2>Connect BLE Camera</h2>
+    <p>Switch the ESP32 to BLE mode from pair.html → Direct Connect → Switch to BLE Mode, then connect here.</p>
+    <button id="btnBleConnect">Connect BLE</button>
+  </div>
+</div>
+
 <script type="module">
 import { createPoseLandmarkerRuntime } from "./mediapipe_loader.mjs";
 import { logMediaPipeRuntime, logPageBoot, logWsEvent, probeDevice } from "./runtime_log.mjs";
@@ -340,10 +388,10 @@ import { drawSkeleton, drawAngleOnCanvas } from "./lib/pose-renderer.js";
 import { createFeedbackEffects } from "./lib/feedback-effects.js";
 
 // ── Source detection ───────────────────────────────────────────────────────
-// sourceMode = 'esp32' when camUrl is set; 'local' when no camUrl (tablet front camera)
+// sourceMode = 'esp32' when camUrl is set; 'ble' with ?source=ble; otherwise local camera
 const _params = new URLSearchParams(location.search);
 const camUrl  = _params.get('cam') || '';
-let   sourceMode = camUrl ? 'esp32' : 'local';
+let   sourceMode = _params.get('source') === 'ble' ? 'ble' : camUrl ? 'esp32' : 'local';
 logPageBoot('demo-table', { camUrl: camUrl || null, sourceMode });
 
 // ── URL helpers ────────────────────────────────────────────────────────────
@@ -358,6 +406,14 @@ let latestBitmap  = null;
 let decodePending = false;
 let pendingData   = null;
 let retryTimer    = null;
+
+// ── BLE camera source state ────────────────────────────────────────────────
+const BLE_SERVICE_UUID = '9b8f0001-6f4d-4d4f-9c9a-4b4c49464501';
+const BLE_TX_UUID      = '9b8f0002-6f4d-4d4f-9c9a-4b4c49464501';
+const BLE_RX_UUID      = '9b8f0003-6f4d-4d4f-9c9a-4b4c49464501';
+let bleDevice = null;
+let bleRx = null;
+let bleFrame = { expected: 0, received: 0, chunks: [], id: 0, frames: 0, bytes: 0 };
 
 // Offscreen inference canvas for ESP32 mode: 120×160 portrait
 const inferCanvas = document.createElement('canvas');
@@ -388,6 +444,63 @@ let lastTs         = -1;
 let showRaw        = true;
 let vidTransform   = { dx: 0, dy: 0, dw: 640, dh: 480 };
 
+// ── BLE/ESP32 orientation auto-detection ───────────────────────────────────
+let lockedRotationRad = null;   // null = not yet determined
+let orientDetecting   = false;
+let _mpTs = 0;
+function nextMpTs() {
+  _mpTs = Math.max(performance.now(), _mpTs + 1);
+  return _mpTs;
+}
+
+function detectOrientation(bitmap) {
+  orientDetecting = true;
+
+  const tmpCv  = document.createElement('canvas');
+  tmpCv.width  = inferCanvas.width;   // 120
+  tmpCv.height = inferCanvas.height;  // 160
+  const tmpCtx = tmpCv.getContext('2d');
+
+  let bestRad   = null;
+  let bestScore = -Infinity;
+
+  for (const rad of [Math.PI / 2, -Math.PI / 2]) {
+    tmpCtx.clearRect(0, 0, tmpCv.width, tmpCv.height);
+    tmpCtx.save();
+    if (rad > 0) tmpCtx.translate(tmpCv.width, 0);
+    else         tmpCtx.translate(0, tmpCv.height);
+    tmpCtx.rotate(rad);
+    tmpCtx.drawImage(bitmap, 0, 0, tmpCv.height, tmpCv.width);
+    tmpCtx.restore();
+
+    const result = landmarker.detectForVideo(tmpCv, nextMpTs());
+    if (!result.landmarks.length) continue;
+
+    const lm = result.landmarks[0];
+    const nose = lm[0], ls = lm[11], rs = lm[12];
+    if (!nose || !ls || !rs) continue;
+
+    // MediaPipe y increases downward. Correct orientation: nose above shoulder midpoint.
+    // Score = shoulder_mid_y - nose_y; positive means head is above shoulders.
+    const score = (ls.y + rs.y) / 2 - nose.y;
+    if (score > bestScore) { bestScore = score; bestRad = rad; }
+  }
+
+  // Lock only when head is clearly above shoulders (>5% of normalised frame height)
+  if (bestRad !== null && bestScore > 0.05) {
+    lockedRotationRad = bestRad;
+    const dir = bestRad > 0 ? '+90°' : '−90°';
+    console.log(`[orient] locked ${dir} head_above_shoulders=${bestScore.toFixed(3)}`);
+    statusBadge.textContent = `BLE · orientation locked (${dir})`;
+    document.getElementById('btnOrient').classList.add('orient-locked');
+    document.getElementById('btnOrient').textContent = `⟳ ${dir}`;
+  } else {
+    console.log(`[orient] retry best_score=${bestScore.toFixed(3)}`);
+  }
+
+  orientDetecting = false;
+}
+
 // ── Display smoothing state ────────────────────────────────────────────────
 const smoother      = createSmoother(0.45, VIS);
 let consecErrFrames = 0;
@@ -404,6 +517,8 @@ const exNoteEl        = document.getElementById('exNote');
 const statusBadge     = document.getElementById('statusBadge');
 const sourceBadge     = document.getElementById('sourceBadge');
 const analysisOverlay = document.getElementById('analysisOverlay');
+const bleOverlay      = document.getElementById('bleOverlay');
+const btnBleConnect   = document.getElementById('btnBleConnect');
 const effects          = createFeedbackEffects({ repNumEl });
 
 // ── WS helpers (ESP32 mode) ────────────────────────────────────────────────
@@ -445,6 +560,100 @@ function openWs() {
   };
 }
 
+// ── BLE helpers ────────────────────────────────────────────────────────────
+async function bleWrite(text) {
+  if (!bleRx) throw new Error('BLE is not connected');
+  const data = new TextEncoder().encode(text);
+  if (bleRx.writeValueWithoutResponse) await bleRx.writeValueWithoutResponse(data);
+  else await bleRx.writeValue(data);
+}
+
+function handleBleCameraPacket(bytes) {
+  if (bytes.length >= 4 && bytes[0] === 67 && bytes[1] === 65 && bytes[2] === 77 && bytes[3] === 58) {
+    const parts = new TextDecoder().decode(bytes).split(':');
+    bleFrame.expected = Number(parts[2]) || 0;
+    bleFrame.received = 0;
+    bleFrame.chunks = [];
+    bleFrame.id = Number(parts[1]) || 0;
+    statusBadge.textContent = `BLE frame ${bleFrame.id} · ${bleFrame.expected} bytes`;
+    return;
+  }
+
+  if (!bleFrame.expected) return;
+  const needed = bleFrame.expected - bleFrame.received;
+  const chunk = bytes.length > needed ? bytes.slice(0, needed) : bytes.slice();
+  bleFrame.chunks.push(chunk);
+  bleFrame.received += chunk.byteLength;
+
+  if (bleFrame.received < bleFrame.expected) return;
+
+  const blob = new Blob(bleFrame.chunks, { type: 'image/jpeg' });
+  createImageBitmap(blob).then((bmp) => {
+    if (latestBitmap) latestBitmap.close();
+    latestBitmap = bmp;
+    bleFrame.frames += 1;
+    bleFrame.bytes += bleFrame.expected;
+    statusBadge.textContent = `BLE camera · ${bleFrame.frames} frames`;
+  }).catch((e) => {
+    statusBadge.textContent = `BLE decode error: ${e.message || e}`;
+  });
+
+  bleFrame.expected = 0;
+  bleFrame.received = 0;
+  bleFrame.chunks = [];
+}
+
+async function connectBleCamera() {
+  if (!navigator.bluetooth) {
+    statusBadge.textContent = 'Web Bluetooth unavailable';
+    return;
+  }
+  statusBadge.textContent = 'opening BLE chooser…';
+  try {
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'KineticLife-BLE' }],
+      optionalServices: [BLE_SERVICE_UUID],
+    });
+    bleDevice.addEventListener('gattserverdisconnected', () => {
+      bleRx = null;
+      statusBadge.textContent = 'BLE disconnected';
+      bleOverlay.hidden = false;
+    });
+
+    const server = await bleDevice.gatt.connect();
+    const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+    const tx = await service.getCharacteristic(BLE_TX_UUID);
+    bleRx = await service.getCharacteristic(BLE_RX_UUID);
+    await tx.startNotifications();
+    tx.addEventListener('characteristicvaluechanged', (event) => {
+      const value = event.target.value;
+      handleBleCameraPacket(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+    });
+
+    sourceBadge.textContent = 'BLE'; sourceBadge.className = 'ble';
+    statusBadge.textContent = 'BLE connected · starting camera…';
+    bleOverlay.hidden = true;
+    document.getElementById('btnSwitchWifi').style.display = '';
+    await bleWrite('size=180');
+    await bleWrite('gap=12');
+    await bleWrite('cam=0');
+  } catch (e) {
+    statusBadge.textContent = `BLE error: ${e.message || e}`;
+    bleOverlay.hidden = false;
+  }
+}
+
+btnBleConnect.addEventListener('click', connectBleCamera);
+
+document.getElementById('btnSwitchWifi').addEventListener('click', async () => {
+  try {
+    statusBadge.textContent = 'Switching to WiFi mode… (device rebooting)';
+    await bleWrite('mode=wifi');
+  } catch (e) {
+    statusBadge.textContent = `Switch error: ${e.message || e}`;
+  }
+});
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
@@ -460,6 +669,10 @@ async function init() {
     ).catch(() => {});
     statusBadge.textContent = `connecting → ${camUrl}`;
     openWs();
+  } else if (sourceMode === 'ble') {
+    sourceBadge.textContent = 'BLE'; sourceBadge.className = 'ble';
+    statusBadge.textContent = 'connect BLE camera';
+    bleOverlay.hidden = false;
   } else {
     sourceBadge.textContent = 'Local Cam'; sourceBadge.className = 'local';
     statusBadge.textContent = 'requesting camera…';
@@ -482,7 +695,7 @@ async function init() {
   const runtime = await createPoseLandmarkerRuntime();
   landmarker = runtime.landmarker;
   logMediaPipeRuntime(runtime);
-  statusBadge.textContent = sourceMode === 'esp32' ? 'ESP32 · ready' : 'local camera · ready';
+  statusBadge.textContent = sourceMode === 'esp32' ? 'ESP32 · ready' : sourceMode === 'ble' ? 'BLE · waiting for camera' : 'local camera · ready';
   sessionStart = performance.now();
   requestAnimationFrame(tick);
 }
@@ -500,7 +713,7 @@ function tick(now) {
 
   let inferSource;
 
-  if (sourceMode === 'esp32') {
+  if (sourceMode === 'esp32' || sourceMode === 'ble') {
     if (!latestBitmap) return;
 
     const vw = 240, vh = 320;
@@ -509,17 +722,33 @@ function tick(now) {
     const dx = (W - dw) / 2, dy = (H - dh) / 2;
     vidTransform = { dx, dy, dw, dh };
 
+    // Block rendering until orientation is confirmed
+    if (lockedRotationRad === null) {
+      if (!orientDetecting && landmarker) detectOrientation(latestBitmap);
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Detecting orientation… stand in front of camera', W / 2, H / 2);
+      return;
+    }
+
+    const rotRad = lockedRotationRad;
+
     if (showRaw) {
       ctx.save();
-      ctx.translate(dx + dw, dy);
-      ctx.rotate(Math.PI / 2);
+      if (rotRad > 0) ctx.translate(dx + dw, dy);
+      else            ctx.translate(dx, dy + dh);
+      ctx.rotate(rotRad);
       ctx.drawImage(latestBitmap, 0, 0, dh, dw);
       ctx.restore();
     }
 
     inferCtx.save();
-    inferCtx.translate(inferCanvas.width, 0);
-    inferCtx.rotate(Math.PI / 2);
+    if (rotRad > 0) inferCtx.translate(inferCanvas.width, 0);
+    else            inferCtx.translate(0, inferCanvas.height);
+    inferCtx.rotate(rotRad);
     inferCtx.drawImage(latestBitmap, 0, 0, inferCanvas.height, inferCanvas.width);
     inferCtx.restore();
     inferSource = inferCanvas;
@@ -551,7 +780,7 @@ function tick(now) {
   ctx.fillStyle = 'rgba(0,0,0,0.38)';
   ctx.fillRect(0, 0, W, H);
 
-  const result = landmarker.detectForVideo(inferSource, now);
+  const result = landmarker.detectForVideo(inferSource, nextMpTs());
   if (!result.landmarks.length) return;
 
   const rawLm     = result.landmarks[0];
@@ -702,6 +931,15 @@ document.getElementById('btnRaw').addEventListener('click', () => {
   const btn = document.getElementById('btnRaw');
   btn.textContent = showRaw ? 'raw ●' : 'raw ○';
   btn.classList.toggle('raw-off', !showRaw);
+});
+
+document.getElementById('btnOrient').addEventListener('click', () => {
+  lockedRotationRad = null;
+  orientDetecting   = false;
+  const btn = document.getElementById('btnOrient');
+  btn.classList.remove('orient-locked');
+  btn.textContent = '⟳ orient';
+  statusBadge.textContent = 'detecting orientation…';
 });
 
 document.getElementById('btnHome').addEventListener('click', () => {

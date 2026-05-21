@@ -78,6 +78,22 @@
     @media (max-width: 500px) {
       .bar input { min-width: 120px; }
     }
+
+    /* ── best config tracker ── */
+    #bestpanel { width:100%; padding:5px 10px; background:#080808;
+                 border-bottom:1px solid #2b2b2b; }
+    .bp-hdr  { display:flex; align-items:center; gap:8px; font-size:11px; margin-bottom:3px; flex-wrap:wrap; }
+    .bp-ttl  { color:#64748b; }
+    .bp-lbl  { color:#64748b; }
+    .bp-val  { font-weight:bold; min-width:4.5ch; font-size:11px; }
+    .bp-cur  { color:#94a3b8; }
+    .bp-best { color:#34d399; }
+    .bp-rec  { font-size:10px; color:#94a3b8; line-height:1.8; }
+    .bp-rec b { font-weight:bold; }
+    #bpReset { margin-left:auto; padding:2px 7px; border:1px solid #333;
+               background:#111; color:#555; cursor:pointer; border-radius:3px;
+               font:11px monospace; }
+    #bpReset:hover { color:#aaa; border-color:#555; }
   </style>
 </head>
 <body>
@@ -88,6 +104,7 @@
 <div class="bar">
   <input id="camUrl" placeholder="http://192.168.x.x  or  fitcam-xxxxxx.local">
   <button id="camApply">Connect</button>
+  <button id="btnBleConnect">BLE Connect</button>
   <label style="white-space:nowrap; cursor:pointer">
     <input type="checkbox" id="showVideo" checked> raw
   </label>
@@ -121,7 +138,9 @@
     <span class="cc-file">camera_init.cpp:171</span>
     <span class="cc-pair"><span class="cc-lbl">res</span>
       <select id="ccRes" class="cc-inp">
-        <option value="320x240">320×240</option>
+        <option value="160x120">160×120</option>
+        <option value="240x176">240×176</option>
+        <option value="320x240" selected>320×240</option>
         <option value="640x480">640×480</option>
       </select></span>
     <span class="cc-pair"><span class="cc-lbl">q</span>
@@ -132,13 +151,24 @@
     <span class="cc-pair"><span class="cc-lbl">brightness</span><input id="ccBr" class="cc-inp" type="number" min="-2" max="2" value="0"></span>
     <span class="cc-pair"><span class="cc-lbl">contrast</span><input id="ccCo" class="cc-inp" type="number" min="-2" max="2" value="1"></span>
     <span class="cc-pair"><span class="cc-lbl">saturation</span><input id="ccSa" class="cc-inp" type="number" min="-2" max="2" value="0"></span>
-    <span class="cc-pair"><span class="cc-lbl">sharpness</span><input id="ccSh" class="cc-inp" type="number" min="-2" max="2" value="1"></span>
+    <span class="cc-pair"><span class="cc-lbl">sharpness</span><input id="ccSh" class="cc-inp" type="number" min="-2" max="20" value="1"></span>
     <span class="cc-pair"><span class="cc-lbl">ae_level</span><input id="ccAe" class="cc-inp" type="number" min="-2" max="2" value="0"></span>
     <span class="cc-pair"><span class="cc-lbl">vflip</span><input id="ccVf" class="cc-inp" type="number" min="0" max="1" value="0"></span>
     <span class="cc-pair"><span class="cc-lbl">hmirror</span><input id="ccHm" class="cc-inp" type="number" min="0" max="1" value="0"></span>
     <button id="ccApply" class="cc-btn">Apply</button>
     <button id="ccReset" class="cc-btn" style="color:#888">Reset</button>
   </div>
+</div>
+
+<!-- best config tracker -->
+<div id="bestpanel">
+  <div class="bp-hdr">
+    <span class="bp-ttl">best config</span>
+    <span class="bp-lbl">cur</span><span id="bpCur"  class="bp-val bp-cur">—</span>
+    <span class="bp-lbl">best</span><span id="bpBest" class="bp-val bp-best">—</span>
+    <button id="bpReset">reset</button>
+  </div>
+  <div id="bpRecord" class="bp-rec">— no data yet —</div>
 </div>
 
 <!-- joint angles (14-D per §5) -->
@@ -162,8 +192,142 @@ let decodePending = false;    // true while createImageBitmap() is in flight
 let pendingData   = null;     // newest raw bytes waiting for a decode slot
 let lastFrameBytes = 0;
 
+// ── Source mode ────────────────────────────────────────────────────────────
+const sourceMode = params.get('source') === 'ble' ? 'ble' : 'esp32';
+
+// ── BLE camera ─────────────────────────────────────────────────────────────
+const BLE_SERVICE_UUID = '9b8f0001-6f4d-4d4f-9c9a-4b4c49464501';
+const BLE_TX_UUID      = '9b8f0002-6f4d-4d4f-9c9a-4b4c49464501';
+const BLE_RX_UUID      = '9b8f0003-6f4d-4d4f-9c9a-4b4c49464501';
+let bleDevice = null;
+let bleRx     = null;
+let bleFrame  = { expected: 0, received: 0, chunks: [], id: 0, frames: 0, bytes: 0 };
+
+function handleBleCameraPacket(bytes) {
+  if (bytes.length >= 4 && bytes[0]===67 && bytes[1]===65 && bytes[2]===77 && bytes[3]===58) {
+    const parts = new TextDecoder().decode(bytes).split(':');
+    bleFrame.expected = Number(parts[2]) || 0;
+    bleFrame.received = 0;
+    bleFrame.chunks   = [];
+    bleFrame.id       = Number(parts[1]) || 0;
+    return;
+  }
+  if (!bleFrame.expected) return;
+  const needed = bleFrame.expected - bleFrame.received;
+  const chunk  = bytes.length > needed ? bytes.slice(0, needed) : bytes.slice();
+  bleFrame.chunks.push(chunk);
+  bleFrame.received += chunk.byteLength;
+  if (bleFrame.received < bleFrame.expected) return;
+
+  const blob = new Blob(bleFrame.chunks, { type: 'image/jpeg' });
+  lastFrameBytes = bleFrame.expected;
+  createImageBitmap(blob).then(bmp => {
+    if (latestBitmap) latestBitmap.close();
+    latestBitmap = bmp;
+    tickFps(performance.now());
+    bleFrame.frames++;
+    bleFrame.bytes += bleFrame.expected;
+    const mWs = document.getElementById('mWsUrl');
+    if (mWs) mWs.textContent = `BLE · ${bleFrame.frames} frames · ${(bleFrame.bytes/1024).toFixed(0)} KB`;
+  }).catch(() => {});
+  bleFrame.expected = 0; bleFrame.received = 0; bleFrame.chunks = [];
+}
+
+async function connectBleCamera() {
+  if (!navigator.bluetooth) { statusEl.textContent = 'Web Bluetooth unavailable'; return; }
+  statusEl.textContent = 'opening BLE chooser…';
+  try {
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'KineticLife-BLE' }],
+      optionalServices: [BLE_SERVICE_UUID],
+    });
+    bleDevice.addEventListener('gattserverdisconnected', () => {
+      bleRx = null;
+      statusEl.textContent = 'BLE disconnected';
+      document.getElementById('btnBleConnect').classList.remove('on');
+    });
+    const server  = await bleDevice.gatt.connect();
+    const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+    const tx      = await service.getCharacteristic(BLE_TX_UUID);
+    bleRx         = await service.getCharacteristic(BLE_RX_UUID);
+    await tx.startNotifications();
+    tx.addEventListener('characteristicvaluechanged', ev => {
+      const v = ev.target.value;
+      handleBleCameraPacket(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
+    });
+    const enc = t => new TextEncoder().encode(t);
+    if (bleRx.writeValueWithoutResponse) {
+      await bleRx.writeValueWithoutResponse(enc('size=180'));
+      await bleRx.writeValueWithoutResponse(enc('gap=12'));
+      await bleRx.writeValueWithoutResponse(enc('cam=0'));
+    } else {
+      await bleRx.writeValue(enc('size=180'));
+      await bleRx.writeValue(enc('gap=12'));
+      await bleRx.writeValue(enc('cam=0'));
+    }
+    statusEl.textContent = 'BLE connected · streaming';
+    document.getElementById('btnBleConnect').classList.add('on');
+    // Sync UI to BLE firmware defaults
+    camState = { ...FW_BLE };
+    for (const [k, id] of Object.entries(CC_IDS)) {
+      const el = document.getElementById(id);
+      if (el) el.value = FW_BLE[k];
+    }
+    ccHighlight();
+    const mWs = document.getElementById('mWsUrl');
+    if (mWs) { mWs.textContent = 'BLE camera'; mWs.style.color = '#DEFF9A'; }
+  } catch (e) {
+    statusEl.textContent = `BLE error: ${e.message || e}`;
+  }
+}
+
+// ── Orientation auto-detection (head above shoulders) ─────────────────────
+let lockedRotationRad = null;
+let orientDetecting   = false;
+let _mpTs = 0;
+function nextMpTs() {
+  _mpTs = Math.max(performance.now(), _mpTs + 1);
+  return _mpTs;
+}
+
+function detectOrientation(bitmap) {
+  orientDetecting = true;
+  const tmpCv  = document.createElement('canvas');
+  tmpCv.width  = inferCanvas.width;
+  tmpCv.height = inferCanvas.height;
+  const tmpCtx = tmpCv.getContext('2d');
+  let bestRad = null, bestScore = -Infinity;
+
+  for (const rad of [Math.PI / 2, -Math.PI / 2]) {
+    tmpCtx.clearRect(0, 0, tmpCv.width, tmpCv.height);
+    tmpCtx.save();
+    if (rad > 0) tmpCtx.translate(tmpCv.width, 0);
+    else         tmpCtx.translate(0, tmpCv.height);
+    tmpCtx.rotate(rad);
+    tmpCtx.drawImage(bitmap, 0, 0, tmpCv.height, tmpCv.width);
+    tmpCtx.restore();
+    const result = landmarker.detectForVideo(tmpCv, nextMpTs());
+    if (!result.landmarks.length) continue;
+    const lm = result.landmarks[0];
+    const nose = lm[0], ls = lm[11], rs = lm[12];
+    if (!nose || !ls || !rs) continue;
+    const score = (ls.y + rs.y) / 2 - nose.y;
+    if (score > bestScore) { bestScore = score; bestRad = rad; }
+  }
+  if (bestRad !== null && bestScore > 0.05) {
+    lockedRotationRad = bestRad;
+    const dir = bestRad > 0 ? '+90°' : '−90°';
+    console.log(`[orient] locked ${dir} score=${bestScore.toFixed(3)}`);
+    statusEl.textContent = `orientation locked (${dir})`;
+  }
+  orientDetecting = false;
+}
+
 // ── Cam state (mirrors firmware defaults; updated on Apply / Reset) ────────
-const FW = { res:'320x240', q:12, brightness:0, contrast:1, saturation:0, sharpness:1, ae_level:0, vflip:0, hmirror:0 };
+// FW defaults differ by source: BLE uses 240x176/q25/vflip=1; WiFi stream uses 320x240/q12
+const FW_BLE  = { res:'240x176', q:25, brightness:0, contrast:1, saturation:0, sharpness:10, ae_level:0, vflip:1, hmirror:0 };
+const FW_WIFI = { res:'320x240', q:12, brightness:0, contrast:1, saturation:0, sharpness:1, ae_level:0, vflip:0, hmirror:0 };
+const FW = sourceMode === 'ble' ? { ...FW_BLE } : { ...FW_WIFI };
 let camState = { ...FW };
 
 const CC_IDS = { res:'ccRes', q:'ccQ', brightness:'ccBr', contrast:'ccCo',
@@ -306,10 +470,34 @@ document.getElementById("camApply").addEventListener("click", () => connect(camU
 camUrlEl.addEventListener("keydown", e => { if (e.key === "Enter") connect(camUrlEl.value); });
 
 // ── Cam control panel ─────────────────────────────────────────────────────
+function bleSendCamState(state) {
+  if (!bleRx) return;
+  const enc = t => new TextEncoder().encode(t);
+  const wr  = t => bleRx.writeValueWithoutResponse
+    ? bleRx.writeValueWithoutResponse(enc(t))
+    : bleRx.writeValue(enc(t));
+  const cmds = [
+    `res=${state.res}`,
+    `q=${state.q}`,
+    `brightness=${state.brightness}`,
+    `contrast=${state.contrast}`,
+    `saturation=${state.saturation}`,
+    `sharpness=${state.sharpness}`,
+    `ae_level=${state.ae_level}`,
+    `vflip=${state.vflip}`,
+    `hmirror=${state.hmirror}`,
+  ];
+  cmds.reduce((p, cmd) => p.then(() => wr(cmd)), Promise.resolve()).catch(() => {});
+}
+
 document.getElementById('ccApply').addEventListener('click', () => {
   camState = ccReadInputs();
   ccHighlight();
-  fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+  if (bleRx) {
+    bleSendCamState(camState);
+  } else {
+    fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+  }
 });
 
 document.getElementById('ccReset').addEventListener('click', () => {
@@ -319,7 +507,11 @@ document.getElementById('ccReset').addEventListener('click', () => {
     if (el) el.value = FW[k];
   }
   ccHighlight();
-  fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+  if (bleRx) {
+    bleSendCamState(camState);
+  } else {
+    fetch(`${camUrl}${buildCamQuery()}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+  }
 });
 
 // ── Navigation ─────────────────────────────────────────────────────────────
@@ -448,6 +640,61 @@ let dtwBusy         = false;     // worker is processing — skip new dispatches
 let compareTick     = 0;
 let lastJointScores = new Array(14).fill(null);
 let lastMatchScore  = null;
+
+// ── Best config tracker ────────────────────────────────────────────────────
+// Score = fps(35%) + visibility(30%) + valid_angles(20%) + frame_efficiency(15%)
+// fps ref=8, efficiency ref=1100 B/frame (≈10fps at 11kBps ceiling)
+const SCORE_W = { fps: 0.35, vis: 0.30, ang: 0.20, eff: 0.15 };
+let bestScore = -1;
+let bestSnap  = null;
+const metWin  = [];   // rolling window of {fps,vis,ang,bytes}
+
+function scoreOf(fps, vis, ang, bytes) {
+  return (Math.min(fps / 8, 1)       * SCORE_W.fps
+        + (vis  / 33)                * SCORE_W.vis
+        + (ang  / 14)                * SCORE_W.ang
+        + (bytes > 0 ? Math.min(1100 / bytes, 1) : 0) * SCORE_W.eff) * 100;
+}
+
+function pushMet(fps, vis, ang, bytes) {
+  metWin.push({ fps, vis, ang, bytes });
+  if (metWin.length > 30) metWin.shift();
+}
+
+function avgMet() {
+  const n = metWin.length;
+  if (!n) return null;
+  return {
+    fps:   metWin.reduce((s,m) => s + m.fps,   0) / n,
+    vis:   metWin.reduce((s,m) => s + m.vis,   0) / n,
+    ang:   metWin.reduce((s,m) => s + m.ang,   0) / n,
+    bytes: metWin.reduce((s,m) => s + m.bytes, 0) / n,
+  };
+}
+
+function updateBestPanel() {
+  const avg = avgMet();
+  if (!avg || metWin.length < 8) return;
+  const cur = scoreOf(avg.fps, avg.vis, avg.ang, avg.bytes);
+  document.getElementById('bpCur').textContent = cur.toFixed(1);
+  if (cur > bestScore) {
+    bestScore = cur;
+    bestSnap  = { config: { ...camState }, ...avg, kbps: avg.fps * avg.bytes / 1024 };
+    const c   = bestSnap.config;
+    document.getElementById('bpBest').textContent = cur.toFixed(1);
+    document.getElementById('bpRecord').innerHTML =
+      `<span style="color:#94a3b8">res=</span><b>${c.res}</b>` +
+      `&nbsp; <span style="color:#94a3b8">q=</span><b>${c.q}</b>` +
+      `&nbsp; br=${c.brightness} co=${c.contrast} sa=${c.saturation}` +
+      `&nbsp; sh=${c.sharpness} ae=${c.ae_level} vf=${c.vflip} hm=${c.hmirror}<br>` +
+      `fps=<b style="color:#34d399">${avg.fps.toFixed(1)}</b>` +
+      `&nbsp; vis=<b style="color:#e2e8f0">${Math.round(avg.vis)}/33</b>` +
+      `&nbsp; ang=<b style="color:#e2e8f0">${Math.round(avg.ang)}/14</b>` +
+      `&nbsp; bytes=<b style="color:#60a5fa">${(avg.bytes/1024).toFixed(1)}KB</b>` +
+      `&nbsp; kBps=<b style="color:#60a5fa">${bestSnap.kbps.toFixed(1)}</b>` +
+      `&nbsp; score=<b style="color:#34d399">${cur.toFixed(1)}</b>`;
+  }
+}
 
 // ── DTW Web Worker (inlined Blob — no separate .js file required) ──────────
 // Runs the O(N²) DTW computation off the main thread so it cannot stutter
@@ -592,19 +839,33 @@ function tick(now) {
   lastTick = now;
   if (!latestBitmap || !landmarker) return;
 
-  // Inference canvas: rotate 90° CW — camera sends 320×240 landscape,
-  // inferCanvas is 120×160 portrait (same 3:4 aspect, scaled down).
+  // Auto-detect orientation on first frames; block until locked
+  if (lockedRotationRad === null) {
+    if (!orientDetecting) detectOrientation(latestBitmap);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.font = '13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('detecting orientation…', canvas.width / 2, canvas.height / 2);
+    return;
+  }
+
+  const rotRad = lockedRotationRad;
+
+  // Inference canvas: rotate to portrait (camera sends 320×240 landscape)
   inferCtx.save();
-  inferCtx.translate(inferCanvas.width, 0);
-  inferCtx.rotate(Math.PI / 2);
+  if (rotRad > 0) inferCtx.translate(inferCanvas.width, 0);
+  else            inferCtx.translate(0, inferCanvas.height);
+  inferCtx.rotate(rotRad);
   inferCtx.drawImage(latestBitmap, 0, 0, inferCanvas.height, inferCanvas.width);
   inferCtx.restore();
 
-  // Display canvas: skip drawImage when raw is off (save GPU blit)
+  // Display canvas
   if (showVideo.checked) {
     ctx.save();
-    ctx.translate(canvas.width, 0);
-    ctx.rotate(Math.PI / 2);
+    if (rotRad > 0) ctx.translate(canvas.width, 0);
+    else            ctx.translate(0, canvas.height);
+    ctx.rotate(rotRad);
     ctx.drawImage(latestBitmap, 0, 0, canvas.height, canvas.width);
     ctx.restore();
   } else {
@@ -612,7 +873,7 @@ function tick(now) {
   }
 
   const t0 = performance.now();
-  const result = landmarker.detectForVideo(inferCanvas, t0);
+  const result = landmarker.detectForVideo(inferCanvas, nextMpTs());
   lastDetectMs = Math.round(performance.now() - t0);
 
   // Rolling detect average (last 20 frames)
@@ -653,6 +914,9 @@ function tick(now) {
     document.getElementById("mBytes").textContent  = lastFrameBytes > 0 ? (lastFrameBytes / 1024).toFixed(1) + "KB" : "—";
     document.getElementById("mSkip").textContent   = skipPct + "%";
 
+    pushMet(fpsHist.length / 3, visCount, validAngles, lastFrameBytes);
+    updateBestPanel();
+
     if (recording) {
       frames.push({ frame_id: frameId++, ts_ms: Math.round(now), joint_angles: angles });
       recCount.textContent = `${frames.length} frames`;
@@ -679,9 +943,22 @@ function tick(now) {
   }
 }
 
+// ── Best panel reset ───────────────────────────────────────────────────────
+document.getElementById('bpReset').addEventListener('click', () => {
+  bestScore = -1; bestSnap = null; metWin.length = 0;
+  document.getElementById('bpCur').textContent    = '—';
+  document.getElementById('bpBest').textContent   = '—';
+  document.getElementById('bpRecord').textContent = '— no data yet —';
+});
+
+// ── BLE button ─────────────────────────────────────────────────────────────
+document.getElementById('btnBleConnect').addEventListener('click', connectBleCamera);
+
 // ── Start ──────────────────────────────────────────────────────────────────
 camUrlEl.value = camUrl;
-connect(camUrl);
+if (sourceMode !== 'ble') {
+  connect(camUrl);
+}
 init().catch(e => { statusEl.textContent = "error: " + e.message; console.error(e); });
 </script>
 </body>

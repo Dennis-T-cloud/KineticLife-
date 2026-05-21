@@ -319,7 +319,6 @@ def _per_joint_error(
         JOINT_NAMES,
         user_frame.joint_angles,
         template_frame.joint_angles,
-        strict=True,
     ):
         errors[name] = None if user_angle is None or template_angle is None else abs(
             user_angle - template_angle

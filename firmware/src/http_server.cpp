@@ -213,29 +213,40 @@ static void handle_status(AsyncWebServerRequest* req) {
     req->send(200, "application/json", j);
 }
 
-static void handle_cam_config(AsyncWebServerRequest* req) {
-    sensor_t* s = esp_camera_sensor_get();
-    if (!s) {
-        req->send(503, "application/json", "{\"ok\":false,\"error\":\"no_sensor\"}");
-        return;
-    }
-    if (req->hasParam("res"))        camera_set_framesize(req->getParam("res")->value().c_str());
-    if (req->hasParam("q"))          camera_set_quality(req->getParam("q")->value().toInt());
-    if (req->hasParam("brightness")) s->set_brightness(s,  constrain(req->getParam("brightness")->value().toInt(), -2, 2));
-    if (req->hasParam("contrast"))   s->set_contrast(s,    constrain(req->getParam("contrast")->value().toInt(),   -2, 2));
-    if (req->hasParam("saturation")) s->set_saturation(s,  constrain(req->getParam("saturation")->value().toInt(), -2, 2));
-    if (req->hasParam("sharpness"))  s->set_sharpness(s,   constrain(req->getParam("sharpness")->value().toInt(),  -2, 2));
-    if (req->hasParam("ae_level"))   s->set_ae_level(s,    constrain(req->getParam("ae_level")->value().toInt(),   -2, 2));
-    if (req->hasParam("vflip"))      s->set_vflip(s,       req->getParam("vflip")->value().toInt() ? 1 : 0);
-    if (req->hasParam("hmirror"))    s->set_hmirror(s,     req->getParam("hmirror")->value().toInt() ? 1 : 0);
+// Deferred cam config — parsed in async callback, applied in http_server_handle()
+// to avoid blocking the async_tcp task with slow SCCB I2C writes.
+struct PendingCamConfig {
+    bool active     = false;
+    bool has_res    = false; String res;
+    bool has_q      = false; int q          = 12;
+    bool has_bright = false; int brightness = 0;
+    bool has_cont   = false; int contrast   = 0;
+    bool has_sat    = false; int saturation = 0;
+    bool has_sharp  = false; int sharpness  = 0;
+    bool has_ae     = false; int ae_level   = 0;
+    bool has_vflip  = false; int vflip      = 0;
+    bool has_hmir   = false; int hmirror    = 0;
+};
+static PendingCamConfig s_pending_cam;
 
-    String j = "{\"ok\":true,\"frame_size\":\"";
+static void handle_cam_config(AsyncWebServerRequest* req) {
+    // Parse params — no sensor access here (would block async_tcp and trigger WDT)
+    if (req->hasParam("res"))        { s_pending_cam.has_res   = true; s_pending_cam.res        = req->getParam("res")->value(); }
+    if (req->hasParam("q"))          { s_pending_cam.has_q     = true; s_pending_cam.q          = req->getParam("q")->value().toInt(); }
+    if (req->hasParam("brightness")) { s_pending_cam.has_bright = true; s_pending_cam.brightness = constrain(req->getParam("brightness")->value().toInt(), -2, 2); }
+    if (req->hasParam("contrast"))   { s_pending_cam.has_cont  = true; s_pending_cam.contrast   = constrain(req->getParam("contrast")->value().toInt(),   -2, 2); }
+    if (req->hasParam("saturation")) { s_pending_cam.has_sat   = true; s_pending_cam.saturation = constrain(req->getParam("saturation")->value().toInt(), -2, 2); }
+    if (req->hasParam("sharpness"))  { s_pending_cam.has_sharp = true; s_pending_cam.sharpness  = constrain(req->getParam("sharpness")->value().toInt(),  -2, 2); }
+    if (req->hasParam("ae_level"))   { s_pending_cam.has_ae    = true; s_pending_cam.ae_level   = constrain(req->getParam("ae_level")->value().toInt(),   -2, 2); }
+    if (req->hasParam("vflip"))      { s_pending_cam.has_vflip = true; s_pending_cam.vflip      = req->getParam("vflip")->value().toInt() ? 1 : 0; }
+    if (req->hasParam("hmirror"))    { s_pending_cam.has_hmir  = true; s_pending_cam.hmirror    = req->getParam("hmirror")->value().toInt() ? 1 : 0; }
+    s_pending_cam.active = true;
+
+    String j = "{\"ok\":true,\"scheduled\":true,\"frame_size\":\"";
     j += camera_frame_size_name();
     j += "\",\"jpeg_quality\":";
     j += camera_jpeg_quality();
     j += "}";
-    kl_logf("[http] cam_config res=%s q=%d\n",
-            camera_frame_size_name(), camera_jpeg_quality());
     req->send(200, "application/json", j);
 }
 
@@ -315,6 +326,27 @@ void http_server_start(const char* fw_version, const char* board_model,
 void http_server_handle() {
     // Reclaim memory from closed WS connections; must be called from main task.
     ws.cleanupClients();
+
+    // Apply deferred cam config — SCCB writes run here in loopTask, not in async_tcp.
+    if (s_pending_cam.active) {
+        s_pending_cam.active = false;
+        sensor_t* s = esp_camera_sensor_get();
+        if (s) {
+            if (s_pending_cam.has_res)   camera_set_framesize(s_pending_cam.res.c_str());
+            if (s_pending_cam.has_q)     camera_set_quality(s_pending_cam.q);
+            if (s_pending_cam.has_bright) s->set_brightness(s, s_pending_cam.brightness);
+            if (s_pending_cam.has_cont)   s->set_contrast(s,   s_pending_cam.contrast);
+            if (s_pending_cam.has_sat)    s->set_saturation(s, s_pending_cam.saturation);
+            if (s_pending_cam.has_sharp)  s->set_sharpness(s,  s_pending_cam.sharpness);
+            if (s_pending_cam.has_ae)     s->set_ae_level(s,   s_pending_cam.ae_level);
+            if (s_pending_cam.has_vflip)  s->set_vflip(s,      s_pending_cam.vflip);
+            if (s_pending_cam.has_hmir)   s->set_hmirror(s,    s_pending_cam.hmirror);
+            // Reset field flags for next request
+            s_pending_cam = PendingCamConfig{};
+            kl_logf("[http] cam_config applied res=%s q=%d\n",
+                    camera_frame_size_name(), camera_jpeg_quality());
+        }
+    }
 }
 
 void http_server_push_frame() {
