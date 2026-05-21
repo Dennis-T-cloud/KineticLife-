@@ -3,8 +3,8 @@ import { useIoTConnection } from "../hooks/useIoTConnection";
 
 // ── Exercise definitions (ids must match exercise-rules.js EXERCISES keys) ──
 const EXERCISES = [
-  { id: "squat",         label: "Bodyweight Squat", icon: "SQ", muscle: "legs" },
-  { id: "bicep_curl",    label: "Dumbbell Curl",     icon: "BC", muscle: "bicep" },
+  { id: "squat",         label: "Bodyweight Squat", icon: "SQ", muscle: "quads" },
+  { id: "bicep_curl",    label: "Dumbbell Curl",     icon: "BC", muscle: "biceps" },
   { id: "lateral_raise", label: "Lateral Raise",     icon: "LR", muscle: "shoulders" },
 ];
 
@@ -31,19 +31,32 @@ const ENTRY_MODES = [
 
 const PROFILE_STORAGE_KEY = "kineticlife.athleteProfile";
 const DEVICE_SETTINGS_KEY = "kineticlife.deviceSettings";
+const MUSCLE_STORAGE_KEY = "kineticlife.muscleStatus";
 
-const MUSCLE_STATUS = [
-  { id: "chest", label: "Chest", value: 0.32 },
-  { id: "back", label: "Back", value: 0.26 },
-  { id: "bicep", label: "Bicep", value: 0.58 },
-  { id: "tricep", label: "Tricep", value: 0.22 },
-  { id: "core", label: "Core", value: 0.41 },
-  { id: "legs", label: "Legs", value: 0.74 },
-  { id: "shoulders", label: "Shoulders", value: 0.63 },
+const MUSCLE_DEFS = [
+  { id: "chest", label: "Chest", group: "Upper" },
+  { id: "upper_back", label: "Upper Back", group: "Back" },
+  { id: "lower_back", label: "Lower Back", group: "Back" },
+  { id: "biceps", label: "Biceps", group: "Arms" },
+  { id: "triceps", label: "Triceps", group: "Arms" },
+  { id: "core", label: "Core", group: "Center" },
+  { id: "quads", label: "Front Thighs", group: "Legs" },
+  { id: "front_calves", label: "Front Lower Legs", group: "Legs" },
+  { id: "hamstrings", label: "Back Thighs", group: "Legs" },
+  { id: "rear_calves", label: "Back Lower Legs", group: "Legs" },
+  { id: "shoulders", label: "Shoulders", group: "Upper" },
 ];
 
+const MUSCLE_INTENSITY_BY_EXERCISE = {
+  squat: { quads: 0.18, hamstrings: 0.13, rear_calves: 0.06, front_calves: 0.04, core: 0.12, lower_back: 0.05 },
+  bicep_curl: { biceps: 0.25, shoulders: 0.07, core: 0.04 },
+  lateral_raise: { shoulders: 0.25, triceps: 0.06, core: 0.05, upper_back: 0.04 },
+};
+
+const MUSCLE_DECAY_PER_DAY = 0.1;
+
 const PLAN_MUSCLES = [
-  "chest", "back", "bicep", "tricep", "core", "legs", "cardio", "shoulders",
+  "chest", "upper_back", "lower_back", "biceps", "triceps", "core", "quads", "hamstrings", "cardio", "shoulders",
 ];
 
 const PLAN_PRESET = [
@@ -91,6 +104,79 @@ function writeAthleteProfile(profile) {
   } catch (_) {
     // Storage is a convenience only; the live training flow must keep working.
   }
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+function makeDefaultMuscleStatus(now = Date.now()) {
+  const status = {
+    updatedAt: now,
+    lastTrainedAt: {},
+    setCounts: {},
+  };
+  MUSCLE_DEFS.forEach(muscle => {
+    status[muscle.id] = 0;
+    status.lastTrainedAt[muscle.id] = null;
+    status.setCounts[muscle.id] = 0;
+  });
+  return status;
+}
+
+function applyMuscleDecay(status, now = Date.now()) {
+  const base = { ...makeDefaultMuscleStatus(now), ...(status ?? {}) };
+  const elapsedDays = Math.max(0, (now - (Number(base.updatedAt) || now)) / 86400000);
+  const decay = elapsedDays * MUSCLE_DECAY_PER_DAY;
+  const next = {
+    ...base,
+    updatedAt: now,
+    lastTrainedAt: { ...makeDefaultMuscleStatus(now).lastTrainedAt, ...(base.lastTrainedAt ?? {}) },
+    setCounts: { ...makeDefaultMuscleStatus(now).setCounts, ...(base.setCounts ?? {}) },
+  };
+  MUSCLE_DEFS.forEach(muscle => {
+    next[muscle.id] = clamp01((Number(base[muscle.id]) || 0) - decay);
+    next.setCounts[muscle.id] = Number(next.setCounts[muscle.id]) || 0;
+    next.lastTrainedAt[muscle.id] = Number(next.lastTrainedAt[muscle.id]) || null;
+  });
+  return next;
+}
+
+function readMuscleStatus() {
+  if (typeof window === "undefined") return makeDefaultMuscleStatus();
+  try {
+    const raw = window.localStorage.getItem(MUSCLE_STORAGE_KEY);
+    return applyMuscleDecay(raw ? JSON.parse(raw) : makeDefaultMuscleStatus());
+  } catch (_) {
+    return makeDefaultMuscleStatus();
+  }
+}
+
+function writeMuscleStatus(status) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(MUSCLE_STORAGE_KEY, JSON.stringify(status));
+  } catch (_) {
+    // Local progress should enrich the UX, never block the workout flow.
+  }
+}
+
+function nextMuscleStatusAfterSet(status, analysisResult, exerciseId) {
+  const now = Date.now();
+  const next = applyMuscleDecay(status, now);
+  const intensityMap = MUSCLE_INTENSITY_BY_EXERCISE[exerciseId] ?? {};
+  const accuracy = clamp01((Number(analysisResult?.accuracy) || 70) / 100);
+  const repFactor = Math.min(1.35, Math.max(0.65, (Number(analysisResult?.reps) || 3) / 8));
+
+  Object.entries(intensityMap).forEach(([muscleId, baseLoad]) => {
+    const load = baseLoad * (0.65 + accuracy * 0.35) * repFactor;
+    next[muscleId] = clamp01(next[muscleId] + load);
+    next.lastTrainedAt[muscleId] = now;
+    next.setCounts[muscleId] = (Number(next.setCounts[muscleId]) || 0) + 1;
+  });
+
+  next.updatedAt = now;
+  return next;
 }
 
 function readDeviceSettings() {
@@ -150,6 +236,7 @@ function recommendedExerciseForMode(mode) {
 
 const INITIAL_PROFILE = readAthleteProfile();
 const INITIAL_DEVICE_SETTINGS = readDeviceSettings();
+const INITIAL_MUSCLE_STATUS = readMuscleStatus();
 
 // Fallback for AnalysisScreen when session data is unavailable
 const MOCK_DTW = {
@@ -360,10 +447,32 @@ const css = `
   .progress-cell { background: rgba(127,255,0,0.04); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 0.5rem; text-align: center; }
   .progress-value { font-family: var(--font-display); font-size: 1.65rem; color: var(--text); line-height: 1; }
   .progress-label { font-size: 0.62rem; color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 0.35rem; }
-  .muscle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; }
-  .muscle-row { display: grid; grid-template-columns: 74px 1fr 32px; align-items: center; gap: 0.5rem; font-size: 0.76rem; color: var(--text-muted); }
-  .muscle-bar { height: 8px; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; }
-  .muscle-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--green-dim), var(--green)); box-shadow: 0 0 12px rgba(127,255,0,0.22); }
+  .heatmap-card { overflow: hidden; }
+  .heatmap-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.85rem; }
+  .heatmap-caption { color: var(--text-muted); font-size: 0.72rem; line-height: 1.45; max-width: 230px; }
+  .heatmap-summary { text-align: right; min-width: 72px; }
+  .heatmap-summary-value { font-family: var(--font-display); font-size: 2rem; color: var(--green); line-height: 0.9; text-shadow: 0 0 14px rgba(127,255,0,0.28); }
+  .heatmap-summary-label { margin-top: 0.25rem; color: var(--text-muted); font-size: 0.62rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .body-view-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; margin-bottom: 0.85rem; border: 1px solid var(--border); border-radius: 8px; padding: 0.25rem; background: rgba(255,255,255,0.025); }
+  .body-view-btn { border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); padding: 0.48rem 0.5rem; font-family: var(--font-body); font-size: 0.68rem; letter-spacing: 0.11em; text-transform: uppercase; cursor: pointer; transition: background 0.16s ease, color 0.16s ease; }
+  .body-view-btn.active { background: rgba(127,255,0,0.12); color: var(--green); }
+  .body-map-wrap { position: relative; border: 1px solid var(--border); border-radius: 10px; background: radial-gradient(circle at 50% 28%, rgba(127,255,0,0.08), transparent 44%), rgba(0,0,0,0.18); overflow: hidden; padding: 0.55rem 0.35rem 0.35rem; }
+  .body-map-wrap::before { content: ''; position: absolute; inset: 10px; border: 1px solid rgba(127,255,0,0.05); border-radius: 8px; pointer-events: none; }
+  .body-map { position: relative; z-index: 1; width: 100%; height: auto; display: block; max-height: 380px; }
+  .body-base { fill: rgba(255,255,255,0.055); stroke: rgba(200,230,180,0.14); stroke-width: 1.4; }
+  .muscle-shape { cursor: pointer; transition: opacity 0.18s ease, stroke 0.18s ease, filter 0.18s ease, transform 0.18s ease; transform-origin: center; }
+  .muscle-shape:hover,
+  .muscle-shape.active { filter: drop-shadow(0 0 10px rgba(127,255,0,0.42)); opacity: 1; }
+  .muscle-shape.active { stroke: var(--green); stroke-width: 2.4; }
+  .muscle-shape:focus { outline: none; filter: drop-shadow(0 0 12px rgba(127,255,0,0.5)); }
+  .muscle-node { fill: var(--green); filter: drop-shadow(0 0 8px rgba(127,255,0,0.6)); animation: pulse 1.6s ease-in-out infinite; pointer-events: none; }
+  .body-map-label { fill: rgba(200,230,180,0.42); font: 700 9px system-ui, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; pointer-events: none; }
+  .body-map-legend { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.55rem; color: var(--text-muted); font-size: 0.66rem; }
+  .legend-track { flex: 1; height: 5px; align-self: center; border-radius: 999px; background: linear-gradient(90deg, rgba(127,255,0,0.08), rgba(127,255,0,0.72)); }
+  .heatmap-detail { margin-top: 0.8rem; padding-top: 0.75rem; border-top: 1px solid var(--border); display: grid; grid-template-columns: 1fr auto; gap: 0.45rem 0.8rem; align-items: center; animation: fadeInUp 0.22s ease; }
+  .heatmap-detail-title { color: var(--text); font-size: 0.84rem; font-weight: 700; }
+  .heatmap-detail-value { font-family: var(--font-display); color: var(--green); font-size: 1.45rem; line-height: 1; }
+  .heatmap-detail-copy { grid-column: 1 / -1; color: var(--text-muted); font-size: 0.74rem; line-height: 1.5; }
   .ai-copy { color: var(--text-muted); font-size: 0.84rem; line-height: 1.6; }
   .flow-stack { flex: 1; display: flex; flex-direction: column; gap: 1rem; padding-bottom: 1.5rem; overflow-y: auto; }
   .scan-card { background: var(--surface); border: 1px solid var(--border-bright); border-radius: 12px; padding: 1.1rem; position: relative; overflow: hidden; }
@@ -970,7 +1079,7 @@ function AutoClassifyScreen({ connectionStatus, statusText, deviceSettings, onCa
 }
 
 function PlanConfigScreen({ connectionStatus, statusText, deviceSettings, onBack, onBegin }) {
-  const [selected, setSelected] = useState(["legs", "shoulders"]);
+  const [selected, setSelected] = useState(["quads", "shoulders"]);
   const hasVideoLink = connectionStatus === "wifi_only" || connectionStatus === "dual_active" || connectionStatus === "ble_only";
 
   function toggleMuscle(muscle) {
@@ -1028,7 +1137,7 @@ function PlanConfigScreen({ connectionStatus, statusText, deviceSettings, onBack
 }
 
 function HomeCoachScreen({ connectionStatus, statusText, deviceSettings, onBack, onBegin }) {
-  const [focus, setFocus] = useState("legs");
+  const [focus, setFocus] = useState("quads");
   const hasVideoLink = connectionStatus === "wifi_only" || connectionStatus === "dual_active" || connectionStatus === "ble_only";
 
   return (
@@ -1054,7 +1163,7 @@ function HomeCoachScreen({ connectionStatus, statusText, deviceSettings, onBack,
           <div>
             <p className="section-label">Body focus</p>
             <div className="muscle-chip-grid">
-              {["legs", "core", "shoulders", "cardio"].map(item => (
+              {["quads", "core", "shoulders", "cardio"].map(item => (
                 <button
                   key={item}
                   className={`muscle-chip${focus === item ? " active" : ""}`}
@@ -1085,13 +1194,131 @@ function HomeCoachScreen({ connectionStatus, statusText, deviceSettings, onBack,
 
 // ── ProfileScreen ────────────────────────────────────────────────────────────
 
-function ProfileScreen({ athleteProfile }) {
+function formatLastTrained(ts) {
+  if (!ts) return "No set logged yet";
+  const minutes = Math.max(1, Math.round((Date.now() - ts) / 60000));
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+function heatBand(value) {
+  if (value >= 0.72) return "High load";
+  if (value >= 0.42) return "Moderate";
+  if (value > 0) return "Recovering";
+  return "Rested";
+}
+
+function MuscleShape({ id, d, marker, row, selectedId, onSelect, recentCutoff }) {
+  const value = row?.value ?? 0;
+  const isActive = selectedId === id;
+  const isRecent = row?.lastTrainedAt && row.lastTrainedAt > recentCutoff;
+  const fill = `rgba(127,255,0,${0.12 + value * 0.72})`;
+  const stroke = isActive ? "var(--green)" : `rgba(127,255,0,${0.16 + value * 0.32})`;
+
+  function choose() {
+    onSelect(id);
+  }
+
+  function handleKeyDown(event) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      choose();
+    }
+  }
+
+  return (
+    <g
+      role="button"
+      tabIndex="0"
+      aria-label={`${row?.label ?? id} ${Math.round(value * 100)} percent load`}
+      onClick={choose}
+      onKeyDown={handleKeyDown}
+    >
+      <path
+        className={`muscle-shape${isActive ? " active" : ""}`}
+        d={d}
+        fill={fill}
+        stroke={stroke}
+      />
+      {isRecent && <circle className="muscle-node" cx={marker[0]} cy={marker[1]} r="3.2" />}
+    </g>
+  );
+}
+
+function MuscleBodyMap({ view, muscleRows, selectedId, onSelect, recentCutoff }) {
+  const rows = Object.fromEntries(muscleRows.map(item => [item.id, item]));
+  const front = view === "front";
+  const shapes = front
+    ? [
+        { id: "shoulders", marker: [110, 82], d: "M62 78 C72 63 91 64 98 77 L92 97 C80 90 70 90 56 101 C54 92 55 84 62 78 Z M158 78 C148 63 129 64 122 77 L128 97 C140 90 150 90 164 101 C166 92 165 84 158 78 Z" },
+        { id: "chest", marker: [110, 105], d: "M76 91 C88 82 101 83 108 94 L108 126 C92 126 80 120 72 110 C70 102 71 96 76 91 Z M144 91 C132 82 119 83 112 94 L112 126 C128 126 140 120 148 110 C150 102 149 96 144 91 Z" },
+        { id: "biceps", marker: [52, 134], d: "M51 103 C62 105 69 115 68 130 L61 174 C59 185 48 184 45 174 L45 123 C45 114 47 108 51 103 Z M169 103 C158 105 151 115 152 130 L159 174 C161 185 172 184 175 174 L175 123 C175 114 173 108 169 103 Z" },
+        { id: "core", marker: [110, 155], d: "M87 129 C96 134 124 134 133 129 L137 184 C128 194 92 194 83 184 Z" },
+        { id: "quads", marker: [110, 225], d: "M82 191 C94 198 103 198 108 191 L107 259 C99 264 87 262 83 252 L78 218 C77 207 78 198 82 191 Z M138 191 C126 198 117 198 112 191 L113 259 C121 264 133 262 137 252 L142 218 C143 207 142 198 138 191 Z" },
+        { id: "front_calves", marker: [110, 286], d: "M84 258 C94 264 101 264 107 259 L106 310 C98 318 88 315 86 303 Z M136 258 C126 264 119 264 113 259 L114 310 C122 318 132 315 134 303 Z" },
+      ]
+    : [
+        { id: "shoulders", marker: [110, 83], d: "M61 78 C73 62 93 65 101 80 L94 101 C79 91 68 91 55 102 C53 92 54 84 61 78 Z M159 78 C147 62 127 65 119 80 L126 101 C141 91 152 91 165 102 C167 92 166 84 159 78 Z" },
+        { id: "upper_back", marker: [110, 115], d: "M76 87 C91 77 129 77 144 87 C149 104 146 127 137 142 C124 136 96 136 83 142 C74 127 71 104 76 87 Z" },
+        { id: "lower_back", marker: [110, 163], d: "M83 142 C97 136 123 136 137 142 C135 158 132 174 126 185 C118 191 102 191 94 185 C88 174 85 158 83 142 Z" },
+        { id: "triceps", marker: [168, 137], d: "M52 105 C64 107 70 119 68 137 L60 181 C57 191 47 187 45 176 L45 125 C45 116 48 109 52 105 Z M168 105 C156 107 150 119 152 137 L160 181 C163 191 173 187 175 176 L175 125 C175 116 172 109 168 105 Z" },
+        { id: "hamstrings", marker: [110, 225], d: "M82 191 C94 199 103 199 108 191 L107 259 C99 264 87 262 83 252 L78 218 C77 207 78 198 82 191 Z M138 191 C126 199 117 199 112 191 L113 259 C121 264 133 262 137 252 L142 218 C143 207 142 198 138 191 Z" },
+        { id: "rear_calves", marker: [110, 286], d: "M84 258 C94 264 101 264 107 259 L106 310 C98 318 88 315 86 303 Z M136 258 C126 264 119 264 113 259 L114 310 C122 318 132 315 134 303 Z" },
+      ];
+
+  return (
+    <div className="body-map-wrap">
+      <svg className="body-map" viewBox="0 0 220 340" aria-label={`${view} muscle load map`}>
+        <circle className="body-base" cx="110" cy="34" r="21" />
+        <path className="body-base" d="M99 54 C104 61 116 61 121 54 L123 72 L97 72 Z" />
+        <path className="body-base" d="M75 76 C91 64 129 64 145 76 C159 99 159 151 140 190 C128 202 92 202 80 190 C61 151 61 99 75 76 Z" />
+        <path className="body-base" d="M55 100 C42 112 39 143 45 178 C47 190 59 191 63 179 L70 133 C73 115 66 104 55 100 Z M165 100 C178 112 181 143 175 178 C173 190 161 191 157 179 L150 133 C147 115 154 104 165 100 Z" />
+        <path className="body-base" d="M82 190 C94 200 103 199 110 190 C117 199 126 200 138 190 L142 219 L134 303 C132 318 120 322 112 311 L110 221 L108 311 C100 322 88 318 86 303 L78 219 Z" />
+        {shapes.map(shape => (
+          <MuscleShape
+            key={shape.id}
+            id={shape.id}
+            d={shape.d}
+            marker={shape.marker}
+            row={rows[shape.id]}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            recentCutoff={recentCutoff}
+          />
+        ))}
+        <text className="body-map-label" x="110" y="330" textAnchor="middle">{front ? "Front chain" : "Back chain"}</text>
+      </svg>
+      <div className="body-map-legend">
+        <span>Rested</span>
+        <div className="legend-track" />
+        <span>Loaded</span>
+      </div>
+    </div>
+  );
+}
+
+function ProfileScreen({ athleteProfile, muscleStatus }) {
   const name = athleteProfile?.name ?? "Athlete";
   const sessions = athleteProfile?.sessionsCount ?? 0;
   const averageForm = athleteProfile?.averageForm || 0;
   const streakDays = athleteProfile?.streakDays || 0;
   const lastExercise = EXERCISES.find(ex => ex.id === athleteProfile?.lastExercise)?.label ?? "No set yet";
-  const freshestMuscle = MUSCLE_STATUS.reduce((best, item) => item.value > best.value ? item : best, MUSCLE_STATUS[0]);
+  const muscleRows = MUSCLE_DEFS.map(muscle => ({
+    ...muscle,
+    value: clamp01(muscleStatus?.[muscle.id]),
+    lastTrainedAt: muscleStatus?.lastTrainedAt?.[muscle.id] ?? null,
+    setCount: Number(muscleStatus?.setCounts?.[muscle.id]) || 0,
+  }));
+  const freshestMuscle = muscleRows.reduce((best, item) => item.value > best.value ? item : best, muscleRows[0]);
+  const initialView = ["upper_back", "lower_back", "triceps", "hamstrings", "rear_calves"].includes(freshestMuscle.id) ? "back" : "front";
+  const [bodyView, setBodyView] = useState(initialView);
+  const [selectedMuscle, setSelectedMuscle] = useState(freshestMuscle.id);
+  const selected = muscleRows.find(item => item.id === selectedMuscle) ?? freshestMuscle;
+  const todayLoad = Math.round(muscleRows.reduce((sum, item) => sum + item.value, 0) / muscleRows.length * 100);
+  const recentCutoff = Date.now() - 1000 * 60 * 60 * 6;
 
   return (
     <div className="screen">
@@ -1120,25 +1347,58 @@ function ProfileScreen({ athleteProfile }) {
           </p>
         </div>
 
-        <div className="profile-card">
-          <p className="profile-card-title">Muscle heatmap</p>
-          <div className="muscle-grid">
-            {MUSCLE_STATUS.map(item => (
-              <div className="muscle-row" key={item.id}>
-                <span>{item.label}</span>
-                <div className="muscle-bar">
-                  <div className="muscle-fill" style={{ width: `${Math.round(item.value * 100)}%` }} />
-                </div>
-                <span>{Math.round(item.value * 100)}%</span>
+        <div className="profile-card heatmap-card">
+          <div className="heatmap-head">
+            <div>
+              <p className="profile-card-title" style={{ marginBottom: "0.35rem" }}>Muscle heatmap</p>
+              <p className="heatmap-caption">Training load by muscle group. It cools down by 10% per day without new work.</p>
+            </div>
+            <div className="heatmap-summary">
+              <div className="heatmap-summary-value">{todayLoad}%</div>
+              <div className="heatmap-summary-label">Load avg</div>
+            </div>
+          </div>
+          <div className="body-view-toggle" aria-label="Muscle map view">
+            <button
+              className={`body-view-btn${bodyView === "front" ? " active" : ""}`}
+              onClick={() => setBodyView("front")}
+            >
+              Front
+            </button>
+            <button
+              className={`body-view-btn${bodyView === "back" ? " active" : ""}`}
+              onClick={() => setBodyView("back")}
+            >
+              Back
+            </button>
+          </div>
+          <MuscleBodyMap
+            view={bodyView}
+            muscleRows={muscleRows}
+            selectedId={selected.id}
+            onSelect={setSelectedMuscle}
+            recentCutoff={recentCutoff}
+          />
+          <div className="heatmap-detail">
+            <div>
+              <div className="heatmap-detail-title">{selected.label} · {heatBand(selected.value)}</div>
+              <div className="heatmap-detail-copy">
+                {formatLastTrained(selected.lastTrainedAt)} · {selected.setCount} logged set{selected.setCount === 1 ? "" : "s"}.
+                {selected.value >= 0.72
+                  ? " Treat this as loaded; keep volume controlled."
+                  : selected.value >= 0.42
+                    ? " Solid recent work; pair it with a lighter accessory block."
+                    : " Good recovery window for a focused set."}
               </div>
-            ))}
+            </div>
+            <div className="heatmap-detail-value">{Math.round(selected.value * 100)}%</div>
           </div>
         </div>
 
         <div className="profile-card">
           <p className="profile-card-title">AI zone</p>
           <p className="ai-copy">
-            Trakko sees {freshestMuscle.label.toLowerCase()} carrying the most recent load.
+            Trakko sees {freshestMuscle.label.toLowerCase()} carrying the most recent load at {Math.round(freshestMuscle.value * 100)}%.
             Keep today controlled: warm up with Jump-in, then use Plan if your form score stays above 80%.
           </p>
         </div>
@@ -1147,11 +1407,14 @@ function ProfileScreen({ athleteProfile }) {
   );
 }
 
-function AIAgentOverlay({ currentScreen, athleteProfile }) {
+function AIAgentOverlay({ currentScreen, athleteProfile, muscleStatus }) {
   if (currentScreen === "live" || currentScreen === "auth") return null;
   const name = athleteProfile?.name ?? "Athlete";
+  const hottest = MUSCLE_DEFS.reduce((best, muscle) => (
+    (muscleStatus?.[muscle.id] ?? 0) > (muscleStatus?.[best.id] ?? 0) ? muscle : best
+  ), MUSCLE_DEFS[0]);
   const messages = {
-    welcome: `${name}, legs have the highest recent load. Jump-in is ready when you are.`,
+    welcome: `${name}, ${hottest.label.toLowerCase()} has the highest recent load. Jump-in is ready when you are.`,
     profile: "Muscle heat decays over time. Green bars mean recent training stress, not permanent fatigue.",
     settings: "Setup owns every device decision, so training screens stay clean.",
     plan: "Plan mode uses cached recommendations first, keeping AI calls quiet and deliberate.",
@@ -1521,6 +1784,7 @@ function BottomNav({ active, onNavigate }) {
 export default function App() {
   const [screen,         setScreen]         = useState(INITIAL_PROFILE ? "welcome" : "auth");
   const [athleteProfile, setAthleteProfile] = useState(INITIAL_PROFILE);
+  const [muscleStatus,   setMuscleStatus]   = useState(INITIAL_MUSCLE_STATUS);
   const [entryMode,      setEntryMode]      = useState("jump");
   const [deviceSettings, setDeviceSettings] = useState(INITIAL_DEVICE_SETTINGS);
   const [config,         setConfig]         = useState(null);
@@ -1551,14 +1815,23 @@ export default function App() {
       writeAthleteProfile(next);
       return next;
     });
+    setMuscleStatus(prev => {
+      const next = nextMuscleStatusAfterSet(prev, sensorData.analysisResult, config?.exercise?.id);
+      writeMuscleStatus(next);
+      return next;
+    });
   }, [config?.exercise?.id, screen, sensorData.analysisResult]);
 
   function handleAthleteEnter(name) {
-    const existing = athleteProfile?.name?.toLowerCase() === name.toLowerCase()
-      ? athleteProfile
-      : makeDefaultProfile(name);
+    const sameAthlete = athleteProfile?.name?.toLowerCase() === name.toLowerCase();
+    const existing = sameAthlete ? athleteProfile : makeDefaultProfile(name);
     writeAthleteProfile(existing);
     setAthleteProfile(existing);
+    if (!sameAthlete) {
+      const freshMuscles = makeDefaultMuscleStatus();
+      writeMuscleStatus(freshMuscles);
+      setMuscleStatus(freshMuscles);
+    }
     setScreen("welcome");
   }
 
@@ -1674,7 +1947,7 @@ export default function App() {
         )}
 
         {screen === "profile" && (
-          <ProfileScreen athleteProfile={athleteProfile} />
+          <ProfileScreen athleteProfile={athleteProfile} muscleStatus={muscleStatus} />
         )}
 
         {screen === "live" && config && (
@@ -1701,7 +1974,7 @@ export default function App() {
         )}
 
         {showNav && (
-          <AIAgentOverlay currentScreen={screen} athleteProfile={athleteProfile} />
+          <AIAgentOverlay currentScreen={screen} athleteProfile={athleteProfile} muscleStatus={muscleStatus} />
         )}
 
         {showNav && (
