@@ -36,6 +36,8 @@ static uint32_t s_next_notify_ms = 0;
 static uint32_t s_last_log_ms = 0;
 
 static bool s_camera_ready = false;
+static uint8_t s_cam_fail_count = 0;
+static const uint8_t CAM_FAIL_RESET_THRESHOLD = 5;
 static camera_fb_t* s_cam_fb = nullptr;
 static uint32_t s_cam_frame_id = 0;
 static size_t s_cam_offset = 0;
@@ -163,7 +165,11 @@ static void start_throughput_test(uint32_t duration_ms) {
 
 static bool ensure_camera_ready() {
     if (s_camera_ready) return true;
-    camera_deinit();  // no-op if not initialized; clears any partial state from boot attempt
+    kl_logln("[ble_cam] camera_not_ready retrying");
+    camera_deinit();
+    // OV2640 power-on stabilization: same requirement as boot path.
+    // delay() on Arduino ESP32 calls vTaskDelay, allowing BLE stack tasks to run.
+    delay(3000);
     if (!camera_init_ble()) {
         kl_logln("[ble_cam] camera_init_failed");
         return false;
@@ -173,6 +179,7 @@ static bool ensure_camera_ready() {
         return false;
     }
     s_camera_ready = true;
+    s_cam_fail_count = 0;
     kl_logf("[ble_cam] camera_ready frame=%s q=%d\n",
             camera_frame_size_name(),
             camera_jpeg_quality());
@@ -251,11 +258,21 @@ static bool capture_camera_frame() {
     const uint32_t cap_ms = millis() - t0;
     if (!s_cam_fb || s_cam_fb->format != PIXFORMAT_JPEG) {
         release_camera_frame();
-        kl_logf("[ble_cam] capture_failed cap_ms=%lu\n", (unsigned long)cap_ms);
+        s_cam_fail_count++;
+        kl_logf("[ble_cam] capture_failed cap_ms=%lu fail_count=%u\n",
+                (unsigned long)cap_ms, (unsigned)s_cam_fail_count);
+        if (s_cam_fail_count >= CAM_FAIL_RESET_THRESHOLD) {
+            // Camera may be stuck; mark not-ready so ensure_camera_ready() will reinit.
+            kl_logln("[ble_cam] too_many_failures resetting camera_ready");
+            s_camera_ready = false;
+            s_cam_fail_count = 0;
+            s_mode = BLE_TEST_IDLE;
+        }
         s_next_notify_ms = millis() + 500;
         return false;
     }
 
+    s_cam_fail_count = 0;
     s_cam_frame_id++;
     s_cam_offset = 0;
     s_cam_chunk_index = 0;

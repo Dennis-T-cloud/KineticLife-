@@ -191,7 +191,7 @@ bool camera_init() {
 
 bool camera_init_ble() {
     s_camera_mode = "ble_snapshot";
-    bool ok = camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_HQVGA, 25, 1,
+    bool ok = camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_HQVGA, 30, 1,
                                CAMERA_FB_IN_PSRAM);
     if (ok) {
         sensor_t* s = esp_camera_sensor_get();
