@@ -207,7 +207,7 @@
 
         <hr style="border:none;border-top:1px solid #dde4ef;margin:16px 0">
         <p style="font-weight:700;font-size:14px;color:#172033;margin-bottom:6px">Switch ESP32 mode</p>
-        <p style="font-size:13px;color:#4a5568;margin-bottom:10px">Enter the camera address above, then switch modes. The device will reboot (~3 s).</p>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:10px">ESP32 must be in WiFi mode with a camera address set above. To switch from BLE mode, use the BLE tab instead.</p>
         <div class="actions">
           <button id="directSwitchBle" class="outline">Switch to BLE Mode</button>
           <button id="directSwitchWifi" class="outline">Switch to WiFi Mode</button>
@@ -244,6 +244,12 @@
         <button id="bleDemo" style="background:#deff9a;color:#111;font-weight:900;">Open BLE MediaPipe Demo</button>
         <button id="bleDemoKineTrak" style="background:#deff9a;color:#111;font-weight:900;margin-top:6px;">⚡ KineTrak Demo (BLE)</button>
         <button id="bleStop" class="outline" disabled>Stop Test</button>
+
+        <hr style="border:none;border-top:1px solid #dde4ef;margin:4px 0">
+        <p style="font-weight:700;font-size:14px;color:#172033;margin-bottom:4px">Switch ESP32 mode</p>
+        <p style="font-size:13px;color:#4a5568;margin-bottom:8px">Connect BLE above, then switch mode. The device will reboot (~3 s).</p>
+        <button id="bleSwitchWifi" class="outline" disabled>Switch to WiFi Mode</button>
+        <div id="bleSwitchStatus" style="display:none;font-size:13px;padding:6px 0;color:#1f6f52"></div>
 
         <div class="metric-grid">
           <div class="metric"><b id="bleKBps">0.00</b><span>KB/s</span></div>
@@ -641,6 +647,7 @@
           bleStartBtn.disabled = true;
           bleCameraBtn.disabled = true;
           bleStopBtn.disabled = true;
+          document.getElementById("bleSwitchWifi").disabled = true;
           if (bleStats.timer) clearInterval(bleStats.timer);
           bleShow("warning", "BLE disconnected.");
         });
@@ -654,6 +661,7 @@
         bleStartBtn.disabled = false;
         bleCameraBtn.disabled = false;
         bleStopBtn.disabled = false;
+        document.getElementById("bleSwitchWifi").disabled = false;
         bleShow("notice", `Connected to <b>${bleDevice.name || "ESP32 BLE"}</b>.`);
       } catch (e) {
         bleShow("error", `BLE connect failed: ${e.message || e}`);
@@ -712,6 +720,20 @@
     });
     document.getElementById("bleDemoKineTrak").addEventListener("click", () => {
       location.href = "./kinetic-demo.html?source=ble";
+    });
+
+    document.getElementById("bleSwitchWifi").addEventListener("click", async () => {
+      const statusEl = document.getElementById("bleSwitchStatus");
+      statusEl.style.display = "";
+      statusEl.style.color = "#1f6f52";
+      statusEl.textContent = "Sending mode=wifi via BLE… (device will reboot)";
+      try {
+        await bleWrite("mode=wifi");
+        statusEl.textContent = "✓ Switched to WiFi mode. Device rebooting (~3 s). Connect this device to your WiFi network, then use Direct Connect.";
+      } catch (e) {
+        statusEl.style.color = "#c0392b";
+        statusEl.textContent = `Error: ${e.message || e} — is BLE still connected?`;
+      }
     });
 
     // ── Host QR tab ────────────────────────────────────────────────

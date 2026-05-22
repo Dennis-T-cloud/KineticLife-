@@ -290,7 +290,7 @@ void setup() {
     {
         Preferences p;
         p.begin(MODE_NVS_NS, true);
-        s_ble_mode = (p.getString(MODE_NVS_KEY, "wifi") == "ble");
+        s_ble_mode = (p.getString(MODE_NVS_KEY, "ble") == "ble");
         p.end();
     }
     reset_clear_boot_check();

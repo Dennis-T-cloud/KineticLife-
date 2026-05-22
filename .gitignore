@@ -44,6 +44,8 @@ web/yarn-debug.log*
 web/yarn-error.log*
 web/pnpm-debug.log*
 web/vendor/mediapipe/
+web/public/mediapipe/wasm/
+web/public/mediapipe/models/
 web/__pycache__/
 web/**/*.py[cod]
 web/**/__pycache__/
@@ -83,3 +85,6 @@ data/templates/*
 data/recordings/
 *.sqlite
 *.db
+web/design.txt
+web/designHANDOFF.txt
+web/new-ui.md
