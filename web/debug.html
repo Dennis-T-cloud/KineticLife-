@@ -94,6 +94,21 @@
                background:#111; color:#555; cursor:pointer; border-radius:3px;
                font:11px monospace; }
     #bpReset:hover { color:#aaa; border-color:#555; }
+
+    /* ── lens undistort panel ── */
+    #distpanel { width:100%; padding:5px 10px; background:#060606;
+                 border-bottom:1px solid #2b2b2b; display:flex; flex-direction:column; gap:4px; }
+    .dp-hdr  { display:flex; align-items:center; gap:8px; font-size:11px; flex-wrap:wrap; }
+    .dp-ttl  { color:#64748b; }
+    .dp-row  { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:11px; }
+    .dp-lbl  { color:#64748b; min-width:1.8ch; text-align:right; }
+    .dp-inp  { background:#202020; border:1px solid #333; color:#e2e8f0;
+               font:11px monospace; border-radius:2px; padding:1px 4px;
+               width:56px; text-align:center; }
+    input[type=number].dp-inp::-webkit-inner-spin-button,
+    input[type=number].dp-inp::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+    input[type=number].dp-inp { -moz-appearance:textfield; }
+    #dpStatus { font-size:11px; color:#64748b; }
   </style>
 </head>
 <body>
@@ -107,6 +122,12 @@
   <button id="btnBleConnect">BLE Connect</button>
   <label style="white-space:nowrap; cursor:pointer">
     <input type="checkbox" id="showVideo" checked> raw
+  </label>
+  <label style="white-space:nowrap; cursor:pointer">
+    <input type="checkbox" id="showGrid"> grid
+  </label>
+  <label style="white-space:nowrap; cursor:pointer">
+    <input type="checkbox" id="showInfer"> infer
   </label>
   <span id="fps">— fps</span>
   <button id="recBtn">⏺ Record</button>
@@ -169,6 +190,31 @@
     <button id="bpReset">reset</button>
   </div>
   <div id="bpRecord" class="bp-rec">— no data yet —</div>
+</div>
+
+<!-- lens undistort -->
+<div id="distpanel">
+  <div class="dp-hdr">
+    <span class="dp-ttl">lens undistort</span>
+    <button id="dpToggle">enable</button>
+    <span id="dpStatus">off</span>
+    <button id="dpApply">Apply LUT</button>
+    <button id="dpReset" style="color:#888">reset</button>
+  </div>
+  <div class="dp-row">
+    <span class="dp-lbl">k1</span><input id="dpK1" class="dp-inp" type="number" step="0.005" value="-0.38">
+    <span class="dp-lbl">k2</span><input id="dpK2" class="dp-inp" type="number" step="0.002" value="0.18">
+    <span class="dp-lbl">k3</span><input id="dpK3" class="dp-inp" type="number" step="0.001" value="0.00">
+    <span class="dp-lbl">p1</span><input id="dpP1" class="dp-inp" type="number" step="0.001" value="0.00">
+    <span class="dp-lbl">p2</span><input id="dpP2" class="dp-inp" type="number" step="0.001" value="0.00">
+  </div>
+  <div class="dp-row">
+    <span class="dp-lbl" style="min-width:1.5ch">fx</span><input id="dpFx" class="dp-inp" type="number" step="1" value="250">
+    <span class="dp-lbl" style="min-width:1.5ch">fy</span><input id="dpFy" class="dp-inp" type="number" step="1" value="250">
+    <span class="dp-lbl" style="min-width:1.5ch">cx</span><input id="dpCx" class="dp-inp" type="number" step="0.5" value="60">
+    <span class="dp-lbl" style="min-width:1.5ch">cy</span><input id="dpCy" class="dp-inp" type="number" step="0.5" value="80">
+    <span style="color:#4a5568;font-size:10px">θ-model · k1=0 equidist · k1↑ more barrel · fx=60/1.22≈49</span>
+  </div>
 </div>
 
 <!-- joint angles (14-D per §5) -->
@@ -363,8 +409,10 @@ const showVideo = document.getElementById("showVideo");
 const camUrlEl  = document.getElementById("camUrl");
 const recBtn    = document.getElementById("recBtn");
 const recCount  = document.getElementById("recCount");
-const fpsEl     = document.getElementById("fps");
-const anglesEl  = document.getElementById("angles");
+const fpsEl      = document.getElementById("fps");
+const anglesEl   = document.getElementById("angles");
+const showGridEl  = document.getElementById("showGrid");
+const showInferEl = document.getElementById("showInfer");
 
 // ── FPS ────────────────────────────────────────────────────────────────────
 const fpsHist = [];
@@ -805,7 +853,193 @@ let tickTotal = 0, tickSkipped = 0;  // for skip-rate display
 // Inference canvas portrait 3:4 — matches rotated display
 const inferCanvas = document.createElement("canvas");
 inferCanvas.width = 120; inferCanvas.height = 160;
-const inferCtx = inferCanvas.getContext("2d");
+const inferCtx = inferCanvas.getContext("2d", { willReadFrequently: true });
+
+// ── Lens undistortion (theta-based fisheye remap LUT) ─────────────────────
+// Uses the OpenCV fisheye / theta model — stable for any FOV including 140°+.
+// The Brown-Conrady r-polynomial diverges for wide-angle lenses (r²>1/|k1|),
+// so we use: theta = atan(r_norm), then theta_d = theta*(1+k1θ²+k2θ⁴+k3θ⁶).
+// k1=0 → pure equidistant correction (good default for most fisheye lenses).
+// k1>0 → lens more barrel than equidistant → stronger pull-in at edges.
+// k1<0 → lens less barrel → weaker correction.
+let distEnabled = false;
+let distLUT     = null;
+
+const undistCanvas = document.createElement('canvas');
+undistCanvas.width  = 120;
+undistCanvas.height = 160;
+const undistCtx = undistCanvas.getContext('2d', { willReadFrequently: true });
+
+function buildUndistortLUT(W, H, fx, fy, cx, cy, k1, k2, p1, p2, k3) {
+  const lut = new Float32Array(W * H * 2);
+  for (let v = 0; v < H; v++) {
+    for (let u = 0; u < W; u++) {
+      const xn = (u - cx) / fx;
+      const yn = (v - cy) / fy;
+      const r2 = xn*xn + yn*yn;
+      const r  = Math.sqrt(r2);
+      const idx = (v*W + u) * 2;
+      if (r < 1e-8) { lut[idx] = u; lut[idx+1] = v; continue; }
+      // Theta-based fisheye model (converges for all FOV)
+      const theta = Math.atan(r);
+      const t2 = theta*theta, t4 = t2*t2, t6 = t2*t4;
+      const td = theta * (1 + k1*t2 + k2*t4 + k3*t6);
+      const scale = td / r;
+      // Tangential terms (p1/p2) are negligible on fisheye but kept for completeness
+      lut[idx]   = xn*scale*fx + cx + 2*p1*xn*yn*fx + p2*(r2+2*xn*xn)*fx;
+      lut[idx+1] = yn*scale*fy + cy + p1*(r2+2*yn*yn)*fy + 2*p2*xn*yn*fy;
+    }
+  }
+  return lut;
+}
+
+function applyUndistortLUT(W, H) {
+  if (!distLUT) return;
+  const src = inferCtx.getImageData(0, 0, W, H);
+  const dst = new ImageData(W, H);
+  for (let v = 0; v < H; v++) {
+    for (let u = 0; u < W; u++) {
+      const li = (v*W + u) * 2;
+      const sx = distLUT[li], sy = distLUT[li+1];
+      const x0 = sx|0, y0 = sy|0;
+      const x1 = x0+1, y1 = y0+1;
+      const di = (v*W + u) * 4;
+      if (x0 >= 0 && x1 < W && y0 >= 0 && y1 < H) {
+        const dx = sx-x0, dy = sy-y0;
+        const w00=(1-dx)*(1-dy), w10=dx*(1-dy), w01=(1-dx)*dy, w11=dx*dy;
+        for (let c = 0; c < 3; c++) {
+          dst.data[di+c] = (
+            src.data[(y0*W+x0)*4+c]*w00 +
+            src.data[(y0*W+x1)*4+c]*w10 +
+            src.data[(y1*W+x0)*4+c]*w01 +
+            src.data[(y1*W+x1)*4+c]*w11
+          ) + 0.5 | 0;
+        }
+        dst.data[di+3] = 255;
+      }
+    }
+  }
+  undistCtx.putImageData(dst, 0, 0);
+}
+
+function distReadParams() {
+  return {
+    k1: +document.getElementById('dpK1').value || 0,
+    k2: +document.getElementById('dpK2').value || 0,
+    k3: +document.getElementById('dpK3').value || 0,
+    p1: +document.getElementById('dpP1').value || 0,
+    p2: +document.getElementById('dpP2').value || 0,
+    fx: +document.getElementById('dpFx').value || 36,
+    fy: +document.getElementById('dpFy').value || 36,
+    cx: +document.getElementById('dpCx').value || 60,
+    cy: +document.getElementById('dpCy').value || 80,
+  };
+}
+
+function distApply() {
+  const p  = distReadParams();
+  const t0 = performance.now();
+  distLUT  = buildUndistortLUT(120, 160, p.fx, p.fy, p.cx, p.cy, p.k1, p.k2, p.p1, p.p2, p.k3);
+  const ms = (performance.now()-t0).toFixed(1);
+  const s  = document.getElementById('dpStatus');
+  s.textContent = distEnabled ? `on · LUT ${ms}ms` : `off · LUT ${ms}ms`;
+  s.style.color = distEnabled ? '#34d399' : '#64748b';
+  console.log(`[dist] LUT ${ms}ms  k1=${p.k1} k2=${p.k2} k3=${p.k3} p1=${p.p1} p2=${p.p2} fx=${p.fx}`);
+}
+
+document.getElementById('dpToggle').addEventListener('click', () => {
+  distEnabled = !distEnabled;
+  const btn = document.getElementById('dpToggle');
+  btn.textContent = distEnabled ? 'disable' : 'enable';
+  btn.classList.toggle('on', distEnabled);
+  if (distEnabled && !distLUT) distApply();
+  const s = document.getElementById('dpStatus');
+  s.textContent = distEnabled ? (distLUT ? `on · LUT ready` : 'on · no LUT') : 'off';
+  s.style.color = distEnabled ? '#34d399' : '#64748b';
+});
+
+document.getElementById('dpApply').addEventListener('click', distApply);
+
+document.getElementById('dpReset').addEventListener('click', () => {
+  document.getElementById('dpK1').value = '-0.38';
+  document.getElementById('dpK2').value = '0.18';
+  document.getElementById('dpK3').value = '0.00';
+  document.getElementById('dpP1').value = '0.00';
+  document.getElementById('dpP2').value = '0.00';
+  document.getElementById('dpFx').value = '250';
+  document.getElementById('dpFy').value = '250';
+  document.getElementById('dpCx').value = '60';
+  document.getElementById('dpCy').value = '80';
+  distApply();
+});
+
+// Debounced auto-apply whenever any param changes
+let _distDebounce = null;
+['dpK1','dpK2','dpK3','dpP1','dpP2','dpFx','dpFy','dpCx','dpCy'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    clearTimeout(_distDebounce);
+    _distDebounce = setTimeout(distApply, 250);
+  });
+});
+
+// ── Reference grid overlay ─────────────────────────────────────────────────
+// Draws a uniform rectangular grid + radial circles + center crosshair.
+// Use this against real-world straight edges (door frames, tiles, walls):
+//   - Barrel distortion → straight edges bow outward past the grid lines
+//   - After correct k1/k2 → the scene's straight lines align with the grid
+function drawGrid(ctx, W, H) {
+  const COLS = 8, ROWS = 10;   // 8×10 on 240×320 = 30px cells
+  const dx = W / COLS, dy = H / ROWS;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Cell grid (dashed yellow)
+  ctx.strokeStyle = 'rgba(255,220,0,0.38)';
+  ctx.lineWidth   = 0.75;
+  ctx.setLineDash([3, 5]);
+  for (let i = 0; i <= COLS; i++) {
+    ctx.beginPath(); ctx.moveTo(i*dx, 0); ctx.lineTo(i*dx, H); ctx.stroke();
+  }
+  for (let j = 0; j <= ROWS; j++) {
+    ctx.beginPath(); ctx.moveTo(0, j*dy); ctx.lineTo(W, j*dy); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Radial guide circles at 25% and 45% of min-dimension radius (cyan, faint)
+  // Barrel distortion makes scene circles appear smaller near edges
+  const R  = Math.min(W, H) * 0.5;
+  ctx.strokeStyle = 'rgba(0,210,255,0.28)';
+  ctx.lineWidth   = 0.8;
+  ctx.beginPath(); ctx.arc(W/2, H/2, R * 0.50, 0, Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(W/2, H/2, R * 0.88, 0, Math.PI*2); ctx.stroke();
+
+  // Center crosshair + principal-point ring (white)
+  const cx = +document.getElementById('dpCx').value || W/2;
+  const cy = +document.getElementById('dpCy').value || H/2;
+  // scale cx/cy from inferCanvas (120×160) to display canvas (240×320)
+  const scx = cx * (W/120), scy = cy * (H/160);
+  ctx.strokeStyle = 'rgba(255,255,255,0.80)';
+  ctx.lineWidth   = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(scx-14, scy); ctx.lineTo(scx+14, scy);
+  ctx.moveTo(scx, scy-14); ctx.lineTo(scx, scy+14);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(scx, scy, 5, 0, Math.PI*2);
+  ctx.strokeStyle = 'rgba(255,80,80,0.85)';
+  ctx.stroke();
+
+  // Source label in top-left corner
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(4, 4, 108, 15);
+  ctx.fillStyle = distEnabled ? '#34d399' : '#f59e0b';
+  ctx.font = '10px monospace';
+  ctx.textBaseline = 'top';
+  ctx.fillText(distEnabled ? 'UNDIST  k1=' + (document.getElementById('dpK1').value||'?')
+                           : 'RAW  (undistort off)', 7, 6);
+  ctx.restore();
+}
 
 async function init() {
   statusEl.textContent = "loading model…";
@@ -872,8 +1106,36 @@ function tick(now) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
+  // Optionally undistort inferCanvas before passing to MediaPipe
+  let detectSrc = inferCanvas;
+  if (distEnabled && distLUT) {
+    applyUndistortLUT(120, 160);
+    detectSrc = undistCanvas;
+  }
+
+  // Show infer preview: what MediaPipe actually processes (scaled 120×160 → 240×320)
+  // When "raw" is ON it blends over the video; when "raw" is OFF it's the only image.
+  if (showInferEl.checked) {
+    ctx.save();
+    ctx.globalAlpha = showVideo.checked ? 0.60 : 1.0;
+    ctx.drawImage(detectSrc, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
+    // label which source is shown
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(canvas.width - 92, 4, 88, 14);
+    ctx.fillStyle = distEnabled ? '#34d399' : '#f59e0b';
+    ctx.font = '10px monospace';
+    ctx.textBaseline = 'top';
+    ctx.fillText(distEnabled ? '▶ UNDIST 120×160' : '▶ RAW  120×160', canvas.width - 90, 6);
+    ctx.restore();
+  }
+
+  // Grid overlay: compare scene straight lines against uniform reference
+  if (showGridEl.checked) drawGrid(ctx, canvas.width, canvas.height);
+
   const t0 = performance.now();
-  const result = landmarker.detectForVideo(inferCanvas, nextMpTs());
+  const result = landmarker.detectForVideo(detectSrc, nextMpTs());
   lastDetectMs = Math.round(performance.now() - t0);
 
   // Rolling detect average (last 20 frames)
