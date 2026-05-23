@@ -28,9 +28,18 @@ def load_templates(template_dir: Path = DEFAULT_TEMPLATE_DIR) -> list[ExerciseTe
     templates = [
         load_template(path)
         for path in sorted(template_dir.glob("*.json"))
+        if not _is_holder_template(path)
     ]
     _validate_unique_ids(templates)
     return templates
+
+
+def _is_holder_template(path: Path) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    return str(payload.get("source", "")).startswith("holder")
 
 
 def load_template(path: Path) -> ExerciseTemplate:

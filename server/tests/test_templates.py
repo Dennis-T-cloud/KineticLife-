@@ -29,6 +29,38 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(template.exercise, "squat")
         self.assertEqual(template.template_id, "perfect_squat_v1")
 
+    def test_load_templates_ignores_holder_sources(self) -> None:
+        real_template = {
+            "template_id": "real_squat_v1",
+            "exercise": "squat",
+            "display_name": "Real Squat",
+            "joint_angles_version": 1,
+            "source": "recorded",
+            "frame_rate_hz": 10,
+            "frames": [
+                {
+                    "frame_id": 0,
+                    "ts_ms": 0,
+                    "joint_angles": [100] * JOINT_COUNT,
+                }
+            ],
+        }
+        holder_template = {
+            **real_template,
+            "template_id": "holder_squat_v1",
+            "display_name": "Squat Holder",
+            "source": "holder_pending_recording",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            template_dir = Path(tmp)
+            (template_dir / "holder_squat.json").write_text(json.dumps(holder_template), encoding="utf-8")
+            (template_dir / "real_squat.json").write_text(json.dumps(real_template), encoding="utf-8")
+
+            templates = load_templates(template_dir)
+
+        self.assertEqual([template.template_id for template in templates], ["real_squat_v1"])
+
     def test_load_templates_rejects_duplicate_template_ids(self) -> None:
         template_payload = {
             "template_id": "duplicate_v1",

@@ -1,0 +1,23 @@
+{
+  "template_id": "holder_barbell_squat_side_v1",
+  "exercise": "barbell_squat_side",
+  "display_name": "Barbell Squat Side Holder",
+  "joint_angles_version": 1,
+  "source": "holder_pending_recording",
+  "frame_rate_hz": 30,
+  "recording_status": "replace with one clean side-view barbell squat template before enabling DTW",
+  "recording_view": "side",
+  "target_features": [
+    "visible_knee active: rest about 150+, work about 124 or lower",
+    "visible_hip active: rest about 150+, work about 118 or lower",
+    "arms should stay comparatively quiet in bar position",
+    "record true side view with the full body and bar path visible"
+  ],
+  "frames": [
+    {
+      "frame_id": 0,
+      "ts_ms": 0,
+      "joint_angles": [null, null, null, null, null, null, null, null, null, null, null, null, null, null]
+    }
+  ]
+}

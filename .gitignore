@@ -85,6 +85,9 @@ data/templates/*
 data/recordings/
 *.sqlite
 *.db
+
+# doc local files
 web/design.txt
 web/designHANDOFF.txt
 web/new-ui.md
+docs/ai*.*
