@@ -21,9 +21,9 @@ const MUSCLE_BY_ID = Object.fromEntries(MUSCLE_GROUPS.map((group) => [group.id, 
 
 const MUSCLE_INTENSITY_BY_EXERCISE = {
   squat: { quads: 1, hamstrings: 0.72, core: 0.55, lower_back: 0.38, front_calves: 0.45, rear_calves: 0.45 },
-  bicep_curl: { biceps: 1, shoulders: 0.35, core: 0.22 },
-  right_bicep_curl: { biceps: 1, shoulders: 0.35, core: 0.22 },
-  lateral_raise: { shoulders: 1, triceps: 0.34, upper_back: 0.42, core: 0.22 },
+  bicep_curl: { biceps: 1, shoulders: 0.22, core: 0.18 },
+  right_bicep_curl: { biceps: 1, shoulders: 0.22, core: 0.18 },
+  lateral_raise: { shoulders: 1, upper_back: 0.42, core: 0.22 },
   squat_side: { quads: 1, hamstrings: 0.74, core: 0.56, lower_back: 0.4, front_calves: 0.44, rear_calves: 0.44 },
   barbell_squat_side: { quads: 1, hamstrings: 0.78, core: 0.58, lower_back: 0.46, front_calves: 0.42, rear_calves: 0.42 },
   deadlift_side: { hamstrings: 1, lower_back: 0.9, core: 0.72, quads: 0.38, rear_calves: 0.28, upper_back: 0.46 },
@@ -40,15 +40,15 @@ const EXERCISES = [
   },
   {
     id: "bicep_curl",
-    label: "Left Dumbbell Curl",
-    short: "LC",
+    label: "Right Dumbbell Curl",
+    short: "RC",
     muscles: Object.keys(MUSCLE_INTENSITY_BY_EXERCISE.bicep_curl),
     joints: ["left_elbow"],
   },
   {
     id: "right_bicep_curl",
-    label: "Right Dumbbell Curl",
-    short: "RC",
+    label: "Left Dumbbell Curl",
+    short: "LC",
     muscles: Object.keys(MUSCLE_INTENSITY_BY_EXERCISE.right_bicep_curl),
     joints: ["right_elbow"],
   },
@@ -98,6 +98,14 @@ const AI_PLAN = [
 const AI_CORE_PROFILE_KEY = "ath_ai_core_profile";
 const AI_MESSAGES_KEY = "ath_ai_messages";
 const AI_UNREAD_KEY = "ath_ai_unread";
+const ACTIVE_USER_KEY = "ath_active_user";
+const KNOWN_USERS_KEY = "ath_known_users";
+const PROFILE_KEY = "ath_profile";
+const MUSCLE_STATUS_KEY = "ath_muscles";
+const DEVICE_URL_KEY = "ath_device_url";
+const CONN_MODE_KEY = "ath_conn_mode";
+const THEME_KEY = "ath_theme";
+const LAST_DEVICE_KEY = "ath_last_device";
 
 const AI_CORE_INJURY_OPTIONS = [
   { id: "lower_back", label: "Lower Back" },
@@ -116,6 +124,22 @@ const AI_CORE_EXERCISE_RULES = {
   lateral_raise: { group: "Upper Body", baseSets: 3, reps: 12, risk: { shoulder: 70 } },
   bicep_curl: { group: "Arms", baseSets: 3, reps: 12, risk: { elbow: 60, wrist: 25 } },
   right_bicep_curl: { group: "Arms", baseSets: 3, reps: 12, risk: { elbow: 60, wrist: 25 } },
+};
+
+// large = 2-3 days rest, small = 1 day rest
+const EXERCISE_MUSCLE_CLASS = {
+  squat: "large", squat_side: "large", barbell_squat_side: "large",
+  deadlift_side: "large", push_up_side: "large",
+  lateral_raise: "small", bicep_curl: "small", right_bicep_curl: "small",
+};
+
+// muscle group key for rest-period conflict detection
+const EXERCISE_MUSCLE_GROUP_KEY = {
+  squat: "lower", squat_side: "lower", barbell_squat_side: "lower",
+  deadlift_side: "posterior",
+  push_up_side: "push",
+  lateral_raise: "pull",
+  bicep_curl: "arms", right_bicep_curl: "arms",
 };
 
 const ISSUE_LABELS = {
@@ -152,32 +176,92 @@ const TRAKKO_LINES = {
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
-function loadProfile() {
+function normalizeUserId(name) {
+  const normalized = String(name ?? "").trim().toLocaleLowerCase();
+  return normalized ? encodeURIComponent(normalized) : "";
+}
+
+function userStorageKey(baseKey, name) {
+  const id = normalizeUserId(name);
+  return id ? `${baseKey}:${id}` : baseKey;
+}
+
+function getActiveUserName() {
+  try { return localStorage.getItem(ACTIVE_USER_KEY) || ""; } catch { return ""; }
+}
+
+function setActiveUserName(name) {
+  try { localStorage.setItem(ACTIVE_USER_KEY, String(name ?? "").trim()); } catch {}
+}
+
+function loadKnownUsers() {
   try {
-    const raw = localStorage.getItem("ath_profile");
-    return raw ? JSON.parse(raw) : { name: "", sessionsCount: 0, averageForm: 0, streakDays: 0 };
-  } catch { return { name: "", sessionsCount: 0, averageForm: 0, streakDays: 0 }; }
+    const parsed = JSON.parse(localStorage.getItem(KNOWN_USERS_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch { return []; }
+}
+
+function registerKnownUser(name) {
+  const userName = String(name ?? "").trim();
+  if (!userName) return;
+  try {
+    const users = loadKnownUsers().filter((item) => normalizeUserId(item) !== normalizeUserId(userName));
+    localStorage.setItem(KNOWN_USERS_KEY, JSON.stringify([userName, ...users].slice(0, 12)));
+  } catch {}
+}
+
+function makeDefaultProfile(name = "") {
+  return { name, sessionsCount: 0, averageForm: 0, streakDays: 0 };
+}
+
+function loadProfile(name = getActiveUserName()) {
+  const userName = String(name ?? "").trim();
+  const defaults = makeDefaultProfile(userName);
+  try {
+    if (userName) {
+      const scopedRaw = localStorage.getItem(userStorageKey(PROFILE_KEY, userName));
+      if (scopedRaw) {
+        const parsed = JSON.parse(scopedRaw);
+        return { ...defaults, ...parsed, name: parsed.name || userName };
+      }
+      return defaults;
+    }
+    return defaults;
+  } catch { return defaults; }
 }
 
 function saveProfile(p) {
-  try { localStorage.setItem("ath_profile", JSON.stringify(p)); } catch {}
+  try {
+    const userName = String(p?.name || getActiveUserName()).trim();
+    if (userName) {
+      const next = { ...makeDefaultProfile(userName), ...p, name: p?.name || userName };
+      setActiveUserName(next.name);
+      registerKnownUser(next.name);
+      localStorage.setItem(userStorageKey(PROFILE_KEY, next.name), JSON.stringify(next));
+      return;
+    }
+  } catch {}
 }
 
 function makeDefaultMuscleStatus() {
   return Object.fromEntries(MUSCLE_GROUPS.map((group) => [group.id, 0]));
 }
 
-function loadMuscleStatus() {
+function loadMuscleStatus(name = getActiveUserName()) {
   const defaults = makeDefaultMuscleStatus();
+  const userName = String(name ?? "").trim();
   try {
-    const raw = localStorage.getItem("ath_muscles");
-    if (raw) return { ...defaults, ...JSON.parse(raw) };
+    const scopedRaw = userName ? localStorage.getItem(userStorageKey(MUSCLE_STATUS_KEY, userName)) : null;
+    if (scopedRaw) return { ...defaults, ...JSON.parse(scopedRaw) };
   } catch {}
   return defaults;
 }
 
-function saveMuscleStatus(s) {
-  try { localStorage.setItem("ath_muscles", JSON.stringify(s)); } catch {}
+function saveMuscleStatus(s, name = getActiveUserName()) {
+  try {
+    const userName = String(name ?? "").trim();
+    if (userName) localStorage.setItem(userStorageKey(MUSCLE_STATUS_KEY, userName), JSON.stringify(s));
+  } catch {}
 }
 
 function makeDefaultAiCoreProfile() {
@@ -195,10 +279,11 @@ function normalizeTags(tags) {
   return Array.isArray(tags) ? [...new Set(tags.filter(Boolean))] : [];
 }
 
-function loadAiCoreProfile() {
+function loadAiCoreProfile(name = getActiveUserName()) {
   const defaults = makeDefaultAiCoreProfile();
+  const userName = String(name ?? "").trim();
   try {
-    const raw = localStorage.getItem(AI_CORE_PROFILE_KEY);
+    const raw = userName ? localStorage.getItem(userStorageKey(AI_CORE_PROFILE_KEY, userName)) : null;
     if (!raw) return defaults;
     const parsed = JSON.parse(raw);
     return {
@@ -212,13 +297,17 @@ function loadAiCoreProfile() {
   }
 }
 
-function saveAiCoreProfile(profile) {
-  try { localStorage.setItem(AI_CORE_PROFILE_KEY, JSON.stringify(profile)); } catch {}
+function saveAiCoreProfile(profile, name = getActiveUserName()) {
+  try {
+    const userName = String(name ?? "").trim();
+    if (userName) localStorage.setItem(userStorageKey(AI_CORE_PROFILE_KEY, userName), JSON.stringify(profile));
+  } catch {}
 }
 
-function loadAiMessages() {
+function loadAiMessages(name = getActiveUserName()) {
+  const userName = String(name ?? "").trim();
   try {
-    const raw = localStorage.getItem(AI_MESSAGES_KEY);
+    const raw = userName ? localStorage.getItem(userStorageKey(AI_MESSAGES_KEY, userName)) : null;
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -226,16 +315,86 @@ function loadAiMessages() {
   }
 }
 
-function saveAiMessages(messages) {
-  try { localStorage.setItem(AI_MESSAGES_KEY, JSON.stringify(messages.slice(-60))); } catch {}
+function saveAiMessages(messages, name = getActiveUserName()) {
+  try {
+    const userName = String(name ?? "").trim();
+    const payload = JSON.stringify(messages.slice(-60));
+    if (userName) localStorage.setItem(userStorageKey(AI_MESSAGES_KEY, userName), payload);
+  } catch {}
 }
 
-function loadAiUnread() {
-  try { return localStorage.getItem(AI_UNREAD_KEY) === "true"; } catch { return false; }
+function loadAiUnread(name = getActiveUserName()) {
+  const userName = String(name ?? "").trim();
+  try {
+    const raw = userName ? localStorage.getItem(userStorageKey(AI_UNREAD_KEY, userName)) : null;
+    return raw === "true";
+  } catch { return false; }
 }
 
-function saveAiUnread(value) {
-  try { localStorage.setItem(AI_UNREAD_KEY, value ? "true" : "false"); } catch {}
+function saveAiUnread(value, name = getActiveUserName()) {
+  try {
+    const userName = String(name ?? "").trim();
+    const payload = value ? "true" : "false";
+    if (userName) localStorage.setItem(userStorageKey(AI_UNREAD_KEY, userName), payload);
+  } catch {}
+}
+
+function loadUserValue(baseKey, fallback, name = getActiveUserName()) {
+  const userName = String(name ?? "").trim();
+  try {
+    const scoped = userName ? localStorage.getItem(userStorageKey(baseKey, userName)) : null;
+    if (scoped != null) return scoped;
+    return fallback;
+  } catch { return fallback; }
+}
+
+function saveUserValue(baseKey, value, name = getActiveUserName()) {
+  const userName = String(name ?? "").trim();
+  try {
+    if (userName) localStorage.setItem(userStorageKey(baseKey, userName), value);
+  } catch {}
+}
+
+function loadDeviceUrl(name = getActiveUserName()) {
+  return loadUserValue(DEVICE_URL_KEY, "http://fitcam-d37d7c.local", name);
+}
+
+function saveDeviceUrl(value, name = getActiveUserName()) {
+  saveUserValue(DEVICE_URL_KEY, value || "http://fitcam-d37d7c.local", name);
+}
+
+function loadConnMode(name = getActiveUserName()) {
+  const mode = loadUserValue(CONN_MODE_KEY, "ble", name);
+  return mode === "wifi" ? "wifi" : "ble";
+}
+
+function saveConnMode(value, name = getActiveUserName()) {
+  saveUserValue(CONN_MODE_KEY, value === "wifi" ? "wifi" : "ble", name);
+}
+
+function loadTheme(name = getActiveUserName()) {
+  const value = loadUserValue(THEME_KEY, "deep_space", name);
+  return value === "sunset" ? "sunset" : "deep_space";
+}
+
+function saveTheme(value, name = getActiveUserName()) {
+  saveUserValue(THEME_KEY, value === "sunset" ? "sunset" : "deep_space", name);
+}
+
+function clearLegacySingleUserKeys() {
+  try {
+    [
+      PROFILE_KEY,
+      MUSCLE_STATUS_KEY,
+      AI_CORE_PROFILE_KEY,
+      AI_MESSAGES_KEY,
+      AI_UNREAD_KEY,
+      DEVICE_URL_KEY,
+      CONN_MODE_KEY,
+      THEME_KEY,
+      LAST_DEVICE_KEY,
+    ].forEach((key) => localStorage.removeItem(key));
+  } catch {}
 }
 
 function makeAiMessage({ role = "ai", type = "text", content = "", payload = null }) {
@@ -362,6 +521,83 @@ function generateAiCorePlan({ profile, muscleStatus, focusTags }) {
   };
 }
 
+// Training day patterns keyed by days-per-week (0=Sun,1=Mon…6=Sat)
+const WEEK_TRAINING_PATTERNS = {
+  2: [1, 4],
+  3: [1, 3, 5],
+  4: [1, 2, 4, 5],
+  5: [1, 2, 3, 4, 5],
+  6: [1, 2, 3, 4, 5, 6],
+};
+const WEEK_DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// Builds a full-week schedule respecting muscle recovery:
+// large muscle groups (quads/posterior/chest): 2-day gap minimum
+// small muscle groups (shoulders/arms): 1-day gap minimum
+// Focus tags and fatigue inform exercise priority per day.
+function buildWeekSchedule(trainingDaysPerWeek, muscleStatus, focusTags, injuryTags) {
+  const days = clamp(Number(trainingDaysPerWeek) || 3, 2, 6);
+  const pattern = new Set(WEEK_TRAINING_PATTERNS[days] ?? WEEK_TRAINING_PATTERNS[3]);
+  const todayDow = new Date().getDay();
+  const toLinear = (d) => (d === 0 ? 7 : d);
+  const weekOrder = [1, 2, 3, 4, 5, 6, 0];
+  const injuries = normalizeTags(injuryTags);
+  const focus = normalizeTags(focusTags);
+
+  // Score every exercise once (injury filter applied)
+  const scoredPool = EXERCISES.map((ex) => {
+    const rule = AI_CORE_EXERCISE_RULES[ex.id] ?? { baseSets: 3, reps: 10, risk: {} };
+    const injuryPenalty = injuries.reduce((s, tag) => s + (rule.risk?.[tag] ?? 0), 0);
+    if (injuryPenalty >= 100) return null;
+    const targets = Object.keys(getExerciseTargets(ex.id));
+    const avgLoad = targets.length
+      ? targets.reduce((s, m) => s + (muscleStatus?.[m] ?? 0), 0) / targets.length : 0;
+    const maxLoad = targets.reduce((mx, m) => Math.max(mx, muscleStatus?.[m] ?? 0), 0);
+    const focusHits = targets.filter((m) => focus.includes(m));
+    const muscleClass = EXERCISE_MUSCLE_CLASS[ex.id] ?? "small";
+    const groupKey = EXERCISE_MUSCLE_GROUP_KEY[ex.id] ?? "general";
+    const restRequired = muscleClass === "large" ? 2 : 1;
+    const focusBonus = focusHits.length ? 38 : 0;
+    const fatiguePenalty = maxLoad > 0.75 ? 55 : maxLoad > 0.55 ? 18 : 0;
+    const score = (1 - avgLoad) * 100 + focusBonus - fatiguePenalty - injuryPenalty * 0.4;
+    const reason = injuryPenalty > 0 ? "Injury-safe selection"
+      : focusHits.length ? `Focus: ${focusHits.map((id) => MUSCLE_BY_ID[id]?.label ?? id).join(", ")}`
+      : maxLoad > 0.75 ? "Recovery bias — reduced load"
+      : avgLoad < 0.35 ? "Fresh — low recent load"
+      : "Balanced readiness";
+    return {
+      exerciseId: ex.id,
+      sets: clamp((rule.baseSets ?? 3) - (maxLoad > 0.65 ? 1 : 0), 2, 4),
+      targetReps: rule.reps ?? 10,
+      muscleClass, groupKey, restRequired, score, reason,
+    };
+  }).filter(Boolean);
+
+  // Greedily assign best available exercise to each training day
+  const trainingDays = weekOrder.filter((d) => pattern.has(d));
+  const lastGroupDayIdx = {}; // groupKey → index in trainingDays
+  const dayAssignments = {};
+
+  trainingDays.forEach((dow, dayIdx) => {
+    const available = scoredPool.filter((ex) => {
+      const last = lastGroupDayIdx[ex.groupKey];
+      return last === undefined || (dayIdx - last) >= ex.restRequired;
+    });
+    const pool = available.length ? available : scoredPool;
+    const best = [...pool].sort((a, b) => b.score - a.score)[0];
+    dayAssignments[dow] = best;
+    lastGroupDayIdx[best.groupKey] = dayIdx;
+  });
+
+  return weekOrder.map((dow) => {
+    const isTraining = pattern.has(dow);
+    const isToday = dow === todayDow;
+    const isPast = toLinear(dow) < toLinear(todayDow);
+    const exercise = isTraining ? dayAssignments[dow] : null;
+    return { dow, label: WEEK_DAY_LABELS[dow], isTraining, isToday, isPast, exercise };
+  });
+}
+
 function fmt(s) {
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
@@ -375,8 +611,13 @@ function movementProgress(exerciseId, keyAngle) {
   return Math.max(0, Math.min(1, (160 - keyAngle) / 55));
 }
 
-const AUTO_CLASSIFIER_IDS = ["squat", "bicep_curl", "right_bicep_curl", "lateral_raise", "squat_side", "barbell_squat_side", "deadlift_side", "push_up_side"];
+// push_up_side excluded: its quiet features (plank_quiet minAvg:142, knees_quiet minAvg:140)
+// are satisfied by anyone standing upright, causing constant false positives during front exercises.
+const AUTO_CLASSIFIER_IDS = ["squat", "bicep_curl", "right_bicep_curl", "lateral_raise", "squat_side", "barbell_squat_side", "deadlift_side"];
 const AUTO_REP_CONFIRMATIONS_REQUIRED = 2;
+const AUTO_ACTION_ROW_LIMIT = 4;
+const AUTO_SWITCH_HOLD_MS = 2800;
+const AUTO_SIMPLER_SWITCH_MARGIN = 0.22;
 
 function classifierAngle(a, b, c) {
   if (!a || !b || !c) return null;
@@ -391,6 +632,10 @@ function avgFinite(...values) {
   const finite = values.filter(Number.isFinite);
   if (!finite.length) return null;
   return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
+function classifierActiveJointCount(id) {
+  return Math.max(1, (AUTO_CLASSIFIER_SPECS[id]?.features ?? []).filter((feature) => feature.type === "active").length);
 }
 
 const AUTO_CLASSIFIER_SPECS = {
@@ -505,6 +750,7 @@ function makeAutoClassifierState() {
     candidateId: null,
     candidateFrames: 0,
     activeId: null,
+    activeSince: 0,
     activeConfidence: 0,
     unknownFrames: 0,
     switches: 0,
@@ -634,12 +880,28 @@ function classifyMotionWindow(classifier, rawLm, exMap, now) {
     classifier.unknownFramesTotal += 1;
     if (classifier.unknownFrames >= 18) {
       classifier.activeId = null;
+      classifier.activeSince = 0;
       classifier.activeConfidence = 0;
     }
     return { id: classifier.activeId, confidence: classifier.activeConfidence, status: classifier.activeId ? "hold" : "unassigned" };
   }
 
   classifier.unknownFrames = 0;
+  if (classifier.activeId && classifier.activeId !== top.id) {
+    const activeRank = ranked.find((item) => item.id === classifier.activeId);
+    const holdActive = now - (classifier.activeSince || 0) < AUTO_SWITCH_HOLD_MS;
+    const switchingToSimpler = classifierActiveJointCount(top.id) < classifierActiveJointCount(classifier.activeId);
+    const activeStillPlausible = activeRank && activeRank.score >= 0.46 && activeRank.jointMatches >= 2;
+
+    if (holdActive || (switchingToSimpler && activeStillPlausible && top.score - activeRank.score < AUTO_SIMPLER_SWITCH_MARGIN)) {
+      classifier.candidateId = classifier.activeId;
+      classifier.candidateFrames = 0;
+      classifier.activeConfidence = Math.max(0, Math.round((activeRank?.score ?? classifier.activeConfidence / 100) * 100));
+      classifier.classifiedFrames += 1;
+      return { id: classifier.activeId, confidence: classifier.activeConfidence, status: "hold" };
+    }
+  }
+
   if (classifier.candidateId === top.id) classifier.candidateFrames += 1;
   else {
     classifier.candidateId = top.id;
@@ -649,6 +911,7 @@ function classifyMotionWindow(classifier, rawLm, exMap, now) {
   if (classifier.candidateFrames >= 5 && classifier.activeId !== top.id) {
     if (classifier.activeId) classifier.switches += 1;
     classifier.activeId = top.id;
+    classifier.activeSince = now;
   }
   classifier.activeConfidence = top.confidence;
   if (classifier.activeId) classifier.classifiedFrames += 1;
@@ -663,15 +926,20 @@ const BLE_RX_UUID      = "9b8f0003-6f4d-4d4f-9c9a-4b4c49464501";
 
 // ─── Device History ───────────────────────────────────────────────────────────
 
-function loadLastDevice() {
+function loadLastDevice(name = getActiveUserName()) {
+  const userName = String(name ?? "").trim();
   try {
-    const raw = localStorage.getItem("ath_last_device");
+    const raw = userName ? localStorage.getItem(userStorageKey(LAST_DEVICE_KEY, userName)) : null;
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
 
-function saveLastDevice(info) {
-  try { localStorage.setItem("ath_last_device", JSON.stringify({ ...info, connectedAt: Date.now() })); } catch {}
+function saveLastDevice(info, name = getActiveUserName()) {
+  try {
+    const userName = String(name ?? "").trim();
+    const payload = JSON.stringify({ ...info, connectedAt: Date.now() });
+    if (userName) localStorage.setItem(userStorageKey(LAST_DEVICE_KEY, userName), payload);
+  } catch {}
 }
 
 function exerciseById(id) {
@@ -688,14 +956,20 @@ function defaultBodyViewForMuscles(muscles = []) {
   return backCount > ids.length / 2 ? "back" : "front";
 }
 
-function muscleHeatColor(load, target = 0, selected = false, theme = "deep_space") {
+function muscleHeatLevel(load, target = 0) {
+  const visual = Math.max(load, target);
+  if (visual <= 0.01) return 0;
+  return Math.min(7, Math.max(1, Math.ceil(visual * 7)));
+}
+
+function muscleHeatColor(load, target = 0, theme = "deep_space") {
   const m = (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).muscle;
-  if (selected) return m.sel;
-  if (target >= 0.8) return m.hi;
-  if (target > 0) return m.mid;
-  if (load >= 0.68) return m.load;
-  if (load >= 0.3) return m.dim;
-  return m.off;
+  return m.levels[muscleHeatLevel(load, target)] ?? m.levels[0];
+}
+
+function muscleHeatOpacity(load, target = 0) {
+  const level = muscleHeatLevel(load, target);
+  return level === 0 ? 0.62 : 0.58 + level * 0.06;
 }
 
 // ─── Theme Color Tokens ───────────────────────────────────────────────────────
@@ -705,7 +979,18 @@ const THEME_COLORS = {
     sphere: { near: [0,255,157], far: [0,219,233] },
     skeleton: { bg: "#030508", bgCombo: "rgba(10,12,16,0.30)" },
     chart: { ref: "#FFB800", user: "#00FF9D", glow: "#00FF9D", grid: "rgba(255,255,255,0.05)" },
-    muscle: { sel: "#00FF9D", hi: "#00DBE9", mid: "#49F2C2", load: "#FFB800", dim: "#00DBE9", off: "rgba(255,255,255,0.2)" },
+    muscle: {
+      levels: [
+        "#161B22",
+        "#0D47A1",
+        "#1976D2",
+        "#00B4D8",
+        "#00E5FF",
+        "#FFB300",
+        "#FF6D00",
+        "#FF003C",
+      ],
+    },
     renderer: { ok_a: "#00DBE9", ok_b: "#00FF9D", white: "rgba(245,252,255,0.96)", dim: "rgba(255,255,255,0.28)", warn: "#FFB800", err: "#FF3366", labelBg: "rgba(3,5,8,0.58)", warningTxt: "#030508", blendMode: "lighter" },
   },
   sunset: {
@@ -713,7 +998,18 @@ const THEME_COLORS = {
     sphere: { near: [232,40,94], far: [255,95,31] },
     skeleton: { bg: "#06060E", bgCombo: "rgba(6,6,18,0.30)" },
     chart: { ref: "#E06200", user: "#E8285E", glow: "#FF5F1F", grid: "rgba(0,0,0,0.06)" },
-    muscle: { sel: "#E8285E", hi: "#FF5F1F", mid: "#FFA07A", load: "#E06200", dim: "#FF5F1F", off: "rgba(40,14,6,0.15)" },
+    muscle: {
+      levels: [
+        "#FFFFFF",
+        "#FDE0C9",
+        "#FAC09C",
+        "#F79F6F",
+        "#F47B42",
+        "#E85D2F",
+        "#D63D1F",
+        "#BD1F29",
+      ],
+    },
     renderer: { ok_a: "#1C2AD2", ok_b: "#5D6EF0", white: "rgba(200,210,255,0.96)", dim: "rgba(100,120,220,0.32)", warn: "#FF9500", err: "#E8285E", labelBg: "rgba(6,6,24,0.62)", warningTxt: "rgba(220,230,255,0.92)", blendMode: "lighter" },
   },
 };
@@ -752,6 +1048,8 @@ const css = `
   --am-a-rgb: 255,184,0;
   --cy-rgb: 0,122,255;
   --accent-txt: #030508;
+  --muscle-radar: #FFFFFF;
+  --muscle-radar-rgb: 255,255,255;
 }
 
 /* ── Sunset Theme ── */
@@ -768,13 +1066,15 @@ const css = `
   --gb: rgba(160,64,16,0.10);
   --gb-hi: rgba(160,64,16,0.22);
   --text: rgba(32,14,6,0.88);
-  --text-m: rgba(100,48,18,0.58);
-  --text-d: rgba(80,38,14,0.42);
+  --text-m: rgba(80,38,14,0.72);
+  --text-d: rgba(80,38,14,0.52);
   --em-a-rgb: 255,95,31;
   --em-b-rgb: 232,40,94;
   --am-a-rgb: 255,149,0;
   --cy-rgb: 155,89,182;
   --accent-txt: rgba(255,247,240,0.95);
+  --muscle-radar: #FFF0A6;
+  --muscle-radar-rgb: 255,240,166;
   --nav-bg: rgba(255,240,225,0.88);
   /* dusk-blue — deep indigo for the "cool sky" counterpart to the warm sunset */
   --su-blue-rgb: 28,42,210;
@@ -785,8 +1085,38 @@ const css = `
   stroke: rgba(32,14,6,0.14);
 }
 
+[data-theme="sunset"] .body-guide {
+  stroke: rgba(32,14,6,0.12);
+}
+
+[data-theme="sunset"] .body-face-line {
+  stroke: rgba(32,14,6,0.24);
+}
+
+[data-theme="sunset"] .body-anatomy-line {
+  stroke: rgba(32,14,6,0.18);
+}
+
 [data-theme="sunset"] .muscle-shape {
-  stroke: rgba(255,247,240,0.55);
+  stroke: rgba(130,50,24,0.24);
+}
+
+[data-theme="sunset"] .muscle-shape.selected {
+  stroke: #FFF0A6;
+  stroke-width: 2;
+  filter:
+    drop-shadow(0 0 5px rgba(255,240,166,0.72))
+    drop-shadow(0 0 10px rgba(255,184,0,0.38));
+}
+
+[data-theme="sunset"] .muscle-selection-ring {
+  stroke: #FFF0A6;
+  stroke-width: 2;
+  stroke-dasharray: 1.4 6.2;
+  filter:
+    drop-shadow(0 0 5px rgba(255,240,166,0.72))
+    drop-shadow(0 0 11px rgba(255,184,0,0.38));
+  animation-name: muscle-radar-pulse-soft;
 }
 
 /* ── Sunset: Live Screen overrides (fix hardcoded dark backgrounds) ── */
@@ -812,6 +1142,24 @@ const css = `
   background: rgba(155,65,12,0.07);
   border-color: rgba(155,65,12,0.14);
   box-shadow: inset 0 0 8px rgba(155,65,12,0.06);
+}
+[data-theme="sunset"] .action-rep-stack {
+  background: rgba(255,246,238,0.90);
+  border-top-color: rgba(160,70,15,0.10);
+}
+[data-theme="sunset"] .action-rep-stack .rep-hud {
+  background: rgba(255,250,244,0.52);
+  border-bottom-color: rgba(160,70,15,0.10);
+}
+[data-theme="sunset"] .action-title {
+  color: rgba(32,14,6,0.92);
+}
+[data-theme="sunset"] .action-sub,
+[data-theme="sunset"] .rep-gate-label,
+[data-theme="sunset"] .rep-progress-readout,
+[data-theme="sunset"] .action-empty,
+[data-theme="sunset"] .action-hidden-count {
+  color: rgba(88,45,18,0.68);
 }
 [data-theme="sunset"] .session-bar {
   background: rgba(255,246,238,0.90);
@@ -1222,7 +1570,7 @@ body {
   font-weight: 600;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--text-d);
+  color: var(--text-m);
 }
 
 .sys-label-em {
@@ -1583,6 +1931,16 @@ h2.ath-title {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 16px rgba(var(--em-a-rgb),0.08);
 }
 
+.bento-icon-svg {
+  width: 18px; height: 18px;
+  display: block;
+}
+
+.action-badge-svg {
+  width: 100%; height: 100%;
+  display: block;
+}
+
 .bento-tag {
   font-size: 0.62rem;
   font-weight: 600;
@@ -1798,13 +2156,18 @@ h2.ath-title {
 }
 
 .nav-icon {
-  width: 22px; height: 18px;
+  width: 22px; height: 22px;
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--mono);
-  font-size: 0.62rem;
-  line-height: 1;
-  letter-spacing: 0.04em;
   position: relative;
+}
+
+.nav-icon-svg {
+  width: 20px; height: 20px;
+  display: block;
+}
+
+.nav-item.active .nav-icon-svg {
+  filter: drop-shadow(0 0 5px rgba(var(--em-b-rgb),0.6));
 }
 
 .nav-unread-dot {
@@ -1985,14 +2348,8 @@ h2.ath-title {
 }
 
 .ex-code {
-  width: 30px; height: 30px;
-  border-radius: 9px;
-  border: 1px solid rgba(var(--em-a-rgb),0.24);
-  background: rgba(var(--em-a-rgb),0.06);
+  width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--mono);
-  font-size: 0.66rem;
-  font-weight: 700;
   color: var(--em-a);
   flex-shrink: 0;
 }
@@ -2069,25 +2426,35 @@ h2.ath-title {
 
 .cam-placeholder {
   position: relative; z-index: 2;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  gap: 0.75rem; color: var(--text-m);
-}
-
-.cam-placeholder-icon {
-  width: 64px; height: 64px;
-  border-radius: 20px;
-  border: 1px solid rgba(var(--em-a-rgb),0.24);
-  background: rgba(var(--em-a-rgb),0.04);
+  width: 100%;
+  height: 100%;
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: rgba(var(--em-a-rgb),0.55);
-  letter-spacing: 0.12em;
-  opacity: 0.9;
 }
-.cam-placeholder p { font-size: 0.82rem; }
+.cam-init-overlay {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 24px;
+}
+.cam-init-spinner {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 2px solid rgba(var(--em-a-rgb), 0.15);
+  border-top-color: rgba(var(--em-a-rgb), 0.9);
+  transition: opacity 0.4s;
+}
+.cam-init-spinner.active { animation: cam-spin 1s linear infinite; opacity: 1; }
+.cam-init-spinner.dim    { opacity: 0.35; animation: cam-spin 2s linear infinite; }
+@keyframes cam-spin { to { transform: rotate(360deg); } }
+.cam-init-label {
+  font: 600 13px/1.4 var(--font-ui, sans-serif);
+  color: rgba(var(--em-a-rgb), 0.9);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.cam-init-sub {
+  font: 400 11px/1.4 var(--font-ui, sans-serif);
+  color: rgba(255,255,255,0.35);
+  text-align: center;
+}
 
 .cam-canvas {
   position: absolute; inset: 0; z-index: 3;
@@ -2274,7 +2641,7 @@ h2.ath-title {
 .action-rep-stack {
   display: flex;
   flex-direction: column;
-  max-height: min(34svh, 280px);
+  max-height: min(30svh, 260px);
   overflow-y: auto;
   overscroll-behavior: contain;
   background: rgba(5,6,10,0.92);
@@ -2322,11 +2689,29 @@ h2.ath-title {
   color: var(--text-d);
 }
 
+.action-arm-hint {
+  margin-top: 0.18rem;
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: rgba(var(--em-a-rgb), 0.72);
+}
+
 .action-empty {
   padding: 0.9rem 1rem;
   color: var(--text-d);
   font-size: 0.68rem;
   letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.action-hidden-count {
+  padding: 0.55rem 1rem 0.7rem;
+  color: var(--text-d);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
 }
 
@@ -2445,6 +2830,29 @@ h2.ath-title {
 @keyframes hint-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+.arm-hint-badge {
+  position: absolute; bottom: 14px;
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(3,5,8,0.72);
+  border: 1px solid rgba(var(--em-a-rgb),0.32);
+  border-radius: 7px;
+  padding: 4px 8px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+.arm-hint-badge.left  { left: 14px; }
+.arm-hint-badge.right { right: 14px; }
+.arm-hint-arrow {
+  font-size: 0.9rem; line-height: 1;
+  color: rgba(var(--em-a-rgb),0.85);
+}
+.arm-hint-label {
+  font-size: 0.58rem; font-weight: 800;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: rgba(var(--em-a-rgb),0.9);
 }
 
 .session-bar {
@@ -2578,8 +2986,9 @@ h2.ath-title {
 }
 
 .classification-action-code {
-  font-family: var(--mono);
-  font-size: 0.7rem;
+  display: inline-flex;
+  width: 26px; height: 26px;
+  flex-shrink: 0;
   color: var(--em-b);
 }
 
@@ -2924,14 +3333,44 @@ h2.ath-title {
 }
 
 .body-silhouette {
-  fill: rgba(255,255,255,0.035);
-  stroke: rgba(255,255,255,0.08);
-  stroke-width: 1.2;
+  fill: rgba(255,255,255,0.024);
+  stroke: rgba(255,255,255,0.15);
+  stroke-width: 1.45;
+  vector-effect: non-scaling-stroke;
+}
+
+.body-guide {
+  fill: none;
+  stroke: rgba(255,255,255,0.10);
+  stroke-width: 1;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.body-face-line {
+  fill: none;
+  stroke: rgba(255,255,255,0.20);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.body-anatomy-line {
+  fill: none;
+  stroke: rgba(255,255,255,0.16);
+  stroke-width: 1.15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .muscle-shape {
-  stroke: rgba(3,5,8,0.72);
-  stroke-width: 2;
+  stroke: rgba(3,5,8,0.62);
+  stroke-width: 1.35;
+  vector-effect: non-scaling-stroke;
   cursor: pointer;
   transition: fill 0.22s ease, opacity 0.22s ease, stroke 0.22s ease, filter 0.22s ease;
 }
@@ -2946,13 +3385,74 @@ h2.ath-title {
 }
 
 .muscle-shape.selected {
-  stroke: rgba(var(--em-b-rgb),0.9);
-  filter: drop-shadow(0 0 12px rgba(var(--em-b-rgb),0.35));
+  stroke: rgba(var(--muscle-radar-rgb),0.92);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 8px rgba(var(--muscle-radar-rgb),0.8));
+}
+
+.muscle-selection-ring {
+  fill: none;
+  stroke: var(--muscle-radar);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1.4 6.2;
+  vector-effect: non-scaling-stroke;
+  opacity: 0;
+  pointer-events: none;
+  animation: muscle-radar-pulse 1.05s ease-in-out infinite;
+  filter: drop-shadow(0 0 10px rgba(var(--muscle-radar-rgb),0.45));
 }
 
 @keyframes muscle-breathe {
   0%, 100% { filter: drop-shadow(0 0 6px rgba(var(--em-a-rgb),0.2)); }
   50% { filter: drop-shadow(0 0 16px rgba(var(--em-b-rgb),0.38)); }
+}
+
+@keyframes muscle-radar-pulse {
+  0% {
+    opacity: 0.18;
+    stroke-width: 3.2;
+    stroke-dashoffset: 0;
+    filter: drop-shadow(0 0 5px rgba(var(--muscle-radar-rgb),0.25));
+  }
+  45% {
+    opacity: 0.96;
+    stroke-width: 6.6;
+    filter: drop-shadow(0 0 16px rgba(var(--muscle-radar-rgb),0.62));
+  }
+  100% {
+    opacity: 0.16;
+    stroke-width: 8.4;
+    stroke-dashoffset: -15;
+    filter: drop-shadow(0 0 7px rgba(var(--muscle-radar-rgb),0.32));
+  }
+}
+
+@keyframes muscle-radar-pulse-soft {
+  0% {
+    opacity: 0.42;
+    stroke-width: 2;
+    stroke-dashoffset: 0;
+    filter:
+      drop-shadow(0 0 4px rgba(255,240,166,0.52))
+      drop-shadow(0 0 8px rgba(255,184,0,0.26));
+  }
+  45% {
+    opacity: 1;
+    stroke-width: 2.8;
+    filter:
+      drop-shadow(0 0 7px rgba(255,240,166,0.86))
+      drop-shadow(0 0 14px rgba(255,184,0,0.42));
+  }
+  100% {
+    opacity: 0.34;
+    stroke-width: 3.4;
+    stroke-dashoffset: -15;
+    filter:
+      drop-shadow(0 0 5px rgba(255,240,166,0.58))
+      drop-shadow(0 0 10px rgba(255,184,0,0.30));
+  }
 }
 
 .body-map-labels {
@@ -2988,11 +3488,7 @@ h2.ath-title {
 }
 
 .recovery-detail {
-  padding: 0.9rem 1rem;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.45rem 1rem;
-  align-items: center;
+  padding: 0.75rem 1rem;
 }
 
 .recovery-name {
@@ -3112,12 +3608,17 @@ h2.ath-title {
   letter-spacing: 0.04em;
 }
 
+.plan-ai-icon-svg {
+  width: 16px; height: 16px;
+  display: block;
+}
+
 .plan-ai-title {
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--em-a);
+  color: var(--text);
 }
 
 .ai-core-status {
@@ -3193,11 +3694,25 @@ h2.ath-title {
   background: rgba(255,255,255,0.025);
 }
 
+.ai-route-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+}
+
 .ai-core-route {
-  margin-top: 0.25rem;
   font-size: 0.95rem;
   font-weight: 700;
   color: var(--text);
+  white-space: nowrap;
+}
+
+.ai-chip-xs {
+  font-size: 0.58rem !important;
+  padding: 0.1rem 0.38rem !important;
+  line-height: 1.6;
 }
 
 .ai-core-reset {
@@ -3281,6 +3796,66 @@ h2.ath-title {
   font-size: 0.72rem;
   color: var(--text-d);
   font-family: var(--mono);
+}
+
+.plan-day-chip {
+  flex-shrink: 0;
+  width: 34px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-m);
+  text-align: center;
+}
+
+.plan-day-chip.active {
+  color: var(--em-b);
+  text-shadow: 0 0 8px rgba(var(--em-b-rgb),0.5);
+}
+
+.plan-day-chip.rest {
+  color: var(--text-d);
+  opacity: 0.55;
+}
+
+.plan-item.today {
+  border-bottom-color: rgba(var(--em-a-rgb),0.28);
+}
+.plan-item.today:not(.plan-item-rest) {
+  cursor: pointer;
+}
+.plan-item.today:not(.plan-item-rest):hover {
+  background: rgba(var(--em-b-rgb),0.06);
+}
+
+.plan-item.past {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+.plan-today-cta {
+  font-size: 0.68rem;
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  color: var(--em-b);
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+.plan-item-rest {
+  cursor: default;
+}
+
+.plan-rest-label {
+  flex: 1;
+  font-size: 0.7rem;
+  font-family: var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-d);
+  opacity: 0.4;
 }
 
 /* ── Home Coach Screen ── */
@@ -3489,17 +4064,13 @@ h2.ath-title {
 .core-plan-row:last-child { border-bottom: none; }
 
 .core-plan-code {
-  width: 34px;
-  height: 24px;
-  border-radius: 7px;
+  width: 26px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--mono);
-  font-size: 0.58rem;
-  font-weight: 700;
-  color: var(--accent-txt);
-  background: linear-gradient(135deg, var(--em-a), var(--em-b));
+  flex-shrink: 0;
+  color: var(--em-a);
   flex-shrink: 0;
 }
 
@@ -3739,10 +4310,15 @@ function AetherisWorld({ visualState, theme }) {
     particlesRef.current = Array.from({ length: N }, () => ({
       x: Math.random() * window.innerWidth,
       y: Math.random() * window.innerHeight,
-      vx: (Math.random() - 0.5) * 0.22,
-      vy: (Math.random() - 0.5) * 0.22,
+      // base drift velocity (much slower than before — sinusoid does the work)
+      vx: (Math.random() - 0.5) * 0.06,
+      vy: (Math.random() - 0.5) * 0.06,
       r: Math.random() * 1.5 + 0.25,
       depth: Math.random() * 0.6 + 0.2,
+      // four independent random phases for sinusoidal drift (mirrors the GLSL random.xyzw)
+      rnd: [Math.random(), Math.random(), Math.random(), Math.random()],
+      // amplitude of sinusoidal drift in pixels (scaled by screen size on use)
+      amp: Math.random() * 0.5 + 0.15,
     }));
 
     // Supernova slots: up to 3 simultaneous cross-star events
@@ -3795,16 +4371,24 @@ function AetherisWorld({ visualState, theme }) {
         }
       });
 
+      const elapsed = isFinite(nowSec) ? nowSec : 0;
+      const safeDt  = isFinite(dt) ? dt : 0;
       particlesRef.current.forEach((p, i) => {
         if (!frozen) {
-          if (turbulent) {
-            p.vx += (Math.random() - 0.5) * 0.04;
-            p.vy += (Math.random() - 0.5) * 0.04;
-            p.vx *= 0.97;
-            p.vy *= 0.97;
-          }
-          p.x += p.vx * (turbulent ? 3 : 1);
-          p.y += p.vy * (turbulent ? 3 : 1);
+          const [r0, r1, r2, r3] = p.rnd;
+          const scale = turbulent ? 2.8 : 1.0;
+          const speedMult = turbulent ? 3.5 : 1.0;
+
+          // sinusoidal drift — mirrors the vertex shader formula from the Particles component:
+          //   pos.x += sin(t * rnd.z + 6.28 * rnd.w) * mix(0.1, 1.5, rnd.x)
+          // here we compute per-frame delta (derivative * safeDt) to stay frame-rate independent
+          const sineAmpX = p.amp * Math.min(W, H) * 0.04 * scale;
+          const sineAmpY = p.amp * Math.min(W, H) * 0.04 * scale;
+          const dxSine = Math.cos(elapsed * r2 * 0.8 + 6.28 * r3) * r0 * sineAmpX * safeDt;
+          const dySine = Math.cos(elapsed * r1 * 0.8 + 6.28 * r0) * r3 * sineAmpY * safeDt;
+
+          p.x += (p.vx + dxSine) * speedMult;
+          p.y += (p.vy + dySine) * speedMult;
           if (p.x < 0) p.x += W;
           if (p.x > W) p.x -= W;
           if (p.y < 0) p.y += H;
@@ -3885,7 +4469,7 @@ function AetherisWorld({ visualState, theme }) {
       rafRef.current = requestAnimationFrame(tick);
     }
 
-    tick();
+    rafRef.current = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(rafRef.current);
       window.removeEventListener("resize", resize);
@@ -4046,58 +4630,130 @@ function ParticleSphere({ connState, theme }) {
 
 const BODY_SEGMENTS = {
   front: [
-    { muscle: "shoulders", type: "ellipse", attrs: { cx: 77, cy: 103, rx: 25, ry: 16 } },
-    { muscle: "shoulders", type: "ellipse", attrs: { cx: 143, cy: 103, rx: 25, ry: 16 } },
-    { muscle: "chest", type: "path", attrs: { d: "M84 124 C90 108 104 108 109 124 L107 158 C93 155 84 144 84 124Z" } },
-    { muscle: "chest", type: "path", attrs: { d: "M136 124 C130 108 116 108 111 124 L113 158 C127 155 136 144 136 124Z" } },
-    { muscle: "biceps", type: "path", attrs: { d: "M55 122 C42 144 38 171 45 197 C60 191 66 162 69 131Z" } },
-    { muscle: "biceps", type: "path", attrs: { d: "M165 122 C178 144 182 171 175 197 C160 191 154 162 151 131Z" } },
-    { muscle: "core", type: "path", attrs: { d: "M88 160 L132 160 L126 229 L94 229 Z" } },
-    { muscle: "quads", type: "path", attrs: { d: "M82 238 C98 237 106 246 105 268 L101 334 C84 333 75 318 76 294Z" } },
-    { muscle: "quads", type: "path", attrs: { d: "M138 238 C122 237 114 246 115 268 L119 334 C136 333 145 318 144 294Z" } },
-    { muscle: "front_calves", type: "path", attrs: { d: "M77 337 C95 337 102 354 98 400 L82 400 C75 375 72 356 77 337Z" } },
-    { muscle: "front_calves", type: "path", attrs: { d: "M143 337 C125 337 118 354 122 400 L138 400 C145 375 148 356 143 337Z" } },
+    { muscle: "shoulders", type: "path", attrs: { d: "M64 92 C72 82 88 82 98 92 C96 106 86 116 70 118 C61 111 57 101 64 92Z" } },
+    { muscle: "shoulders", type: "path", attrs: { d: "M156 92 C148 82 132 82 122 92 C124 106 134 116 150 118 C159 111 163 101 156 92Z" } },
+    { muscle: "chest", type: "path", attrs: { d: "M82 113 C91 100 104 99 109 115 C108 136 101 149 86 151 C78 139 77 124 82 113Z" } },
+    { muscle: "chest", type: "path", attrs: { d: "M138 113 C129 100 116 99 111 115 C112 136 119 149 134 151 C142 139 143 124 138 113Z" } },
+    { muscle: "biceps", type: "path", attrs: { d: "M52 116 C40 134 35 160 39 187 C54 182 64 154 70 125 C66 119 58 115 52 116Z" } },
+    { muscle: "biceps", type: "path", attrs: { d: "M168 116 C180 134 185 160 181 187 C166 182 156 154 150 125 C154 119 162 115 168 116Z" } },
+    { muscle: "core", type: "path", attrs: { d: "M91 153 C101 158 119 158 129 153 L125 228 C117 234 103 234 95 228Z" } },
+    { muscle: "core", type: "path", attrs: { d: "M88 161 C78 180 78 205 91 229 L99 224 C92 201 94 178 103 161Z" } },
+    { muscle: "core", type: "path", attrs: { d: "M132 161 C142 180 142 205 129 229 L121 224 C128 201 126 178 117 161Z" } },
+    { muscle: "quads", type: "path", attrs: { d: "M80 238 C88 236 98 249 97 276 L89 337 C78 332 74 312 77 288Z" } },
+    { muscle: "quads", type: "path", attrs: { d: "M102 239 C109 249 109 281 100 337 C93 324 92 291 95 267 C97 252 100 244 102 239Z" } },
+    { muscle: "quads", type: "path", attrs: { d: "M140 238 C132 236 122 249 123 276 L131 337 C142 332 146 312 143 288Z" } },
+    { muscle: "quads", type: "path", attrs: { d: "M118 239 C111 249 111 281 120 337 C127 324 128 291 125 267 C123 252 120 244 118 239Z" } },
+    { muscle: "front_calves", type: "path", attrs: { d: "M78 337 C88 338 95 354 91 384 C89 397 83 404 76 404 C70 381 72 357 78 337Z" } },
+    { muscle: "front_calves", type: "path", attrs: { d: "M142 337 C132 338 125 354 129 384 C131 397 137 404 144 404 C150 381 148 357 142 337Z" } },
   ],
   back: [
-    { muscle: "shoulders", type: "ellipse", attrs: { cx: 77, cy: 103, rx: 25, ry: 16 } },
-    { muscle: "shoulders", type: "ellipse", attrs: { cx: 143, cy: 103, rx: 25, ry: 16 } },
-    { muscle: "upper_back", type: "path", attrs: { d: "M77 119 C89 104 131 104 143 119 L134 166 C119 158 101 158 86 166Z" } },
-    { muscle: "lower_back", type: "path", attrs: { d: "M86 166 C101 158 119 158 134 166 L128 222 L92 222Z" } },
-    { muscle: "triceps", type: "path", attrs: { d: "M54 122 C40 147 38 176 47 204 C63 194 68 162 69 131Z" } },
-    { muscle: "triceps", type: "path", attrs: { d: "M166 122 C180 147 182 176 173 204 C157 194 152 162 151 131Z" } },
-    { muscle: "hamstrings", type: "path", attrs: { d: "M82 238 C98 237 106 247 104 276 L99 334 C83 331 75 314 76 292Z" } },
-    { muscle: "hamstrings", type: "path", attrs: { d: "M138 238 C122 237 114 247 116 276 L121 334 C137 331 145 314 144 292Z" } },
-    { muscle: "rear_calves", type: "path", attrs: { d: "M78 337 C96 337 101 356 96 400 L82 400 C75 377 72 358 78 337Z" } },
-    { muscle: "rear_calves", type: "path", attrs: { d: "M142 337 C124 337 119 356 124 400 L138 400 C145 377 148 358 142 337Z" } },
+    { muscle: "shoulders", type: "path", attrs: { d: "M64 92 C72 82 88 82 98 92 C96 107 86 118 70 119 C61 111 57 101 64 92Z" } },
+    { muscle: "shoulders", type: "path", attrs: { d: "M156 92 C148 82 132 82 122 92 C124 107 134 118 150 119 C159 111 163 101 156 92Z" } },
+    { muscle: "upper_back", type: "path", attrs: { d: "M77 113 C91 98 129 98 143 113 C139 139 128 157 110 162 C92 157 81 139 77 113Z" } },
+    { muscle: "upper_back", type: "path", attrs: { d: "M80 126 C93 141 100 168 97 194 C84 186 73 152 72 128Z" } },
+    { muscle: "upper_back", type: "path", attrs: { d: "M140 126 C127 141 120 168 123 194 C136 186 147 152 148 128Z" } },
+    { muscle: "lower_back", type: "path", attrs: { d: "M96 164 C104 169 116 169 124 164 L129 221 C121 229 99 229 91 221Z" } },
+    { muscle: "triceps", type: "path", attrs: { d: "M52 117 C40 136 35 166 41 199 C56 192 66 157 70 126 C66 120 58 116 52 117Z" } },
+    { muscle: "triceps", type: "path", attrs: { d: "M168 117 C180 136 185 166 179 199 C164 192 154 157 150 126 C154 120 162 116 168 117Z" } },
+    { muscle: "hamstrings", type: "path", attrs: { d: "M80 239 C88 236 98 249 97 277 L89 337 C78 332 74 311 77 288Z" } },
+    { muscle: "hamstrings", type: "path", attrs: { d: "M102 240 C110 250 111 283 100 338 C93 325 92 292 96 269 C98 254 100 245 102 240Z" } },
+    { muscle: "hamstrings", type: "path", attrs: { d: "M140 239 C132 236 122 249 123 277 L131 337 C142 332 147 311 143 288Z" } },
+    { muscle: "hamstrings", type: "path", attrs: { d: "M118 240 C110 250 109 283 120 338 C128 325 130 292 126 269 C124 254 120 245 118 240Z" } },
+    { muscle: "rear_calves", type: "path", attrs: { d: "M78 337 C88 338 96 355 93 383 C91 397 85 405 78 405 C72 381 72 357 78 337Z" } },
+    { muscle: "rear_calves", type: "path", attrs: { d: "M142 337 C132 338 124 355 127 383 C129 397 135 405 142 405 C148 381 148 357 142 337Z" } },
   ],
 };
 
-function BodySilhouette() {
+function BodySilhouette({ view }) {
   return (
     <g aria-hidden="true">
-      <circle className="body-silhouette" cx="110" cy="45" r="24" />
-      <path className="body-silhouette" d="M82 82 C95 74 125 74 138 82 L151 126 L139 236 L124 236 L116 405 L104 405 L96 236 L81 236 L69 126Z" />
-      <path className="body-silhouette" d="M69 118 C49 142 37 177 43 215 L58 215 C54 183 61 155 76 132Z" />
-      <path className="body-silhouette" d="M151 118 C171 142 183 177 177 215 L162 215 C166 183 159 155 144 132Z" />
+      <path className="body-silhouette head" d="M91 42 C91 26 99 17 110 17 C121 17 129 26 129 42 C129 58 121 68 110 68 C99 68 91 58 91 42Z" />
+      <path className="body-silhouette ear-l" d="M91 39 C84 39 83 54 91 56" />
+      <path className="body-silhouette ear-r" d="M129 39 C136 39 137 54 129 56" />
+      <path className="body-silhouette torso-legs" d="M96 68 C101 78 119 78 124 68 C131 86 148 88 161 98 C151 110 146 125 145 147 L140 222 C133 229 124 234 118 237 L142 337 L150 399 C147 408 138 410 132 400 L120 337 L118 237 L102 237 L100 337 L88 400 C82 410 73 408 70 399 L78 337 L80 222 L75 147 C74 125 69 110 59 98 C72 88 89 86 96 68Z" />
+      <path className="body-silhouette arm-l" d="M59 98 C42 109 33 135 31 166 C25 181 16 204 8 226 C3 239 10 249 22 245 C34 231 50 209 58 190 C68 165 76 127 76 108 C71 102 65 98 59 98Z" />
+      <path className="body-silhouette arm-r" d="M161 98 C178 109 187 135 189 166 C195 181 204 204 212 226 C217 239 210 249 198 245 C186 231 170 209 162 190 C152 165 144 127 144 108 C149 102 155 98 161 98Z" />
+      <path className="body-silhouette foot-l" d="M70 399 C62 406 58 413 65 419 L90 419 C97 415 96 407 88 401Z" />
+      <path className="body-silhouette foot-r" d="M150 399 C158 406 162 413 155 419 L130 419 C123 415 124 407 132 401Z" />
+      {view === "front" && (
+        <>
+          <path className="body-face-line" d="M111 42 C108 47 108 51 111 53" />
+          <path className="body-face-line" d="M103 58 C107 61 113 61 117 58" />
+        </>
+      )}
+      <path className="body-guide" d="M83 111 C96 101 124 101 137 111" />
+      <path className="body-guide" d="M88 230 C101 238 119 238 132 230" />
+      <path className="body-guide" d={view === "back" ? "M110 76 L110 226" : "M110 112 L110 226"} />
     </g>
   );
 }
 
+function BodyAnatomyLines({ view }) {
+  const lines = view === "back"
+    ? [
+        "M79 115 C92 104 128 104 141 115",
+        "M82 126 C92 145 99 168 96 194",
+        "M138 126 C128 145 121 168 124 194",
+        "M92 166 C102 174 118 174 128 166",
+        "M92 222 C102 231 118 231 128 222",
+        "M68 121 C51 143 43 172 37 201",
+        "M152 121 C169 143 177 172 183 201",
+        "M80 241 C90 268 89 304 82 336",
+        "M140 241 C130 268 131 304 138 336",
+        "M78 337 C84 356 84 383 72 406",
+        "M142 337 C136 356 136 383 148 406",
+      ]
+    : [
+        "M76 112 C91 102 129 102 144 112",
+        "M82 122 C96 115 104 116 109 128",
+        "M138 122 C124 115 116 116 111 128",
+        "M88 153 C101 160 119 160 132 153",
+        "M110 119 L110 226",
+        "M98 166 C94 181 94 207 99 225",
+        "M122 166 C126 181 126 207 121 225",
+        "M70 121 C58 141 51 168 39 193",
+        "M150 121 C162 141 169 168 181 193",
+        "M80 242 C90 268 89 304 82 335",
+        "M140 242 C130 268 131 304 138 335",
+        "M78 337 C84 356 84 383 72 406",
+        "M142 337 C136 356 136 383 148 406",
+      ];
+  return (
+    <g aria-hidden="true">
+      {lines.map((d, index) => (
+        <path key={`${view}-line-${index}`} className="body-anatomy-line" d={d} />
+      ))}
+    </g>
+  );
+}
+
+function MuscleElement({ segment, attrs }) {
+  if (segment.type === "ellipse") return <ellipse {...attrs} />;
+  if (segment.type === "rect") return <rect {...attrs} />;
+  return <path {...attrs} />;
+}
+
 function MuscleShape({ segment, load, target, selected, onToggle, theme }) {
-  const visual = Math.max(load, target);
   const attrs = {
     ...segment.attrs,
     className: `muscle-shape ${target > 0 ? "target" : ""} ${selected ? "selected" : ""}`,
     style: {
-      fill: muscleHeatColor(load, target, selected, theme),
-      opacity: selected || target > 0 ? 0.86 : 0.2 + visual * 0.62,
+      fill: muscleHeatColor(load, target, theme),
+      opacity: muscleHeatOpacity(load, target),
     },
     onClick: () => onToggle?.(segment.muscle),
   };
+  const ringAttrs = {
+    ...segment.attrs,
+    className: "muscle-selection-ring",
+  };
 
-  if (segment.type === "ellipse") return <ellipse {...attrs} />;
-  if (segment.type === "rect") return <rect {...attrs} />;
-  return <path {...attrs} />;
+  return (
+    <g>
+      <MuscleElement segment={segment} attrs={attrs} />
+      {selected && <MuscleElement segment={segment} attrs={ringAttrs} />}
+    </g>
+  );
 }
 
 function MuscleBodyMap({
@@ -4107,6 +4763,7 @@ function MuscleBodyMap({
   onToggle,
   title = "Muscle Heatmap",
   subtitle = "Tap a region to inspect or add focus.",
+  hideLabels = false,
   theme,
 }) {
   const targetMap = targetMuscles ?? {};
@@ -4153,7 +4810,7 @@ function MuscleBodyMap({
 
       <div className="body-map-stage">
         <svg className="body-map-svg" viewBox="0 0 220 420" role="img" aria-label={`${view} muscle map`}>
-          <BodySilhouette />
+          <BodySilhouette view={view} />
           {BODY_SEGMENTS[view].map((segment, idx) => (
             <MuscleShape
               key={`${segment.muscle}-${idx}`}
@@ -4165,10 +4822,11 @@ function MuscleBodyMap({
               theme={theme}
             />
           ))}
+          <BodyAnatomyLines view={view} />
         </svg>
       </div>
 
-      {visibleLabels.length > 0 && (
+      {!hideLabels && visibleLabels.length > 0 && (
         <div className="body-map-labels">
           {visibleLabels.map((id) => {
             const load = muscleStatus?.[id] ?? 0;
@@ -4297,6 +4955,7 @@ function TrakkoOverlay({ screen, profile }) {
 function AuthScreen({ onEnter, profile }) {
   const [name, setName] = useState(profile?.name || "");
   const trimmed = name.trim();
+  const previewProfile = trimmed ? loadProfile(trimmed) : profile;
 
   return (
     <div className="screen-pad">
@@ -4305,13 +4964,13 @@ function AuthScreen({ onEnter, profile }) {
           <div className="auth-logo-icon">
             <div className="auth-logo-mark" />
           </div>
-          <div className="auth-logo-text">Aetheris</div>
-          <div className="auth-logo-sub">Edge AI · Fitness Intelligence</div>
+          <div className="auth-logo-text">Kinetic Life</div>
+          <div className="auth-logo-sub">Edge AI Intelligent Fitness Assistant</div>
         </div>
 
         <div className="glass auth-card">
-          <div className="auth-card-title">Identity Matrix</div>
-          <div className="auth-card-sub">Initialize your neural fitness profile to begin.</div>
+          <div className="auth-card-title">Create Your Fitness Profile</div>
+          <div className="auth-card-sub">Set up your training profile to begin.</div>
           <label className="ath-field-label" htmlFor="athlete-id">Athlete Designation</label>
           <input
             id="athlete-id"
@@ -4334,21 +4993,21 @@ function AuthScreen({ onEnter, profile }) {
         <div>
           <div className="auth-stats">
             <div className="auth-stat">
-              <div className="auth-stat-val">{profile?.sessionsCount ?? 0}</div>
+              <div className="auth-stat-val">{previewProfile?.sessionsCount ?? 0}</div>
               <div className="auth-stat-label">Sessions</div>
             </div>
             <div className="auth-stat">
-              <div className="auth-stat-val">{profile?.averageForm ?? 0}%</div>
+              <div className="auth-stat-val">{previewProfile?.averageForm ?? 0}%</div>
               <div className="auth-stat-label">Avg Form</div>
             </div>
             <div className="auth-stat">
-              <div className="auth-stat-val">{profile?.streakDays ?? 0}</div>
+              <div className="auth-stat-val">{previewProfile?.streakDays ?? 0}</div>
               <div className="auth-stat-label">Day Streak</div>
             </div>
           </div>
           <div style={{ height: "1rem" }} />
           <div className="sys-label" style={{ textAlign: "center" }}>
-            Powered by On-Device MediaPipe · Edge AI
+            Powered by On-Device Edge AI
           </div>
         </div>
       </div>
@@ -4399,7 +5058,7 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice 
             whileTap={{ scale: 0.99 }}
           >
             <div className="bento-tag">Jump-In · Extreme Speed</div>
-            <div className="bento-icon">JI</div>
+            <div className="bento-icon"><IconJumpIn className="bento-icon-svg" /></div>
             <div className="bento-label">Start Instantly</div>
           </motion.div>
 
@@ -4411,7 +5070,7 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice 
             whileTap={{ scale: 0.97 }}
           >
             <div className="bento-tag">AI Plan</div>
-            <div className="bento-icon">AI</div>
+            <div className="bento-icon"><IconAIPlan className="bento-icon-svg" /></div>
             <div className="bento-label">Training Plan</div>
           </motion.div>
 
@@ -4423,7 +5082,7 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice 
             whileTap={{ scale: 0.97 }}
           >
             <div className="bento-tag">Home Mode</div>
-            <div className="bento-icon">HM</div>
+            <div className="bento-icon"><IconHomeMode className="bento-icon-svg" /></div>
             <div className="bento-label">Home Workout</div>
           </motion.div>
         </div>
@@ -4433,7 +5092,7 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice 
         <motion.div className="glass" custom={7} variants={panelVariants} initial="hidden" animate="visible"
           style={{ padding: "0.85rem 1rem", display: "flex", alignItems: "center", gap: "0.75rem" }}
         >
-          <span className="bento-icon" style={{ width: 30, height: 30, fontSize: "0.58rem" }}>EN</span>
+          <span className="bento-icon" style={{ width: 30, height: 30 }}><IconEdgeNode className="bento-icon-svg" /></span>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: "0.78rem", fontWeight: 500, color: "var(--text)" }}>Edge Node Status</div>
             <div style={{ fontSize: "0.68rem", color: "var(--text-d)", marginTop: 2 }}>
@@ -4646,10 +5305,10 @@ function AutoClassifyScreen({ onClassified, onBack }) {
 
 // ─── PlanConfigScreen ─────────────────────────────────────────────────────────
 
-function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, onPlanGenerated }) {
-  const [aiProfile, setAiProfile] = useState(() => loadAiCoreProfile());
-  const [draft, setDraft] = useState(() => loadAiCoreProfile());
-  const [focus, setFocus] = useState(() => new Set(loadAiCoreProfile().focusTags));
+function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPlanGenerated }) {
+  const [aiProfile, setAiProfile] = useState(() => loadAiCoreProfile(userName));
+  const [draft, setDraft] = useState(() => loadAiCoreProfile(userName));
+  const [focus, setFocus] = useState(() => new Set(loadAiCoreProfile(userName).focusTags));
   const [editingCore, setEditingCore] = useState(false);
   const [selectedEx, setSelectedEx] = useState(EXERCISES[0]);
   const aiReady = isAiCoreProfileReady(aiProfile);
@@ -4674,7 +5333,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, onPlanGenerate
       const updated = { ...aiProfile, focusTags: [...next], updatedAt: Date.now() };
       setAiProfile(updated);
       setDraft(updated);
-      saveAiCoreProfile(updated);
+      saveAiCoreProfile(updated, userName);
     }
   }
 
@@ -4705,14 +5364,14 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, onPlanGenerate
     setDraft(updated);
     setFocus(new Set(updated.focusTags));
     setEditingCore(false);
-    saveAiCoreProfile(updated);
+    saveAiCoreProfile(updated, userName);
     const decision = generateAiCorePlan({ profile: updated, muscleStatus, focusTags: updated.focusTags });
     onPlanGenerated?.(decision);
   }
 
   return (
     <div className="screen-pad">
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "1.5rem 0 2rem", gap: "1rem", minHeight: 0, overflowY: "auto" }}>
+      <div className="plan-wrap">
         <div className="connect-header" style={{ paddingBottom: "0.5rem" }}>
           <button className="back-btn" onClick={onBack}>←</button>
           <h2 className="ath-title" style={{ fontSize: "1.2rem" }}>Training Plan</h2>
@@ -4720,7 +5379,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, onPlanGenerate
 
         <motion.div className="glass plan-ai-card" custom={0} variants={panelVariants} initial="hidden" animate="visible">
           <div className="plan-ai-header">
-            <span className="plan-ai-icon">KC</span>
+            <span className="plan-ai-icon"><IconKineticCore className="plan-ai-icon-svg" /></span>
             <div>
               <span className="plan-ai-title">Kinetic Core</span>
               <div className="ai-core-status">{aiReady ? aiDecision.action_keyword : "ONBOARDING_REQUIRED"}</div>
@@ -4785,21 +5444,26 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, onPlanGenerate
 
           {aiReady && !editingCore && (
             <div className="ai-core-decision">
-              <div>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="sys-label">Target Route</div>
-                <div className="ai-core-route">{aiDecision.payload.target_muscle_group}</div>
+                <div className="ai-route-row">
+                  <div className="ai-core-route">{aiDecision.payload.target_muscle_group}</div>
+                  {(() => {
+                    const tags = aiDecision.payload.decisionTags;
+                    const shown = tags.slice(0, 2);
+                    const overflow = tags.length - shown.length;
+                    return <>
+                      {shown.length ? shown.map((tag, i) => (
+                        <span key={i} className={`ai-chip readonly ai-chip-xs ${tag.type === "injury" || tag.type === "fatigue" ? "warn" : "active"}`}>
+                          {tag.label}
+                        </span>
+                      )) : <span className="ai-chip readonly ai-chip-xs active">Balanced</span>}
+                      {overflow > 0 && <span className="ai-chip readonly ai-chip-xs" style={{ opacity: 0.55 }}>+{overflow}</span>}
+                    </>;
+                  })()}
+                </div>
               </div>
               <button className="ai-core-reset" onClick={() => { setDraft(aiProfile); setEditingCore(true); }}>Edit Profile</button>
-            </div>
-          )}
-
-          {aiReady && !editingCore && (
-            <div className="ai-chip-row">
-              {aiDecision.payload.decisionTags.length ? aiDecision.payload.decisionTags.map((tag, index) => (
-                <span key={`${tag.type}-${tag.label}-${index}`} className={`ai-chip readonly ${tag.type === "injury" || tag.type === "fatigue" ? "warn" : "active"}`}>
-                  {tag.label}
-                </span>
-              )) : <span className="ai-chip readonly active">Balanced readiness</span>}
             </div>
           )}
         </motion.div>
@@ -4811,21 +5475,45 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, onPlanGenerate
               <span className="plan-ai-title">AI Recommended Plan</span>
             </div>
           <div className="plan-list">
-            {recommendedPlan.map((item) => {
-              const ex = exerciseById(item.exerciseId);
+            {buildWeekSchedule(aiProfile.trainingDaysPerWeek, muscleStatus, focusTags, aiProfile.injuryTags).map(({ dow, label, isTraining, isToday, isPast, exercise }) => {
+              if (!isTraining) {
+                return (
+                  <div key={dow} className={`plan-item plan-item-rest ${isToday ? "today" : ""} ${isPast ? "past" : ""}`}>
+                    <span className="plan-day-chip rest">{label}</span>
+                    <span className="plan-rest-label">Rest</span>
+                  </div>
+                );
+              }
+              if (!exercise) {
+                return (
+                  <div key={dow} className={`plan-item ${isToday ? "today" : ""} ${isPast ? "past" : ""}`}>
+                    <span className="plan-day-chip">{label}</span>
+                    <div className="plan-item-main">
+                      <div className="plan-item-name" style={{ color: "var(--text-d)" }}>Training Day</div>
+                    </div>
+                  </div>
+                );
+              }
+              const ex = exerciseById(exercise.exerciseId);
               return (
-              <div
-                key={item.exerciseId}
-                className={`plan-item ${selectedEx?.id === ex.id ? "sel" : ""}`}
-                onClick={() => setSelectedEx(ex)}
-              >
-                <div className="plan-item-dot" />
-                <div className="plan-item-main">
-                  <div className="plan-item-name">{ex.label}</div>
-                  <div className="plan-item-reason">{item.reason}</div>
+                <div
+                  key={dow}
+                  className={`plan-item ${selectedEx?.id === ex.id ? "sel" : ""} ${isToday ? "today" : ""} ${isPast ? "past" : ""}`}
+                  onClick={() => {
+                    if (isPast) return;
+                    setSelectedEx(ex);
+                    if (isToday) onBegin(ex);
+                  }}
+                >
+                  <span className={`plan-day-chip ${isToday ? "active" : ""}`}>{label}</span>
+                  <div className="plan-item-main">
+                    <div className="plan-item-name">{ex.label}</div>
+                    <div className="plan-item-reason">{exercise.reason}</div>
+                  </div>
+                  {isToday
+                    ? <span className="plan-today-cta">▶ Start</span>
+                    : <div className="plan-item-meta">{exercise.sets}×{exercise.targetReps}</div>}
                 </div>
-                <div className="plan-item-meta">{item.sets}x{item.targetReps}</div>
-              </div>
               );
             })}
           </div>
@@ -4855,7 +5543,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, onPlanGenerate
                 className={`ex-row ${selectedEx?.id === ex.id ? "sel" : ""}`}
                 onClick={() => setSelectedEx(ex)}
               >
-                <span className="ex-code">{ex.short}</span>
+                <span className="ex-code"><BaseBadge code={ex.short} className="action-badge-svg" /></span>
                 <span className="ex-label">{ex.label}</span>
                 <div className="ex-check">✓</div>
               </div>
@@ -4884,7 +5572,7 @@ function HomeCoachScreen({ onBegin, onBack }) {
 
   return (
     <div className="screen-pad">
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "1.5rem 0 2rem", gap: "1rem", minHeight: 0, overflowY: "auto" }}>
+      <div className="plan-wrap">
         <div className="connect-header" style={{ paddingBottom: "0.5rem" }}>
           <button className="back-btn" onClick={onBack}>←</button>
           <h2 className="ath-title" style={{ fontSize: "1.2rem" }}>Home Protocol</h2>
@@ -4931,6 +5619,10 @@ function HomeCoachScreen({ onBegin, onBack }) {
 
 // ─── LiveScreen ───────────────────────────────────────────────────────────────
 
+// Module-level MediaPipe singleton — survives StrictMode double-mount and screen transitions.
+// Never closed so re-entry is instant; only one PoseLandmarker instance ever exists per page.
+let _mpLandmarkerPromise = null;
+
 function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
   const [reps, setReps] = useState(0);
   const [elapsed, setElapsed] = useState(0);
@@ -4938,6 +5630,8 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
   const [dtw, setDtw] = useState(0.5);
   const [repCharge, setRepCharge] = useState({ value: 0, resetting: false });
   const [isReady, setIsReady] = useState(false);
+  // "loading" = MP WASM not yet ready; "ready" = MP loaded, waiting for first frame
+  const [mpStatus, setMpStatus] = useState(() => _mpLandmarkerPromise ? "ready" : "loading");
   const autoMode = !exercise?.id;
   const [autoActionRows, setAutoActionRows] = useState([]);
   const [autoRepGate, setAutoRepGate] = useState(() => ({
@@ -5032,45 +5726,42 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
     let _mpTs = 0;
     const nextMpTs = () => { _mpTs = Math.max(performance.now(), _mpTs + 1); return _mpTs; };
 
-    // ── Lens undistortion (theta-based fisheye, calibrated 2026-05-22) ──────
-    // 140° wide-angle OV5647: k1=-0.38 k2=0.18 fx=fy=250 cx=60 cy=80
+    // ── Lens undistortion — Web Worker path (fisheye theta model) ───────────
+    // LUT is built inside the worker; main thread only does getImageData + putImageData.
     const _D = { k1:-0.38, k2:0.18, k3:0, p1:0, p2:0, fx:250, fy:250, cx:60, cy:80 };
     const _undistCanvas = document.createElement("canvas");
     _undistCanvas.width = 120; _undistCanvas.height = 160;
     const _undistCtx = _undistCanvas.getContext("2d", { willReadFrequently: true });
-    const _distLUT = (() => {
-      const { k1,k2,k3,p1,p2,fx,fy,cx,cy } = _D;
-      const lut = new Float32Array(120 * 160 * 2);
-      for (let v = 0; v < 160; v++) {
-        for (let u = 0; u < 120; u++) {
-          const xn=(u-cx)/fx, yn=(v-cy)/fy;
-          const r=Math.sqrt(xn*xn+yn*yn), idx=(v*120+u)*2;
-          if (r < 1e-8) { lut[idx]=u; lut[idx+1]=v; continue; }
-          const th=Math.atan(r), t2=th*th, t4=t2*t2, t6=t2*t4;
-          const td=th*(1+k1*t2+k2*t4+k3*t6), sc=td/r;
-          const r2=xn*xn+yn*yn;
-          lut[idx]   = (xn*sc + 2*p1*xn*yn + p2*(r2+2*xn*xn))*fx + cx;
-          lut[idx+1] = (yn*sc + p1*(r2+2*yn*yn) + 2*p2*xn*yn)*fy + cy;
-        }
+
+    let _workerReady = false;
+    let _workerCallId = 0;
+    const _workerPending = new Map();
+    const _undistWorker = new Worker("/undistort.worker.js");
+    _undistWorker.onmessage = ({ data }) => {
+      if (data.type === "ready") { _workerReady = true; return; }
+      if (data.type === "result") {
+        const cb = _workerPending.get(data.id);
+        if (cb) { _workerPending.delete(data.id); cb(data.dstBuf); }
       }
-      return lut;
-    })();
-    function _applyDistLUT() {
+    };
+    _undistWorker.postMessage({ type: "init", params: _D });
+
+    function _applyDistLUTAsync() {
       const src = inferCtx.getImageData(0, 0, 120, 160);
-      const dst = new ImageData(120, 160);
-      for (let v = 0; v < 160; v++) {
-        for (let u = 0; u < 120; u++) {
-          const li=(v*120+u)*2, sx=_distLUT[li], sy=_distLUT[li+1];
-          const x0=sx|0, y0=sy|0, x1=x0+1, y1=y0+1, di=(v*120+u)*4;
-          if (x0>=0 && x1<120 && y0>=0 && y1<160) {
-            const dx=sx-x0, dy=sy-y0;
-            const w00=(1-dx)*(1-dy), w10=dx*(1-dy), w01=(1-dx)*dy, w11=dx*dy;
-            for (let c=0;c<3;c++) dst.data[di+c]=(src.data[(y0*120+x0)*4+c]*w00+src.data[(y0*120+x1)*4+c]*w10+src.data[(y1*120+x0)*4+c]*w01+src.data[(y1*120+x1)*4+c]*w11)+0.5|0;
-            dst.data[di+3]=255;
-          }
-        }
+      if (!_workerReady) {
+        // Worker not yet initialised — skip undistortion this frame
+        _undistCtx.putImageData(src, 0, 0);
+        return Promise.resolve();
       }
-      _undistCtx.putImageData(dst, 0, 0);
+      const srcBuf = src.data.buffer; // zero-copy transfer
+      const id = ++_workerCallId;
+      return new Promise((resolve) => {
+        _workerPending.set(id, (dstBuf) => {
+          _undistCtx.putImageData(new ImageData(new Uint8ClampedArray(dstBuf), 120, 160), 0, 0);
+          resolve();
+        });
+        _undistWorker.postMessage({ type: "undistort", id, srcBuf }, [srcBuf]);
+      });
     }
     function getAutoConfirmations(id) {
       if (!autoMode || !id) return AUTO_REP_CONFIRMATIONS_REQUIRED;
@@ -5170,7 +5861,8 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
           inferCtx.drawImage(bmp, 0, 0, 160, 120);
           inferCtx.restore();
 
-          _applyDistLUT();
+          await _applyDistLUTAsync();
+          if (cancelled) { bmp.close(); return; }
           const result = landmarker.detectForVideo(_undistCanvas, nextMpTs());
           if (result.landmarks?.length) {
             const rawLm    = result.landmarks[0];
@@ -5263,7 +5955,16 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
                   const confirmed = getAutoConfirmations(activeExerciseId);
                   shouldCountRep = confirmed >= AUTO_REP_CONFIRMATIONS_REQUIRED;
                   if (!shouldCountRep) {
-                    autoConfirmationsByExercise[activeExerciseId] = Math.min(AUTO_REP_CONFIRMATIONS_REQUIRED, confirmed + 1);
+                    const nextConfirmed = Math.min(AUTO_REP_CONFIRMATIONS_REQUIRED, confirmed + 1);
+                    autoConfirmationsByExercise[activeExerciseId] = nextConfirmed;
+                    if (nextConfirmed >= AUTO_REP_CONFIRMATIONS_REQUIRED) {
+                      const credit = AUTO_REP_CONFIRMATIONS_REQUIRED;
+                      repsByExerciseRef.current[activeExerciseId] = (repsByExerciseRef.current[activeExerciseId] ?? 0) + credit;
+                      setReps((r) => {
+                        if (navigator.vibrate) navigator.vibrate(50);
+                        return r + credit;
+                      });
+                    }
                     publishAutoGate(activeExerciseId, 0);
                     publishAutoActionRow(activeExerciseId, 0, true);
                     const displayCharge = autoDisplayProgress(activeExerciseId, 0);
@@ -5389,15 +6090,42 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
       };
 
     } else if (conn.mode === "wifi" && conn.url) {
-      // Apply cam params via HTTP before streaming — mirror debug.html FW_WIFI defaults, q=25/vflip=1
-      const WIFI_CAM = "res=320x240&q=25&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0&vflip=1&hmirror=0";
-      fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+      // 50 ms delay avoids React StrictMode double-mount closing a CONNECTING socket.
+      const WIFI_CAM = "res=320x240&q=40&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0&vflip=1&hmirror=0";
       const wsUrl = conn.url.replace(/^http(s?):\/\//i, (_, s) => `ws${s}://`) + "/ws";
-      const sock = new WebSocket(wsUrl);
-      sock.binaryType = "arraybuffer";
-      sock.onmessage = ({ data }) => onFrame(new Blob([data], { type: "image/jpeg" }));
-      sock.onerror   = () => console.error("[LiveScreen] WS error");
-      streamCleanup  = () => { sock.close(); if (hintTimer) clearTimeout(hintTimer); };
+
+      // Latest-frame ref: onmessage just stores the newest blob; rAF drain loop consumes it.
+      const latestBlobRef = { current: null };
+      let sock = null;
+
+      const wsTimer = setTimeout(() => {
+        if (cancelled) return;
+        fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+        sock = new WebSocket(wsUrl);
+        sock.binaryType = "arraybuffer";
+        sock.onmessage = ({ data }) => { latestBlobRef.current = new Blob([data], { type: "image/jpeg" }); };
+        sock.onerror   = () => { if (!cancelled) console.warn("[LiveScreen] WS error"); };
+      }, 50);
+
+      // rAF drain — picks up only the newest frame when main thread is free
+      (function drainLoop() {
+        if (!cancelled) requestAnimationFrame(drainLoop);
+        const blob = latestBlobRef.current;
+        if (blob && !processing && !cancelled) {
+          latestBlobRef.current = null;
+          onFrame(blob);
+        }
+      })();
+
+      streamCleanup = () => {
+        clearTimeout(wsTimer);
+        latestBlobRef.current = null;
+        if (sock) {
+          sock.onmessage = sock.onerror = sock.onclose = null;
+          if (sock.readyState === WebSocket.OPEN || sock.readyState === WebSocket.CONNECTING) sock.close();
+        }
+        if (hintTimer) clearTimeout(hintTimer);
+      };
     }
 
     // ── Load MediaPipe + libs in parallel (never blocks raw feed) ────────────
@@ -5414,16 +6142,20 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
       drawSkeleton = ds;
       drawAngle    = da;
 
-      const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
-      const vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
-      const lm = await PoseLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: "/mediapipe/models/pose_landmarker_lite.task", delegate: "GPU" },
-        runningMode: "VIDEO",
-        numPoses: 1,
-      });
-      if (cancelled) { lm.close(); return; }
+      if (!_mpLandmarkerPromise) {
+        const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
+        const vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
+        _mpLandmarkerPromise = PoseLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: "/mediapipe/models/pose_landmarker_lite.task", delegate: "GPU" },
+          runningMode: "VIDEO",
+          numPoses: 1,
+        });
+      }
+      const lm = await _mpLandmarkerPromise;
+      if (cancelled) return; // singleton — never close
       landmarker = lm;
       landmarkerRef.current = lm;
+      setMpStatus("ready");
     }
 
     loadMP().catch((e) => console.error("[LiveScreen] MP load:", e));
@@ -5432,10 +6164,14 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
       cancelled = true;
       streamCleanup();
       if (chargeResetTimer) clearTimeout(chargeResetTimer);
-      if (landmarkerRef.current) { try { landmarkerRef.current.close(); } catch {} landmarkerRef.current = null; }
+      _undistWorker.terminate();
+      landmarkerRef.current = null; // singleton lives at module level — never close
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const visibleAutoActionRows = autoActionRows.slice(0, AUTO_ACTION_ROW_LIMIT);
+  const hiddenAutoActionRows = Math.max(0, autoActionRows.length - visibleAutoActionRows.length);
 
   return (
     <div className="live-root">
@@ -5443,9 +6179,15 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
         <div className={`cam-aurora ${auroraClass}`} />
         {!isReady && (
           <div className="cam-placeholder" style={{ position: "relative", zIndex: 2 }}>
-            <div className="cam-placeholder-icon">CAM</div>
-            <p>Live sensor feed</p>
-            <p style={{ fontSize: "0.68rem", opacity: 0.5 }}>Configure in Setup · BLE primary</p>
+            <div className="cam-init-overlay">
+              <div className={`cam-init-spinner ${mpStatus === "loading" ? "active" : "dim"}`} />
+              <div className="cam-init-label">
+                {mpStatus === "loading" ? "Initializing Kinetic Vision…" : "Connecting stream…"}
+              </div>
+              {mpStatus === "loading" && (
+                <div className="cam-init-sub">AI vision model loading · first launch only</div>
+              )}
+            </div>
           </div>
         )}
         <canvas ref={canvasRef} className="cam-canvas" />
@@ -5476,11 +6218,23 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
               <div className="hint-pill">{hint}</div>
             </div>
           )}
+          {classification.id === "bicep_curl" && (
+            <div className="arm-hint-badge right">
+              <span className="arm-hint-label">YOUR RIGHT</span>
+              <span className="arm-hint-arrow">→</span>
+            </div>
+          )}
+          {classification.id === "right_bicep_curl" && (
+            <div className="arm-hint-badge left">
+              <span className="arm-hint-arrow">←</span>
+              <span className="arm-hint-label">YOUR LEFT</span>
+            </div>
+          )}
         </div>
       </div>
       {autoMode ? (
         <div className="action-rep-stack" aria-label="Detected action rep counters">
-          {autoActionRows.length ? autoActionRows.map((row) => {
+          {visibleAutoActionRows.length ? visibleAutoActionRows.map((row) => {
             const rowPct = Math.round((row.progress ?? 0) * 100);
             const rowNear = row.progress >= 0.78;
             const rowLocked = row.progress >= 0.92;
@@ -5496,6 +6250,8 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
                     <div>
                       <div className="action-title">{row.label}</div>
                       <div className="action-sub">{row.short} · {row.active ? "Active" : "Buffered"}</div>
+                      {row.exerciseId === "bicep_curl" && <div className="action-arm-hint">YOUR RIGHT → screen right</div>}
+                      {row.exerciseId === "right_bicep_curl" && <div className="action-arm-hint">← screen left YOUR LEFT</div>}
                       {!rowReady && (
                         <div className="rep-gate-label">Confirm {row.confirmed}/{row.required}</div>
                       )}
@@ -5510,6 +6266,9 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
             );
           }) : (
             <div className="action-empty">Waiting for library motion</div>
+          )}
+          {hiddenAutoActionRows > 0 && (
+            <div className="action-hidden-count">+{hiddenAutoActionRows} buffered actions</div>
           )}
         </div>
       ) : (
@@ -5857,13 +6616,13 @@ function AnalysisScreen({ result, onNewSet, onDone, theme }) {
           <div className="classification-actions">
             {actionTotals.length ? actionTotals.map((row) => (
               <div key={row.id} className="classification-action-row">
-                <span className="classification-action-code">{row.short}</span>
+                <span className="classification-action-code"><BaseBadge code={row.short} className="action-badge-svg" /></span>
                 <span className="classification-action-name">{row.label}</span>
                 <span className="classification-action-reps">{row.reps} reps</span>
               </div>
             )) : (
               <div className="classification-action-row">
-                <span className="classification-action-code">--</span>
+                <span className="classification-action-code"><BaseBadge code="--" className="action-badge-svg" /></span>
                 <span className="classification-action-name">Unassigned</span>
                 <span className="classification-action-reps">0 reps</span>
               </div>
@@ -5926,6 +6685,9 @@ function ProfileScreen({ profile, muscleStatus, theme }) {
             <div className="profile-meta">
               {profile?.sessionsCount ?? 0} sessions · {profile?.streakDays ?? 0}-day streak
             </div>
+            <div className="profile-meta" style={{ marginTop: "0.2rem", opacity: 0.72 }}>
+              Avg load {avgLoad}%
+            </div>
           </div>
         </motion.div>
 
@@ -5936,14 +6698,13 @@ function ProfileScreen({ profile, muscleStatus, theme }) {
             selectedMuscles={[selected.id]}
             onToggle={setSelectedMuscle}
             title="Muscle Recovery Matrix"
-            subtitle={`Average load ${avgLoad}%. Amber means trained recently; emerald is ready focus.`}
+            subtitle={<span className="focus-pill active" style={{ display: "inline-flex", marginTop: "0.3rem" }}>{selected.label} · {selectedLoad}%</span>}
+            hideLabels
             theme={theme}
           />
         </motion.div>
 
         <motion.div className="glass recovery-detail" custom={2} variants={panelVariants} initial="hidden" animate="visible">
-          <div className="recovery-name">{selected.label}</div>
-          <div className="recovery-value">{selectedLoad}%</div>
           <div className="recovery-copy">
             {selectedLoad > 66
               ? "High recent load. Pair this area with mobility or choose a lighter complementary movement."
@@ -5975,7 +6736,7 @@ function ProfileScreen({ profile, muscleStatus, theme }) {
 
 // ─── SettingsScreen ───────────────────────────────────────────────────────────
 
-function SettingsScreen({ deviceUrl, setDeviceUrl, connMode, setConnMode, theme, setTheme }) {
+function SettingsScreen({ profile, deviceUrl, setDeviceUrl, connMode, setConnMode, theme, setTheme, onSwitchUser }) {
   return (
     <div className="screen-pad">
       <div className="settings-wrap">
@@ -6031,6 +6792,17 @@ function SettingsScreen({ deviceUrl, setDeviceUrl, connMode, setConnMode, theme,
         </motion.div>
 
         <motion.div className="glass settings-section" custom={3} variants={panelVariants} initial="hidden" animate="visible">
+          <div className="settings-section-title">User State</div>
+          <div className="settings-row">
+            <div>
+              <div className="settings-label">Active User</div>
+              <div className="settings-sub">{profile?.name || "No user selected"} · settings and Core memory are local to this profile</div>
+            </div>
+            <button className="mode-btn" onClick={onSwitchUser}>Switch</button>
+          </div>
+        </motion.div>
+
+        <motion.div className="glass settings-section" custom={4} variants={panelVariants} initial="hidden" animate="visible">
           <div className="settings-section-title">System Status</div>
           {[
             { label: "iOS Safari BLE", val: "Not Supported", ok: false },
@@ -6083,7 +6855,7 @@ function CoreMessageCard({ message, onExecutePlan }) {
               const ex = exerciseById(item.exerciseId);
               return (
                 <div key={`${message.id}-${item.exerciseId}`} className="core-plan-row">
-                  <span className="core-plan-code">{ex.short}</span>
+                  <span className="core-plan-code"><BaseBadge code={ex.short} className="action-badge-svg" /></span>
                   <span className="core-plan-name">{ex.label}</span>
                   <span className="core-plan-meta">{item.sets}x{item.targetReps}</span>
                 </div>
@@ -6098,7 +6870,7 @@ function CoreMessageCard({ message, onExecutePlan }) {
         {message.type === "post_workout" && (
           <div className="core-mini-card">
             <div className="core-plan-row">
-              <span className="core-plan-code">{message.payload?.exerciseShort ?? "AI"}</span>
+              <span className="core-plan-code"><BaseBadge code={message.payload?.exerciseShort ?? "AI"} className="action-badge-svg" /></span>
               <span className="core-plan-name">{message.payload?.exerciseLabel ?? "Completed Session"}</span>
               <span className="core-plan-meta">{message.payload?.reps ?? 0} reps</span>
             </div>
@@ -6181,12 +6953,98 @@ function CoreScreen({ messages, onSend, onExecutePlan, onQuickPlan }) {
 
 // ─── BottomNav ────────────────────────────────────────────────────────────────
 
+const BaseBadge = ({ code, className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <polygon points="6 2, 18 2, 22 6, 22 18, 18 22, 6 22, 2 18, 2 6" />
+    <path d="M2 10v4" /><path d="M22 10v4" />
+    <text x="12" y="16" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10" fontWeight="900" fontFamily="system-ui,-apple-system,sans-serif" letterSpacing="0.5">{code}</text>
+  </svg>
+);
+
+const IconKineticCore = ({ className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+    <circle cx="12" cy="12" r="2" />
+    <path d="M12 22v-8" />
+    <path d="M10.27 11L3.5 7.5" />
+    <path d="M13.73 11L20.5 7.5" />
+  </svg>
+);
+
+const IconEdgeNode = ({ className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <rect x="6" y="6" width="12" height="12" rx="2" />
+    <path d="M9 2v4" /><path d="M15 2v4" />
+    <path d="M9 22v-4" /><path d="M15 22v-4" />
+    <path d="M2 9h4" /><path d="M2 15h4" />
+    <path d="M22 9h-4" /><path d="M22 15h-4" />
+  </svg>
+);
+
+const IconJumpIn = ({ className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+  </svg>
+);
+
+const IconAIPlan = ({ className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M10 3L11.8 7.2L16 9L11.8 10.8L10 15L8.2 10.8L4 9L8.2 7.2L10 3Z" />
+    <path d="M18 14L18.9 16.1L21 17L18.9 17.9L18 20L17.1 17.9L15 17L17.1 16.1L18 14Z" />
+  </svg>
+);
+
+const IconHomeMode = ({ className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <line x1="7" y1="12" x2="17" y2="12" />
+    <rect x="4" y="6" width="3" height="12" rx="0.5" />
+    <rect x="17" y="6" width="3" height="12" rx="0.5" />
+    <path d="M4 9H2.5C2.22386 9 2 9.22386 2 9.5V14.5C2 14.7761 2.22386 15 2.5 15H4" />
+    <path d="M20 9H21.5C21.7761 9 22 9.22386 22 9.5V14.5C22 14.7761 21.7761 15 21.5 15H20" />
+  </svg>
+);
+
+const IconHome = ({ className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    <polyline points="9 22 9 12 15 12 15 22" />
+  </svg>
+);
+
+const IconCore = ({ className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M12 2v7" />
+    <path d="M12 15v7" />
+    <path d="M22 12h-7" />
+    <path d="M9 12H2" />
+    <circle cx="12" cy="2" r="1" />
+    <circle cx="12" cy="22" r="1" />
+    <circle cx="22" cy="12" r="1" />
+    <circle cx="2" cy="12" r="1" />
+  </svg>
+);
+
+const IconProfile = ({ className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
+  </svg>
+);
+
+const IconSetup = ({ className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+  </svg>
+);
+
 function BottomNav({ tab, onChange, aiUnread }) {
   const items = [
-    { id: "home", label: "Home", icon: "HM" },
-    { id: "core", label: "Core", icon: "AI" },
-    { id: "profile", label: "Profile", icon: "PR" },
-    { id: "setup", label: "Setup", icon: "ST" },
+    { id: "home",    label: "Home",    Icon: IconHome },
+    { id: "core",    label: "Core",    Icon: IconCore },
+    { id: "profile", label: "Profile", Icon: IconProfile },
+    { id: "setup",   label: "Setup",   Icon: IconSetup },
   ];
   return (
     <nav className="bottom-nav">
@@ -6197,7 +7055,7 @@ function BottomNav({ tab, onChange, aiUnread }) {
           onClick={() => onChange(item.id)}
         >
           <span className="nav-icon">
-            {item.icon}
+            <item.Icon className="nav-icon-svg" />
             {item.id === "core" && aiUnread && <span className="nav-unread-dot" />}
           </span>
           <span className="nav-label">{item.label}</span>
@@ -6209,26 +7067,29 @@ function BottomNav({ tab, onChange, aiUnread }) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-export default function AetherisApp() {
+export default function KineticLifeApp() {
+  useEffect(() => { clearLegacySingleUserKeys(); }, []);
+
   const [screen, setScreen] = useState("auth");
   const [navTab, setNavTab] = useState("home");
+  const [currentUser, setCurrentUser] = useState(() => getActiveUserName());
   const [profile, setProfile] = useState(() => loadProfile());
   const [muscleStatus, setMuscleStatus] = useState(() => loadMuscleStatus());
   const [exercise, setExercise] = useState(null);
   const [sessionResult, setSessionResult] = useState(null);
   const [visualState, setVisualState] = useState("auth");
   const [flowMode, setFlowMode] = useState(null);
-  const [deviceUrl, setDeviceUrl] = useState(() => localStorage.getItem("ath_device_url") || "http://fitcam-d37d7c.local");
-  const [connMode, setConnMode] = useState(() => localStorage.getItem("ath_conn_mode") || "ble");
+  const [deviceUrl, setDeviceUrl] = useState(() => loadDeviceUrl());
+  const [connMode, setConnMode] = useState(() => loadConnMode());
   const [lastDevice, setLastDevice] = useState(() => loadLastDevice());
-  const [theme, setTheme] = useState(() => localStorage.getItem("ath_theme") || "deep_space");
+  const [theme, setTheme] = useState(() => loadTheme());
   const [aiMessages, setAiMessages] = useState(() => loadAiMessages());
   const [aiUnread, setAiUnread] = useState(() => loadAiUnread());
   const iotConnRef = useRef(null);
 
-  useEffect(() => { localStorage.setItem("ath_device_url", deviceUrl); }, [deviceUrl]);
-  useEffect(() => { localStorage.setItem("ath_conn_mode", connMode); }, [connMode]);
-  useEffect(() => { localStorage.setItem("ath_theme", theme); }, [theme]);
+  useEffect(() => { saveDeviceUrl(deviceUrl, currentUser); }, [deviceUrl, currentUser]);
+  useEffect(() => { saveConnMode(connMode, currentUser); }, [connMode, currentUser]);
+  useEffect(() => { saveTheme(theme, currentUser); }, [theme, currentUser]);
 
   const NAV_SCREENS = ["dashboard", "core", "profile", "settings"];
   const showNav = NAV_SCREENS.includes(screen);
@@ -6236,26 +7097,78 @@ export default function AetherisApp() {
   function appendAiMessage(message, { unread = true } = {}) {
     setAiMessages((prev) => {
       const next = [...prev, message].slice(-60);
-      saveAiMessages(next);
+      saveAiMessages(next, currentUser);
       return next;
     });
     if (unread && screen !== "core") {
       setAiUnread(true);
-      saveAiUnread(true);
+      saveAiUnread(true, currentUser);
     }
   }
 
   function clearAiUnread() {
     setAiUnread(false);
-    saveAiUnread(false);
+    saveAiUnread(false, currentUser);
+  }
+
+  function clearActiveConnection() {
+    const conn = iotConnRef.current;
+    try {
+      const gatt = conn?.bleTxChar?.service?.device?.gatt;
+      if (gatt?.connected) gatt.disconnect();
+    } catch {}
+    iotConnRef.current = null;
   }
 
   function handleEnter(name) {
-    const updated = { ...profile, name };
-    setProfile(updated);
-    saveProfile(updated);
+    const userName = String(name ?? "").trim();
+    const switchingUser = normalizeUserId(userName) !== normalizeUserId(currentUser);
+
+    const nextProfile = loadProfile(userName);
+    const nextMuscleStatus = loadMuscleStatus(userName);
+    const nextAiMessages = loadAiMessages(userName);
+    const nextAiUnread = loadAiUnread(userName);
+    const nextDeviceUrl = loadDeviceUrl(userName);
+    const nextConnMode = loadConnMode(userName);
+    const nextLastDevice = loadLastDevice(userName);
+    const nextTheme = loadTheme(userName);
+
+    if (switchingUser) {
+      clearActiveConnection();
+      setExercise(null);
+      setSessionResult(null);
+      setFlowMode(null);
+    }
+
+    setActiveUserName(userName);
+    setCurrentUser(userName);
+    setProfile(nextProfile);
+    setMuscleStatus(nextMuscleStatus);
+    setAiMessages(nextAiMessages);
+    setAiUnread(nextAiUnread);
+    setDeviceUrl(nextDeviceUrl);
+    setConnMode(nextConnMode);
+    setLastDevice(nextLastDevice);
+    setTheme(nextTheme);
+    saveProfile(nextProfile);
+    saveMuscleStatus(nextMuscleStatus, userName);
+    saveAiMessages(nextAiMessages, userName);
+    saveAiUnread(nextAiUnread, userName);
+    saveDeviceUrl(nextDeviceUrl, userName);
+    saveConnMode(nextConnMode, userName);
+    saveTheme(nextTheme, userName);
     setScreen("dashboard");
     setVisualState("idle");
+    setNavTab("home");
+  }
+
+  function handleSwitchUser() {
+    clearActiveConnection();
+    setExercise(null);
+    setSessionResult(null);
+    setFlowMode(null);
+    setScreen("auth");
+    setVisualState("auth");
     setNavTab("home");
   }
 
@@ -6337,7 +7250,7 @@ export default function AetherisApp() {
         });
       });
       setMuscleStatus(updated);
-      saveMuscleStatus(updated);
+      saveMuscleStatus(updated, currentUser);
     }
     const finishedExercise = data.exerciseId ? exerciseById(data.exerciseId) : null;
     const accuracy = Math.round((data.dtw ?? 0) * 100);
@@ -6396,41 +7309,65 @@ export default function AetherisApp() {
   function handleCoreSend(text) {
     appendAiMessage(makeAiMessage({ role: "user", type: "text", content: text }), { unread: false });
 
-    const inferred = inferInjuryTagsFromText(text);
-    if (inferred.length) {
-      const current = loadAiCoreProfile();
-      const merged = normalizeTags([...(current.injuryTags ?? []), ...inferred]);
-      saveAiCoreProfile({ ...current, injuryTags: merged, updatedAt: Date.now() });
-      appendAiMessage(makeAiMessage({
-        type: "text",
-        content: `Constraint noted. Future plans will reduce load around ${inferred.map((id) => AI_CORE_INJURY_OPTIONS.find((item) => item.id === id)?.label ?? id).join(", ")}.`,
-        payload: { injuryTags: inferred },
-      }), { unread: false });
-      return;
-    }
+    const delay = 500 + Math.random() * 2500;
+    setTimeout(() => {
+      const inferred = inferInjuryTagsFromText(text);
+      if (inferred.length) {
+        const current = loadAiCoreProfile(currentUser);
+        const merged = normalizeTags([...(current.injuryTags ?? []), ...inferred]);
+        saveAiCoreProfile({ ...current, injuryTags: merged, updatedAt: Date.now() }, currentUser);
+        appendAiMessage(makeAiMessage({
+          type: "text",
+          content: `Constraint noted. Future plans will reduce load around ${inferred.map((id) => AI_CORE_INJURY_OPTIONS.find((item) => item.id === id)?.label ?? id).join(", ")}.`,
+          payload: { injuryTags: inferred },
+        }), { unread: false });
+        return;
+      }
 
-    const lower = text.toLowerCase();
+      const lower = text.toLowerCase();
 
-    if (lower.includes("generate") || lower.includes("plan") || lower.includes("today") || lower.includes("workout")) {
-      const coreProfile = loadAiCoreProfile();
-      const decision = generateAiCorePlan({ profile: coreProfile, muscleStatus, focusTags: coreProfile.focusTags ?? [] });
-      appendAiMessage(makeAiMessage({ type: "daily_plan", content: decision.dialogue, payload: decision.payload }));
-      return;
-    }
+      if (lower.includes("generate") || lower.includes("plan") || lower.includes("workout") || (lower.includes("today") && (lower.includes("train") || lower.includes("session") || lower.includes("exercise")))) {
+        const coreProfile = loadAiCoreProfile(currentUser);
+        const decision = generateAiCorePlan({ profile: coreProfile, muscleStatus, focusTags: coreProfile.focusTags ?? [] });
+        appendAiMessage(makeAiMessage({ type: "daily_plan", content: decision.dialogue, payload: decision.payload }));
+        return;
+      }
 
-    if (lower.includes("tired") || lower.includes("fatigue") || lower.includes("exhausted") || lower.includes("sore")) {
-      appendAiMessage(makeAiMessage({ type: "text", content: "Recovery is a training variable. Today's load recommendation will shift toward lower-intensity movement or active recovery. Hydration and sleep quality are the primary recovery levers." }));
-      return;
-    }
+      if (lower.includes("tired") || lower.includes("fatigue") || lower.includes("exhausted") || lower.includes("sore")) {
+        const todayStart = new Date().setHours(0, 0, 0, 0);
+        const todayWorkouts = aiMessages.filter((m) => m.type === "post_workout" && m.timestamp >= todayStart);
+        if (todayWorkouts.length > 0) {
+          const lines = todayWorkouts.map((m) => {
+            const label = m.payload?.exerciseLabel ?? "Session";
+            const reps = m.payload?.reps ?? 0;
+            const acc = m.payload?.accuracy ?? 0;
+            return `${label} — ${reps} reps, ${acc}% alignment`;
+          });
+          appendAiMessage(makeAiMessage({
+            type: "text",
+            content: `Fatigue after output is a normal adaptive signal — not a problem. Today's log:\n${lines.join("\n")}\nThat work is recorded and muscle load has been updated. Prioritize protein intake and sleep quality tonight. Recovery is where adaptation occurs.`,
+          }));
+        } else {
+          const coreProfile = loadAiCoreProfile(currentUser);
+          const decision = generateAiCorePlan({ profile: coreProfile, muscleStatus, focusTags: coreProfile.focusTags ?? [] });
+          const target = decision.payload?.target_muscle_group ?? "today's session";
+          appendAiMessage(makeAiMessage({
+            type: "text",
+            content: `Rest is a valid training input. No session was logged today — ${target} was on the schedule. It will carry forward to your next available window without penalty. Consider low-intensity movement or mobility work if you want to stay active.`,
+          }));
+        }
+        return;
+      }
 
-    if (lower.includes("progress") || lower.includes("how am i") || lower.includes("stats") || lower.includes("status")) {
-      const sessions = profile?.sessionsCount ?? 0;
-      const form = profile?.averageForm ?? 0;
-      appendAiMessage(makeAiMessage({ type: "text", content: `${sessions} session${sessions !== 1 ? "s" : ""} logged. Average DTW alignment: ${form > 0 ? `${form}%` : "no data yet"}. Muscle recovery status is updated after each completed set.` }));
-      return;
-    }
+      if (lower.includes("progress") || lower.includes("how am i") || lower.includes("stats") || lower.includes("status")) {
+        const sessions = profile?.sessionsCount ?? 0;
+        const form = profile?.averageForm ?? 0;
+        appendAiMessage(makeAiMessage({ type: "text", content: `${sessions} session${sessions !== 1 ? "s" : ""} logged. Average DTW alignment: ${form > 0 ? `${form}%` : "no data yet"}. Muscle recovery status is updated after each completed set.` }));
+        return;
+      }
 
-    appendAiMessage(makeAiMessage({ type: "text", content: "Training note recorded in your local intelligence stream." }));
+      appendAiMessage(makeAiMessage({ type: "text", content: "Training note recorded in your local intelligence stream." }));
+    }, delay);
   }
 
   const handleConnectedCallback = useCallback((deviceInfo) => {
@@ -6438,11 +7375,12 @@ export default function AetherisApp() {
       iotConnRef.current = deviceInfo;
       const meta = { mode: deviceInfo.mode, name: deviceInfo.name, id: deviceInfo.id, url: deviceInfo.url, connectedAt: Date.now() };
       setLastDevice(meta);
+      saveLastDevice(meta, currentUser);
     }
     setScreen("live");
     setVisualState("connected");
     setTimeout(() => setVisualState("idle"), 1000);
-  }, []);
+  }, [currentUser]);
 
   function renderScreen() {
     switch (screen) {
@@ -6461,7 +7399,7 @@ export default function AetherisApp() {
       case "auto_classify":
         return <AutoClassifyScreen onClassified={handleClassified} onBack={handleBack} />;
       case "plan_config":
-        return <PlanConfigScreen onBegin={handlePlanBegin} onBack={handleBack} muscleStatus={muscleStatus} theme={theme} onPlanGenerated={handlePlanGenerated} />;
+        return <PlanConfigScreen onBegin={handlePlanBegin} onBack={handleBack} muscleStatus={muscleStatus} theme={theme} userName={currentUser} onPlanGenerated={handlePlanGenerated} />;
       case "home_coach":
         return <HomeCoachScreen onBegin={handleCoachBegin} onBack={handleBack} />;
       case "connect":
@@ -6508,12 +7446,14 @@ export default function AetherisApp() {
       case "settings":
         return (
           <SettingsScreen
+            profile={profile}
             deviceUrl={deviceUrl}
             setDeviceUrl={setDeviceUrl}
             connMode={connMode}
             setConnMode={setConnMode}
             theme={theme}
             setTheme={setTheme}
+            onSwitchUser={handleSwitchUser}
           />
         );
       default:

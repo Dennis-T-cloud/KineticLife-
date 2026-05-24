@@ -1,91 +1,141 @@
 # KineticLife Web
 
-Phone/iPad PWA workspace for ESP32 stream ingest, MediaPipe pose extraction, realtime UI, and WebSocket transport.
+React PWA — ESP32 stream ingest, MediaPipe pose extraction, real-time Aetheris UI, Kinetic Core AI plan engine, and WebSocket/BLE transport.
 
 ## Quick Start
 
 ```bash
 npm install
-npm run dev
+npm run dev      # http://localhost:5173  (full Aetheris SPA)
+npm run build    # production build → dist/
 ```
 
-For static hardware testing, use:
+`index.html` mounts the React SPA. All screens (Auth, Dashboard, Live, Analysis, AI Core, Profile, Settings) live in `src/routes/kineticlife-app.jsx`.
 
-- `index.html`: default entry that redirects to `pair.html` and includes fallback links.
-- `pair.html`: generate WiFi QR and open the camera page.
-- `debug.html`: connect to ESP32 `/ws` WebSocket binary stream, run MediaPipe pose extraction, display 14-D joint angles, show live WS stream target in metrics bar, and call `/end` when the user finishes.
-- `demo.html`: ESP32-connected demo mode with real-time heuristic feedback, rep counting, and immediate local post-set summary. Optional DTW summary reports can be added after Finish Set by submitting completed-rep angle sequences. Calls `/cam` at startup to apply default camera settings (q=12, 320×240). Raw video overlay toggle (`raw ●/○`). Shows black screen if no ESP32 URL present. Skeleton rendered from EMA-smoothed landmarks (α=0.45); rep counting and form checks use raw landmarks.
-- `demo-table.html`: tablet/desktop variant. If `?cam=<url>` is present → ESP32 WS stream (same pipeline as demo.html). If no `?cam=` param → falls back to device front camera via `getUserMedia`. Front-camera frames are flipped horizontally before MediaPipe inference so landmark left/right matches the user's anatomical side. Source shown as `ESP32` or `Local Cam` badge. All exercises, form checks, smoothing, and local summary behavior are identical to demo.html.
+---
 
-The QR pages generate compact WiFi QR payloads in the current contract format:
+## Main SPA — Aetheris
 
-```text
-K1:<TYPE_CODE>:<SSID_LEN>:<SSID><PASSWORD>
-```
+The primary interface is the Aetheris React SPA. Key characteristics:
 
-The Vite dev server serves `index.html` at `/`, which redirects to the pairing flow.
+- **Single file**: `src/routes/kineticlife-app.jsx` (~7 000 lines) — all screens, state, CSS-in-JS, and canvas logic in one file.
+- **Entry**: `src/main.tsx` mounts `<KineticLifeApp />`.
+- **Design system**: Deep Space (default) and Sunset dual themes, `#030508` base, emerald/amber accent tokens, Sora font, glassmorphism panels, Framer Motion Z-axis transitions.
+- **Persistent canvas**: `AetherisWorld` (nebula + particles) never unmounts; shifts color on theme/state change. Stars use per-particle sinusoidal drift (4 independent random phases, mirrors a GLSL vertex shader) instead of linear velocity — supernova halo/spike effect unchanged.
+- **Local storage keys**: `ath_profile`, `ath_muscles`, `ath_ai_core_profile`, `ath_ai_messages`.
 
-## Demo Page Module Structure
+### Screen Map
 
-The current demo pages are static HTML entry points with shared ES modules:
+| Screen | Route state | Description |
+|--------|------------|-------------|
+| Auth | `auth` | Name entry, theme selector |
+| Dashboard | `dashboard` | Bento: Jump-in / AI Plan / Home Workout |
+| Connect | `connect` | WiFi URL or BLE pairing |
+| Live | `live` | Camera stream, skeleton, rep counter, DTW |
+| Analysis | `analysis` | Post-set accuracy ring, form chart, coach feedback |
+| Plan Config | `plan_config` | Kinetic Core card + AI weekly schedule |
+| Home Coach | `home_coach` | No-equipment protocol |
+| AI Core | `core` | Kinetic Core chat + AI Recommended Plan |
+| Profile | `profile` | Muscle heatmap, session stats |
+| Settings | `settings` | Device config, theme toggle |
 
-```text
-demo.html              ESP32-only workout demo
-demo-table.html        ESP32 or local-camera tablet/desktop demo
-mediapipe_loader.mjs   remote/local MediaPipe asset fallback
-runtime_log.mjs        low-frequency browser console diagnostics
-lib/exercise-rules.js  exercise thresholds, angle math, skeleton constants
-lib/landmark-smoothing.js
-                       display-only EMA smoothing
-lib/pose-renderer.js   Canvas skeleton and angle annotation drawing
-lib/feedback-effects.js
-                       shared rep-count, particle, scanline, and error-pulse effects
-```
+### Kinetic Core AI Plan
 
-`demo.html` and `demo-table.html` are sibling pages, not inheritance-based views.
-They share rules/rendering/effects modules, but still keep separate page orchestration
-for source setup, recording loop, summary, and UI wiring. New exercises should start
-in `lib/exercise-rules.js`; visual rendering changes should start in
-`lib/pose-renderer.js`; demo feedback animations should start in
-`lib/feedback-effects.js`.
+Local rule-based AI coach (no external API). Profile stored in `ath_ai_core_profile`:
 
-## Offline MediaPipe Assets
+- `heightCm`, `weightKg`, `trainingDaysPerWeek`, `injuryTags`, `focusTags`
 
-`debug.html`, `demo.html`, and `demo-table.html` load MediaPipe through `mediapipe_loader.mjs`.
-By default it tries CDN resources first, then falls back to the vendored files under
-`vendor/mediapipe/`.
+`generateAiCorePlan()` scores exercises by muscle fatigue, injury constraints, and focus tags. `buildWeekSchedule()` assigns exercises to training days respecting muscle recovery periods (large muscle groups: 2-day minimum gap; small: 1-day). Clicking today's plan item calls `onBegin()` directly.
 
-For demo-day testing with no external internet, run a local static server and force local assets:
+---
+
+## Shared Library Modules (`lib/`)
+
+Used by both the React SPA and the static HTML demo pages:
+
+| File | Purpose |
+|------|---------|
+| `lib/exercise-rules.js` | Angle thresholds, rep state machine, form check rules |
+| `lib/landmark-smoothing.js` | Display-only EMA smoothing (α = 0.45) |
+| `lib/pose-renderer.js` | Canvas skeleton, angle annotation, holographic HUD effects |
+| `lib/feedback-effects.js` | Rep particles, scanline CTA, error pulse, set-finish burst |
+
+**Rule**: raw landmarks drive rep counting and form checks; smoothed landmarks are display-only. Never feed smoothed data into logic.
+
+---
+
+## Static HTML Pages
+
+Legacy and diagnostic pages served alongside the SPA. Not part of the React build.
+
+| Page | Purpose |
+|------|---------|
+| `pair.html` | WiFi pairing — QR tab and Soft AP config tab |
+| `debug.html` | ESP32 WS stream + MediaPipe + 14-D angles + lens calibration LUT |
+| `demo.html` | ESP32-only workout demo (v0.2 baseline, stable) |
+| `demo-table.html` | Tablet/desktop: ESP32 or `getUserMedia` fallback (v0.2 baseline) |
+| `kinetic-demo.html` | Experimental page (do not rely on for demos) |
+
+`demo.html` and `demo-table.html` are stable reference pages. New exercises go into `lib/exercise-rules.js`; visual changes into `lib/pose-renderer.js`.
+
+### Offline MediaPipe
+
+All pages load MediaPipe via `mediapipe_loader.mjs` (CDN → local vendor fallback). For demo-day with no internet:
 
 ```bash
 python3 -m http.server 8081
+# open http://localhost:8081/debug.html?mp=local&cam=http://<ESP32-IP>
 ```
 
-```text
-http://localhost:8081/debug.html?mp=local&cam=http://<ESP32-IP>
-http://localhost:8081/demo.html?mp=local&cam=http://<ESP32-IP>
-```
+Do not open with `file://` — WebAssembly is unreliable over that protocol.
 
-Do not open these pages with `file://`; Safari and WebAssembly module loading are more reliable over `http://localhost`.
-
-Open Safari Web Inspector Console and filter for `[kl]` to see low-frequency runtime logs:
-page URL, ESP32 base URL/device IP, MediaPipe local/remote source, delegate, WS open/close/error, RSSI, frame size, JPEG quality, heap, and PSRAM.
+---
 
 ## Camera Parameter Tuning
 
-`debug.html` exposes live camera controls (brightness, contrast, saturation, sharpness, ae\_level, JPEG quality). Use it to find the optimal values for the physical setup.
+`debug.html` exposes live controls (brightness, contrast, saturation, sharpness, AE level, JPEG quality). Once tuned, apply the values in **three places**:
 
-Once tuned, the finalized values must be applied in **three places** to keep all pages consistent:
+1. **Firmware** — camera init defaults in `firmware/src/`
+2. **`demo.html`** — `/cam` call in `init()`
+3. **`demo-table.html`** — `/cam` call in `init()`
 
-1. **Firmware** — camera init defaults in `firmware/src/` (values the ESP32 boots with)
-2. **`demo.html`** — the `/cam` call in `init()` (line ~566)
-3. **`demo-table.html`** — the `/cam` call in `init()` (line ~569)
+Current defaults (apply to `demo.html` / `demo-table.html` static pages only):
 
-Current defaults used by demo.html and demo-table.html (match `debug.html` FW object):
-
-```text
+```
 res=320x240  q=12  brightness=0  contrast=1  saturation=0
 sharpness=1  ae_level=0  vflip=0  hmirror=0
 ```
 
-> Note: OV2640 AEC (auto-exposure) and AWB (auto white balance) run continuously in hardware and are not disabled by `/cam`. Visual brightness/color will still converge over ~5–10 s after each connection. The `/cam` parameters only control static ISP offsets (contrast ratio, sharpness kernel, etc.) and JPEG compression quality.
+Live SPA cam params (set via `/cam` before WebSocket stream starts):
+
+| Mode | Resolution | q  | vflip |
+|------|------------|----|-------|
+| WiFi | 320×240    | 40 | 1     |
+| BLE  | 160×120    | 25 | 1     |
+
+Lens distortion calibration parameters (140° OV5647, fisheye theta model — shared between WiFi and BLE modes):
+
+```
+k1=-0.38  k2=0.18  k3=0  p1=0  p2=0
+fx=fy=250  cx=60  cy=80
+canvas: inferCanvas 120×160 (portrait, post-rotation)
+```
+
+Pipeline (both modes): hardware `vflip=1` → software +90° rotate (landscape→portrait) → `_applyDistLUT()` → MediaPipe on 120×160 undistorted canvas.
+
+> OV2640 AEC and AWB run continuously in hardware. Visual brightness/color converges over ~5–10 s after each connection. The `/cam` parameters control only static ISP offsets and JPEG quality.
+
+---
+
+## Key Constraints
+
+| Decision | Reason |
+|----------|--------|
+| `board_build.arduino.memory_type = qio_opi` must stay | Freenove N16R8 has real OPI PSRAM; removing causes TG1 watchdog crash |
+| `monitor_dtr = 0` / `monitor_rts = 0` required | USB CDC toggles cause reconnect loop |
+| XCLK must stay at **20 MHz** | FNK0085B PCB designed for 20 MHz; 24 MHz causes screen tearing |
+| `Camera: FB_IN_PSRAM, fb_count=2` | Two PSRAM buffers eliminate DMA + WiFi bus contention |
+| Front-camera mirror: flip before inference | Makes lm[12/14/16] map to anatomical right arm |
+| EMA α=0.45 display only, raw for logic | Smooth display without affecting rep counts |
+| Error debounce 4 frames | ~0.4 s at 10 fps matches natural error perception |
+| DTW in Web Worker | O(N²) blocks main thread if inline |

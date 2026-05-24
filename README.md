@@ -1,48 +1,54 @@
 # KineticLife
 
-> Real-time fitness action feedback. Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B + OV2640 140° wide-angle camera + MediaPipe in the browser, local heuristic rep/form checks for live UX, and optional post-set DTW summary reports on joint-angle sequences. **Raw video never leaves the local network.**
+> Real-time fitness tracking and AI-assisted coaching. ESP32-S3 (Freenove FNK0085 B, OV2640 140° wide-angle) streams live video over WebSocket → browser runs MediaPipe pose estimation → heuristic rep counting, form checks, and DTW biomechanics scoring. Front-end is a full React SPA ("Aetheris") with a dual-theme design system, local AI plan engine (Kinetic Core), and muscle heatmap analytics. **Raw video never leaves the local network.**
 
-**Status**: v0.3 · 6-week Demo Day sprint · 3-person part-time team
+**Status**: `ui-update-test` branch active · v0.3 base · Sprint 4 UI + AI Core in progress
 
-**Hardware baseline**: Freenove ESP32-S3-WROOM Board (N16R8), model **FNK0085 B**, with **OV2640 140° wide-angle** camera. All firmware pin mapping, camera tuning, and calibration notes should assume this board unless a document explicitly says otherwise.
+**Hardware baseline**: Freenove ESP32-S3-WROOM (N16R8), model **FNK0085 B**, OV2640 140° wide-angle camera. All firmware pin mapping, camera tuning, and calibration notes assume this board unless explicitly stated otherwise.
+
+---
 
 ## Repository Layout
 
 ```
 KineticLife/
-├── README.md                      
-├── docs/                           ← Architecture & design
+├── README.md
+├── docs/
 │   ├── 00_System_Overview.md
 │   ├── 01_IoT_ESP32S3.md
 │   ├── 02_Web_MediaPipe.md
 │   ├── 03_Cloud_DTW.md
-│   ├── 04_Interface_Contracts.md
-│   └── _archive_v0.3/              ← pre-v0.3 full design discussion
-├── firmware/                       ← ESP32-S3 firmware (PlatformIO)
+│   ├── 04_Interface_Contracts.md  ← hard contract — read before any cross-layer change
+│   ├── Codebase_Study_Notes.md
+│   ├── ai-aidesign.md             ← Kinetic Core AI coach spec & implementation notes
+│   ├── ai-movement.md             ← movement classification design
+│   ├── ai-socity.md               ← Nexus community module spec
+│   └── _archive_v0.3/
+├── firmware/                      ← ESP32-S3 PlatformIO project
 │   ├── platformio.ini
+│   └── src/
+├── web/                           ← React PWA (Vite + framer-motion)
 │   ├── src/
-│   └── README.md
-├── web/                            ← Phone/iPad PWA (React + Vite)
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── src/
-│   │   ├── pose/
-│   │   ├── edge/
-│   │   ├── render/
-│   │   ├── api/
+│   │   ├── main.tsx               ← mounts KineticLifeApp
 │   │   └── routes/
-│   └── README.md
-├── server/                         ← FastAPI backend
-│   ├── pyproject.toml
-│   ├── fly.toml
-│   ├── app/
-│   ├── scripts/
-│   └── README.md
-├── shared/
-│   └── fixtures/
-│       └── joint_angles_v1.json    ← shared regression fixtures (frontend + backend)
-└── data/
-    └── templates/                  ← standard action JSON (gitignored individual recordings)
+│   │       └── kineticlife-app.jsx  ← main SPA (~7000 lines, all screens)
+│   ├── lib/                       ← shared JS modules (used by SPA + static pages)
+│   │   ├── exercise-rules.js      ← angle thresholds, rep state, form checks
+│   │   ├── landmark-smoothing.js  ← EMA display smoothing (α=0.45)
+│   │   ├── pose-renderer.js       ← canvas skeleton + angle annotation
+│   │   └── feedback-effects.js    ← rep particles, scanline, error pulse
+│   ├── index.html                 ← SPA entry (React root)
+│   ├── pair.html                  ← WiFi pairing (QR + Soft AP config)
+│   ├── debug.html                 ← ESP32 WS + MediaPipe + lens calibration
+│   ├── demo.html                  ← ESP32-only workout demo (v0.2)
+│   ├── demo-table.html            ← tablet/desktop dual-source demo (v0.2)
+│   └── designHANDOFF.txt          ← AI-to-AI context handoff (full implementation history)
+├── server/                        ← FastAPI backend stub
+│   ├── app/main.py
+│   └── pyproject.toml
+└── shared/
+    └── fixtures/
+        └── joint_angles_v1.json   ← regression fixtures
 ```
 
 ---
@@ -55,17 +61,6 @@ Any **cross-platform data format change** (joint angles, WS messages, ESP32 endp
 2. Reviewed by all 3 engineers
 3. **Then** implemented in the affected role doc + code
 
-Breaking this rule is what causes W4 integration to explode.
-
----
-
-## Branching & PR
-
-- `main` — protected, requires 1 review
-- Feature branches: `iot/*`, `web/*`, `server/*`, `docs/*`
-- Contract changes (touching `docs/04_*`): requires **2 reviews** (one from each other role)
-- Commit format: `<area>: <subject>` (e.g. `web: add gesture detector`)
-
 ---
 
 ## Local Setup
@@ -73,22 +68,25 @@ Breaking this rule is what causes W4 integration to explode.
 ### Firmware
 ```bash
 cd firmware
-pio run                # build
-pio run --target upload  # flash
-pio device monitor       # serial
+pio run                    # build
+pio run --target upload    # flash
+pio device monitor         # serial
 ```
 
-### Web
+### Web (React SPA)
 ```bash
 cd web
 npm install
-npm run dev              # http://localhost:5173
+npm run dev                # http://localhost:5173  → full Aetheris SPA
+npm run build              # production build to dist/
 ```
+
+The SPA (`index.html` → `kineticlife-app.jsx`) is the primary interface. Static HTML pages (`debug.html`, `demo.html`, etc.) are separate development/testing tools served by the same Vite dev server or any static HTTP server.
 
 ### Server
 ```bash
 cd server
-uv sync                  # or: pip install -e .
+uv sync                    # or: pip install -e .
 uv run uvicorn app.main:app --reload
 ```
 
@@ -96,7 +94,7 @@ uv run uvicorn app.main:app --reload
 
 ## Local Hardware Test (iPhone + Laptop)
 
-End-to-end test without the cloud backend: ESP32 streams WebSocket video → browser runs MediaPipe locally → displays 14-D joint angles in real time.
+ESP32 streams WebSocket video → browser runs MediaPipe locally → displays 14-D joint angles in real time.
 
 ### What you need
 
@@ -114,54 +112,41 @@ pio run --target upload
 pio device monitor
 ```
 
-On first boot with no saved credentials, ESP32 enters pairing mode (blue LED blinks) and prints:
+On first boot with no saved credentials, ESP32 enters pairing mode (blue LED blinks):
 
 ```text
 [pair] No saved WiFi; entering pairing mode
 ```
 
-To force re-pairing after setup: `pio run --target erase && pio run --target upload`
+To force re-pairing: `pio run --target erase && pio run --target upload`
 
 #### 2. Start iPhone hotspot
 
-Start hotspot, connect laptop to it. Use a 2.4 GHz hotspot; avoid spaces in the SSID.
+Use a 2.4 GHz hotspot. Connect laptop to it. Avoid spaces in SSID.
 
-#### 3. Pair via Soft AP (easiest path)
-
-Open `web/pair.html` locally (file://) or serve it:
+#### 3. Pair via Soft AP (recommended)
 
 ```bash
 cd web && python3 -m http.server 8080
 # open http://localhost:8080/pair.html
 ```
 
-**Config tab** (Soft AP path — no QR needed):
-
 1. Connect laptop to `KineticLife-Setup` (password: `kineticlife`)
-2. Open `pair.html` → Config tab → load preset networks or enter credentials
+2. Open `pair.html` → Config tab → enter hotspot credentials
 3. ESP32 connects, saves, reboots
 4. Reconnect laptop to iPhone hotspot
 
-**QR tab** (alternative — keep laptop on hotspot throughout):
+**QR tab** (alternative): Enter SSID/password → hold phone at 100% brightness ~20–30 cm from camera. Wait for serial `[session] saved`. Less reliable with 140° lens — use Soft AP if QR fails.
 
-Enter hotspot SSID/password → QR appears. Hold phone screen at 100% brightness ~20–30 cm from ESP32 camera. Wait for serial: `[session] saved`.
+#### 4. Connect
 
-> OV2640 note: the 140° wide-angle lens can reduce QR ECC success rate. Soft AP is more reliable.
+ESP32 is at `http://fitcam-d37d7c.local/` (mDNS) or the IP shown in serial monitor.
 
-#### 4. Open the stream + debug page
+Open the Aetheris SPA via the dev server (`http://localhost:5173`), navigate to Connect, and enter the device URL. Or use `debug.html` for raw WebSocket + MediaPipe diagnostics.
 
-After reboot, ESP32 is at `http://fitcam-d37d7c.local/` (mDNS) or the IP shown in serial monitor.
+#### 5. macOS firewall
 
-```bash
-# Or open directly in browser:
-open http://fitcam-d37d7c.local/
-```
-
-If mDNS fails, open `web/debug.html` and enter the IP manually. The debug page connects via `ws://` and runs MediaPipe + DTW locally.
-
-#### 5. Allow incoming connections (macOS firewall)
-
-Only needed if using `debug.html` served from laptop:
+Required if the browser page is served from the laptop and ESP32 is on a different subnet:
 
 ```bash
 sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
@@ -170,7 +155,7 @@ sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
 
 #### 6. End session
 
-Press **End Session** in the page, or: `curl -X POST http://fitcam-d37d7c.local/end`
+Press **End Session** in the UI, or: `curl -X POST http://fitcam-d37d7c.local/end`
 
 ESP32 clears NVS credentials and reboots to pairing mode.
 
@@ -181,18 +166,24 @@ ESP32 clears NVS credentials and reboots to pairing mode.
 | Stream not loading | mDNS failed — use IP from serial monitor directly |
 | ESP32 IP unknown | `pio device monitor`, look for `[http] ready ip=...` |
 | Soft AP not visible | Wait 10 s after boot; blue LED should be blinking |
-| QR parse fails repeatedly | Use Soft AP path instead; OV2640 140° lens can degrade QR reliability |
-| WiFi connect fails after QR | Keep phone screen on; hotspot must be 2.4 GHz |
-| `ws://` connection refused | Confirm laptop and ESP32 are on the same hotspot network |
+| QR parse fails | Use Soft AP; OV2640 140° lens degrades QR reliability |
+| WiFi connect fails | Keep phone screen on; hotspot must be 2.4 GHz |
+| `ws://` refused | Confirm laptop and ESP32 on same hotspot network |
 | No pose detected | Ensure full body visible; move 1–2 m from camera |
-| macOS firewall blocks page | Run `socketfilterfw --setglobalstate off` |
+| macOS firewall blocks | Run `socketfilterfw --setglobalstate off` |
+
+---
+
+## Branching & PR
+
+- `main` — protected, requires 1 review
+- `ui-update-test` — current active development branch
+- Feature branches: `iot/*`, `web/*`, `server/*`, `docs/*`
+- Contract changes (touching `docs/04_*`): requires **2 reviews**
+- Commit format: `<area>: <subject>` (e.g. `web: add Kinetic Core AI plan`)
 
 ---
 
 ## License
 
-TBD — set before public Demo.
-
----
-
-*Version: v0.3 · Demo Day target: 2026-06-05 (6 weeks from 2026-04-24)*
+TBD — set before public release.

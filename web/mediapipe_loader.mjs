@@ -31,7 +31,7 @@ export async function createPoseLandmarkerRuntime(options = {}) {
     let mod;
     let vision;
     try {
-      mod = await import(source.bundle);
+      mod = await import(/* @vite-ignore */ source.bundle);
       vision = await mod.FilesetResolver.forVisionTasks(source.wasm);
     } catch (error) {
       lastError = error;

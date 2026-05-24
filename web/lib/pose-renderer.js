@@ -153,8 +153,6 @@ export function drawSkeleton(ctx, vidTransform, lm, errorBoneSet = new Set(), op
   ctx.lineJoin = 'round';
   ctx.globalCompositeOperation = col.blendMode;
 
-  drawTargetPlane(ctx, vidTransform, targetProgress, col);
-
   for (const [a, b] of BONE_PAIRS) {
     if (!lm[a] || !lm[b]) continue;
     const lowVis = (lm[a].visibility ?? 1) < VIS || (lm[b].visibility ?? 1) < VIS;

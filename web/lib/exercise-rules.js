@@ -87,8 +87,8 @@ export const EXERCISES = {
   },
 
   bicep_curl: {
-    label:    'Left Dumbbell Curl',
-    note:     'Use your left hand for the dumbbell',
+    label:    'Right Dumbbell Curl',
+    note:     'Use your right hand for the dumbbell',
     getKeyAngle: lm => calcAngle(lm[11], lm[13], lm[15]),
     restCond: a => a > 155,   // arm extended
     workCond: a => a < 55,    // fully curled
@@ -117,8 +117,8 @@ export const EXERCISES = {
   },
 
   right_bicep_curl: {
-    label:    'Right Dumbbell Curl',
-    note:     'Use your right hand for the dumbbell',
+    label:    'Left Dumbbell Curl',
+    note:     'Use your left hand for the dumbbell',
     getKeyAngle: lm => calcAngle(lm[12], lm[14], lm[16]),
     restCond: a => a > 155,
     workCond: a => a < 55,
