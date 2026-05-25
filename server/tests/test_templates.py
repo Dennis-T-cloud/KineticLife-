@@ -13,7 +13,7 @@ class TemplateTests(unittest.TestCase):
         exercises = {template.exercise for template in templates}
 
         self.assertIn("squat", exercises)
-        self.assertIn("curl", exercises)
+        self.assertIn("bicep_curl", exercises)
         self.assertEqual(len({template.template_id for template in templates}), len(templates))
 
     def test_each_baseline_frame_has_14_joint_angles(self) -> None:
@@ -27,7 +27,7 @@ class TemplateTests(unittest.TestCase):
         template = get_template_by_exercise("squat")
 
         self.assertEqual(template.exercise, "squat")
-        self.assertEqual(template.template_id, "perfect_squat_v1")
+        self.assertEqual(template.template_id, "squat_v1")
 
     def test_load_templates_ignores_holder_sources(self) -> None:
         real_template = {

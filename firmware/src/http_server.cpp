@@ -19,6 +19,7 @@ static const char* s_fw_version  = "0.3.0";
 static const char* s_board_model = "";
 static const char* s_cam_model   = "";
 static uint32_t    s_stream_count = 0;
+static String      s_ws_token;
 static uint32_t    s_ws_client_ids[DEFAULT_MAX_WS_CLIENTS] = {0};
 static size_t      s_ws_client_count = 0;
 
@@ -35,6 +36,21 @@ static uint32_t s_perf_jpeg_sum   = 0;
 static uint32_t s_perf_jpeg_max   = 0;
 static uint32_t s_perf_backpressure_skips = 0;
 static uint32_t s_perf_window_ms  = 0;
+
+// ── Token auth ────────────────────────────────────────────────────────────
+static void init_ws_token() {
+    Preferences p;
+    p.begin("kl_auth", false);
+    s_ws_token = p.getString("ws_token", "");
+    if (s_ws_token.length() < 8) {
+        char buf[9];
+        snprintf(buf, sizeof(buf), "%08lx", (unsigned long)esp_random());
+        s_ws_token = String(buf);
+        p.putString("ws_token", s_ws_token);
+    }
+    p.end();
+    kl_logf("[auth] ws_token=%s\n", s_ws_token.c_str());
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 static int wifi_quality_percent(int rssi) {
@@ -139,10 +155,29 @@ static size_t ws_send_latest_frame(const uint8_t* buf, size_t len,
     return sent;
 }
 
+// ── WS token gate (HTTP-level, runs before AsyncWebSocket handler) ────────
+class WsTokenGate : public AsyncWebHandler {
+public:
+    bool canHandle(AsyncWebServerRequest* req) {
+        if (req->url() != "/ws") return false;
+        // Valid token → let AsyncWebSocket handler take it
+        if (req->hasParam("token") && req->getParam("token")->value() == s_ws_token)
+            return false;
+        return true; // no/wrong token → we reject it
+    }
+    void handleRequest(AsyncWebServerRequest* req) {
+        kl_logf("[ws] REJECT unauthorized from %s\n",
+                req->client()->remoteIP().toString().c_str());
+        req->send(401, "text/plain", "Unauthorized");
+    }
+};
+static WsTokenGate s_ws_gate;
+
 // ── WebSocket event handler ───────────────────────────────────────────────
 static void on_ws_event(AsyncWebSocket*, AsyncWebSocketClient* client,
                         AwsEventType type, void* arg, uint8_t*, size_t) {
     if (type == WS_EVT_CONNECT) {
+        // Token already validated by WsTokenGate at HTTP upgrade phase.
         s_stream_count++;
         ws_track_client(client->id());
         status_led_set(DEVICE_STATE_STREAMING);
@@ -178,6 +213,7 @@ static void handle_hello(AsyncWebServerRequest* req) {
     j += ",\"ws_clients\":" + String(ws.count());
     j += ",\"uptime_s\":" + String(millis() / 1000);
     j += ",\"free_psram_kb\":" + String(ESP.getFreePsram() / 1024);
+    j += ",\"ws_token\":\"" + s_ws_token + "\"";
     j += "}";
     kl_logf("[http] GET /hello remote=%s\n",
             req->client()->remoteIP().toString().c_str());
@@ -304,14 +340,16 @@ void http_server_start(const char* fw_version, const char* board_model,
     s_board_model    = board_model;
     s_cam_model      = cam_model;
     s_perf_window_ms = millis();
+    init_ws_token();
 
     // Add CORS to every response (preflight + actual)
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin",  "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "*");
 
-    // WebSocket
+    // WebSocket — gate must be added BEFORE ws so it intercepts unauthorized upgrades first
     ws.onEvent(on_ws_event);
+    server.addHandler(&s_ws_gate);
     server.addHandler(&ws);
 
     // REST

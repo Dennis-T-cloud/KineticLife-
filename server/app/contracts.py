@@ -58,9 +58,3 @@ class CoachingAnalysisResponse(BaseModel):
     alignment_path: list[AlignmentPairPayload]
     aligned_errors: list[AlignedStepErrorPayload]
     spikes: list[ErrorSpikePayload]
-
-
-class MockFrontendResponse(BaseModel):
-    scenario: str
-    session_id: str
-    messages: list[dict]

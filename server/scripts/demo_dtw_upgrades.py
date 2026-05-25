@@ -230,7 +230,7 @@ def main() -> None:
         "    1. Sakoe-Chiba band  -- correctness guardrail + speed on longer reps\n"
         "    2. Input preprocessing (NaN interp + smoothing) -- noise robustness\n"
         "    3. numpy soft-import -- vectorized local-distance when numpy is installed\n"
-        "    4. Per-exercise calibrated thresholds (squat / pushup / plank)\n"
+        "    4. Per-exercise calibrated thresholds (squat / plank)\n"
         "    5. All-None input guard -- no more silent perfect-rep on broken capture\n"
         "  All 29 unit tests pass."
     )

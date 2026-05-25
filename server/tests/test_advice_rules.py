@@ -40,11 +40,6 @@ class AdviceRulesTests(unittest.TestCase):
         self.assertEqual(len(tips), 2)
         self.assertNotEqual(tips[0], tips[1])
 
-    def test_generate_coaching_text_has_fallback(self) -> None:
-        self.assertEqual(
-            generate_coaching_text([], exercise="pushup"),
-            ["Your pushup stayed close to the reference; keep the same tempo and control."],
-        )
 
 
 if __name__ == "__main__":

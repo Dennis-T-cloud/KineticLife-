@@ -54,21 +54,21 @@ export const EXERCISES = {
     label:    'Bodyweight Squat',
     getKeyAngle: lm => (calcAngle(lm[23], lm[25], lm[27])
                        + calcAngle(lm[24], lm[26], lm[28])) / 2,
-    restCond: a => a > 155,   // standing (relaxed from 160)
-    workCond: a => a < 120,   // squat depth (relaxed from 100 — half-squat counts)
+    restCond: a => a > 150,   // data p90=154°
+    workCond: a => a < 95,    // data p10=78°; 95° catches most reps with margin
     phaseLabel: { rest: 'Standing', work: 'Squatting' },
     checks: [
       {
         id: 'sq_depth_l',
         getVal: lm => calcAngle(lm[23], lm[25], lm[27]),
-        valid: (v, phase) => phase !== 'work' || v < 130,
+        valid: (v, phase) => phase !== 'work' || v < 110,
         hint: 'Squat lower on the left',
         bones: [[23,25],[25,27]],
       },
       {
         id: 'sq_depth_r',
         getVal: lm => calcAngle(lm[24], lm[26], lm[28]),
-        valid: (v, phase) => phase !== 'work' || v < 130,
+        valid: (v, phase) => phase !== 'work' || v < 110,
         hint: 'Squat lower on the right',
         bones: [[24,26],[26,28]],
       },
@@ -90,14 +90,14 @@ export const EXERCISES = {
     label:    'Right Dumbbell Curl',
     note:     'Use your right hand for the dumbbell',
     getKeyAngle: lm => calcAngle(lm[11], lm[13], lm[15]),
-    restCond: a => a > 155,   // arm extended
-    workCond: a => a < 55,    // fully curled
+    restCond: a => a > 150,   // data p90=156°
+    workCond: a => a < 110,   // data p10=99°; 110° gives entry margin
     phaseLabel: { rest: 'Arm Extended', work: 'Curling' },
     checks: [
       {
         id: 'curl_range',
         getVal: lm => calcAngle(lm[11], lm[13], lm[15]),
-        valid: (v, phase) => phase !== 'work' || v < 60,
+        valid: (v, phase) => phase !== 'work' || v < 115,
         hint: 'Curl higher',
         bones: [[11,13],[13,15]],
       },
@@ -120,14 +120,14 @@ export const EXERCISES = {
     label:    'Left Dumbbell Curl',
     note:     'Use your left hand for the dumbbell',
     getKeyAngle: lm => calcAngle(lm[12], lm[14], lm[16]),
-    restCond: a => a > 155,
-    workCond: a => a < 55,
+    restCond: a => a > 148,   // data p90=152°
+    workCond: a => a < 95,    // data p10=89°
     phaseLabel: { rest: 'Arm Extended', work: 'Curling' },
     checks: [
       {
         id: 'right_curl_range',
         getVal: lm => calcAngle(lm[12], lm[14], lm[16]),
-        valid: (v, phase) => phase !== 'work' || v < 60,
+        valid: (v, phase) => phase !== 'work' || v < 100,
         hint: 'Curl higher',
         bones: [[12,14],[14,16]],
       },
@@ -147,21 +147,21 @@ export const EXERCISES = {
   lateral_raise: {
     label:    'Dumbbell Lateral Raise',
     getKeyAngle: lm => (calcAngle(lm[24],lm[12],lm[14]) + calcAngle(lm[23],lm[11],lm[13])) / 2,
-    restCond: a => a < 30,    // arms by sides
-    workCond: a => a > 75,    // arms near horizontal
+    restCond: a => a < 25,    // data p10=19°
+    workCond: a => a > 83,    // data p90=90°
     phaseLabel: { rest: 'Lowered', work: 'Raising' },
     checks: [
       {
         id: 'lr_height_r',
         getVal: lm => calcAngle(lm[24], lm[12], lm[14]),
-        valid: (v, phase) => phase !== 'work' || v > 70,
+        valid: (v, phase) => phase !== 'work' || v > 80,
         hint: 'Raise your right arm to shoulder height',
         bones: [[12,14],[14,16]],
       },
       {
         id: 'lr_height_l',
         getVal: lm => calcAngle(lm[23], lm[11], lm[13]),
-        valid: (v, phase) => phase !== 'work' || v > 70,
+        valid: (v, phase) => phase !== 'work' || v > 80,
         hint: 'Raise your left arm to shoulder height',
         bones: [[11,13],[13,15]],
       },
@@ -186,133 +186,73 @@ export const EXERCISES = {
     ],
   },
 
-  squat_side: {
-    label:    'Bodyweight Squat Side',
-    note:     'Side-view preset: align camera with the most visible side.',
-    getKeyAngle: lm => sideAngle(lm, [23,25,27], [24,26,28]),
-    restCond: a => a > 155,
-    workCond: a => a < 118,
-    phaseLabel: { rest: 'Standing', work: 'Descending' },
+  barbell_squat: {
+    label:    'Barbell Squat',
+    getKeyAngle: lm => (calcAngle(lm[23], lm[25], lm[27]) + calcAngle(lm[24], lm[26], lm[28])) / 2,
+    restCond: a => a > 155,   // data p90=161°
+    workCond: a => a < 100,   // data p10=81°
+    phaseLabel: { rest: 'Standing', work: 'Squatting' },
     checks: [
       {
-        id: 'sqs_side_depth',
-        getVal: lm => sideAngle(lm, [23,25,27], [24,26,28]),
-        valid: (v, phase) => phase !== 'work' || v < 125,
-        hint: 'Reach squat depth',
+        id: 'bsq_depth_l',
+        getVal: lm => calcAngle(lm[23], lm[25], lm[27]),
+        valid: (v, phase) => phase !== 'work' || v < 110,
+        hint: 'Squat lower on the left',
+        bones: [[23,25],[25,27]],
+      },
+      {
+        id: 'bsq_depth_r',
+        getVal: lm => calcAngle(lm[24], lm[26], lm[28]),
+        valid: (v, phase) => phase !== 'work' || v < 110,
+        hint: 'Squat lower on the right',
+        bones: [[24,26],[26,28]],
+      },
+      {
+        id: 'bsq_sym',
+        getVal: lm => Math.abs(calcAngle(lm[23],lm[25],lm[27]) - calcAngle(lm[24],lm[26],lm[28])),
+        valid: v => v < 20,
+        hint: 'Uneven leg drive',
         bones: [[23,25],[25,27],[24,26],[26,28]],
-      },
-      {
-        id: 'sqs_hip_fold',
-        getVal: lm => sideAngle(lm, [11,23,25], [12,24,26]),
-        valid: (v, phase) => phase !== 'work' || v < 134,
-        hint: 'Sit hips back and down',
-        bones: [[11,23],[23,25],[12,24],[24,26]],
-      },
-      {
-        id: 'sqs_knee_hip_pair',
-        getVal: lm => Math.abs(sideAngle(lm, [23,25,27], [24,26,28]) - sideAngle(lm, [11,23,25], [12,24,26])),
-        valid: (v, phase) => phase !== 'work' || v < 46,
-        hint: 'Keep hips and knees moving together',
-        bones: [[23,25],[25,27],[11,23],[12,24]],
       },
     ],
     displayAngles: [
-      { label: 'Side Knee', fn: lm => sideAngle(lm, [23,25,27], [24,26,28]), joint: 25 },
-      { label: 'Side Hip',  fn: lm => sideAngle(lm, [11,23,25], [12,24,26]), joint: 23 },
+      { label: 'Left Knee',  fn: lm => calcAngle(lm[23],lm[25],lm[27]), joint: 25 },
+      { label: 'Right Knee', fn: lm => calcAngle(lm[24],lm[26],lm[28]), joint: 26 },
     ],
   },
 
-  barbell_squat_side: {
-    label:    'Barbell Squat Side',
-    note:     'Side-view preset: align camera with the most visible side.',
-    getKeyAngle: lm => sideAngle(lm, [23,25,27], [24,26,28]),
-    restCond: a => a > 155,
-    workCond: a => a < 118,
-    phaseLabel: { rest: 'Standing', work: 'Descending' },
-    checks: [
-      {
-        id: 'bsq_side_depth',
-        getVal: lm => sideAngle(lm, [23,25,27], [24,26,28]),
-        valid: (v, phase) => phase !== 'work' || v < 125,
-        hint: 'Reach squat depth',
-        bones: [[23,25],[25,27],[24,26],[26,28]],
-      },
-      {
-        id: 'bsq_hip_fold',
-        getVal: lm => sideAngle(lm, [11,23,25], [12,24,26]),
-        valid: (v, phase) => phase !== 'work' || v < 132,
-        hint: 'Sit hips back and down',
-        bones: [[11,23],[23,25],[12,24],[24,26]],
-      },
-    ],
-    displayAngles: [
-      { label: 'Side Knee', fn: lm => sideAngle(lm, [23,25,27], [24,26,28]), joint: 25 },
-      { label: 'Side Hip',  fn: lm => sideAngle(lm, [11,23,25], [12,24,26]), joint: 23 },
-    ],
-  },
-
-  deadlift_side: {
-    label:    'Traditional Deadlift Side',
-    note:     'Side-view preset: hip hinge with relatively quiet knees.',
-    getKeyAngle: lm => sideAngle(lm, [11,23,25], [12,24,26]),
-    restCond: a => a > 158,
-    workCond: a => a < 118,
+  deadlift: {
+    label:    'Traditional Deadlift',
+    getKeyAngle: lm => (calcAngle(lm[11], lm[23], lm[25]) + calcAngle(lm[12], lm[24], lm[26])) / 2,
+    restCond: a => a > 160,   // data p90=165°
+    workCond: a => a < 85,    // data p10=71°
     phaseLabel: { rest: 'Locked Out', work: 'Hinging' },
     checks: [
       {
-        id: 'dl_hip_hinge',
-        getVal: lm => sideAngle(lm, [11,23,25], [12,24,26]),
-        valid: (v, phase) => phase !== 'work' || v < 125,
-        hint: 'Hinge from the hips',
-        bones: [[11,23],[23,25],[12,24],[24,26]],
+        id: 'dl_hip_hinge_l',
+        getVal: lm => calcAngle(lm[11], lm[23], lm[25]),
+        valid: (v, phase) => phase !== 'work' || v < 95,
+        hint: 'Hinge deeper from the hips',
+        bones: [[11,23],[23,25]],
       },
       {
-        id: 'dl_knee_quiet',
-        getVal: lm => sideAngle(lm, [23,25,27], [24,26,28]),
-        valid: (v, phase) => phase !== 'work' || v > 118,
-        hint: 'Keep knees quieter than a squat',
-        bones: [[23,25],[25,27],[24,26],[26,28]],
+        id: 'dl_hip_hinge_r',
+        getVal: lm => calcAngle(lm[12], lm[24], lm[26]),
+        valid: (v, phase) => phase !== 'work' || v < 95,
+        hint: 'Hinge deeper from the hips',
+        bones: [[12,24],[24,26]],
       },
       {
-        id: 'dl_back_line',
-        getVal: lm => sideAngle(lm, [11,23,27], [12,24,28]),
-        valid: v => v > 130,
-        hint: 'Keep torso and hips braced',
-        bones: [[11,23],[23,25],[12,24],[24,26]],
-      },
-    ],
-    displayAngles: [
-      { label: 'Hip Hinge', fn: lm => sideAngle(lm, [11,23,25], [12,24,26]), joint: 23 },
-      { label: 'Knee',      fn: lm => sideAngle(lm, [23,25,27], [24,26,28]), joint: 25 },
-    ],
-  },
-
-  push_up_side: {
-    label:    'Push-up Side',
-    note:     'Side-view preset: evaluate the visible arm and plank line.',
-    getKeyAngle: lm => sideAngle(lm, [11,13,15], [12,14,16]),
-    restCond: a => a > 150,
-    workCond: a => a < 95,
-    phaseLabel: { rest: 'Top Plank', work: 'Lowering' },
-    checks: [
-      {
-        id: 'pu_depth',
-        getVal: lm => sideAngle(lm, [11,13,15], [12,14,16]),
-        valid: (v, phase) => phase !== 'work' || v < 105,
-        hint: 'Lower your chest',
-        bones: [[11,13],[13,15],[12,14],[14,16]],
-      },
-      {
-        id: 'pu_plank',
-        getVal: lm => avgAngle(lm, [11,23,25], [12,24,26]),
-        valid: v => v > 145,
-        hint: 'Keep a straight plank line',
+        id: 'dl_sym',
+        getVal: lm => Math.abs(calcAngle(lm[11],lm[23],lm[25]) - calcAngle(lm[12],lm[24],lm[26])),
+        valid: v => v < 20,
+        hint: 'Hip asymmetry detected',
         bones: [[11,23],[23,25],[12,24],[24,26]],
       },
     ],
     displayAngles: [
-      { label: 'Elbow', fn: lm => sideAngle(lm, [11,13,15], [12,14,16]), joint: 13 },
-      { label: 'Plank', fn: lm => avgAngle(lm, [11,23,25], [12,24,26]), joint: 23 },
+      { label: 'Left Hip',  fn: lm => calcAngle(lm[11],lm[23],lm[25]), joint: 23 },
+      { label: 'Right Hip', fn: lm => calcAngle(lm[12],lm[24],lm[26]), joint: 24 },
     ],
   },
 };

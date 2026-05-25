@@ -2,7 +2,7 @@
 
 > Real-time fitness tracking and AI-assisted coaching. ESP32-S3 (Freenove FNK0085 B, OV2640 140° wide-angle) streams live video over WebSocket → browser runs MediaPipe pose estimation → heuristic rep counting, form checks, and DTW biomechanics scoring. Front-end is a full React SPA ("Aetheris") with a dual-theme design system, local AI plan engine (Kinetic Core), and muscle heatmap analytics. **Raw video never leaves the local network.**
 
-**Status**: `ui-update-test` branch active · v0.3 base · Sprint 4 UI + AI Core in progress
+**Status**: `ui-update-test` branch active · v0.3 · Sprint 4 UI + Bug fixes complete; DTW server pipeline ready, JSX integration pending
 
 **Hardware baseline**: Freenove ESP32-S3-WROOM (N16R8), model **FNK0085 B**, OV2640 140° wide-angle camera. All firmware pin mapping, camera tuning, and calibration notes assume this board unless explicitly stated otherwise.
 
@@ -31,13 +31,14 @@ KineticLife/
 │   ├── src/
 │   │   ├── main.tsx               ← mounts KineticLifeApp
 │   │   └── routes/
-│   │       └── kineticlife-app.jsx  ← main SPA (~7000 lines, all screens)
+│   │       └── kineticlife-app.jsx  ← main SPA (~7490 lines, all screens)
 │   ├── lib/                       ← shared JS modules (used by SPA + static pages)
 │   │   ├── exercise-rules.js      ← angle thresholds, rep state, form checks
 │   │   ├── landmark-smoothing.js  ← EMA display smoothing (α=0.45)
 │   │   ├── pose-renderer.js       ← canvas skeleton + angle annotation
 │   │   └── feedback-effects.js    ← rep particles, scanline, error pulse
 │   ├── index.html                 ← SPA entry (React root)
+│   ├── kinetic-demo.html          ← standalone DTW demo (real server pipeline, dev/test only)
 │   ├── pair.html                  ← WiFi pairing (QR + Soft AP config)
 │   ├── debug.html                 ← ESP32 WS + MediaPipe + lens calibration
 │   ├── demo.html                  ← ESP32-only workout demo (v0.2)
@@ -81,7 +82,9 @@ npm run dev                # http://localhost:5173  → full Aetheris SPA
 npm run build              # production build to dist/
 ```
 
-The SPA (`index.html` → `kineticlife-app.jsx`) is the primary interface. Static HTML pages (`debug.html`, `demo.html`, etc.) are separate development/testing tools served by the same Vite dev server or any static HTTP server.
+The SPA (`index.html` → `kineticlife-app.jsx`) is the primary interface. Static HTML pages (`debug.html`, `demo.html`, `kinetic-demo.html`, etc.) are separate development/testing tools served by the same Vite dev server or any static HTTP server.
+
+> **DTW split**: `kinetic-demo.html` contains the real server DTW pipeline (`computeAllAngles`, `/api/actions`, `/api/templates`, real template reference curves). The main SPA (`kineticlife-app.jsx`) currently uses local heuristic scoring — server DTW integration is the next milestone.
 
 ### Server
 ```bash
@@ -169,6 +172,7 @@ ESP32 clears NVS credentials and reboots to pairing mode.
 | QR parse fails | Use Soft AP; OV2640 140° lens degrades QR reliability |
 | WiFi connect fails | Keep phone screen on; hotspot must be 2.4 GHz |
 | `ws://` refused | Confirm laptop and ESP32 on same hotspot network |
+| Safari shows "streaming…" forever on HTTPS | Safari blocks `ws://` as mixed content on HTTPS pages — open the app over `http://` (e.g. `http://localhost:5173`) or use BLE mode |
 | No pose detected | Ensure full body visible; move 1–2 m from camera |
 | macOS firewall blocks | Run `socketfilterfw --setglobalstate off` |
 

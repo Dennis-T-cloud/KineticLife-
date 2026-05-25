@@ -2387,7 +2387,11 @@ h2.ath-title {
   width: 100%;
   position: relative;
   z-index: 5;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
 }
+.live-root::-webkit-scrollbar { display: none; }
 
 .cam-area {
   aspect-ratio: 3/4;
@@ -2862,6 +2866,9 @@ h2.ath-title {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   display: flex; flex-direction: column; gap: 0.65rem;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
 }
 
 .session-meta {
@@ -5843,12 +5850,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
 
         hudFrame += 1;
 
-        // ── Background — raw feed hidden. Combo mode leaves a HUD motion trail.
         const lsc = (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).skeleton;
-        if (!comboActive) ctx.clearRect(0, 0, W, H);
-        ctx.globalCompositeOperation = "source-over";
-        ctx.fillStyle = comboActive ? lsc.bgCombo : lsc.bg;
-        ctx.fillRect(0, 0, W, H);
 
         // ── MediaPipe inference (skips silently until landmarker ready) ──────
         if (landmarker && smoother && drawSkeleton && exMap) {
@@ -5863,6 +5865,13 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
 
           await _applyDistLUTAsync();
           if (cancelled) { bmp.close(); return; }
+
+          // Clear AFTER the async worker roundtrip so the previous skeleton frame
+          // remains visible during the await — prevents blank-background flicker.
+          if (!comboActive) ctx.clearRect(0, 0, W, H);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.fillStyle = comboActive ? lsc.bgCombo : lsc.bg;
+          ctx.fillRect(0, 0, W, H);
           const result = landmarker.detectForVideo(_undistCanvas, nextMpTs());
           if (result.landmarks?.length) {
             const rawLm    = result.landmarks[0];
@@ -6034,6 +6043,11 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
             drawSkeleton(ctx, vt, displayLm, errorBoneSet, hudOpts);
             if (drawAngle && activeRules?.displayAngles?.length) drawAngle(ctx, vt, displayLm, activeRules, hudOpts);
           }
+        } else {
+          // MP not loaded yet — ensure a dark background is always shown
+          if (!comboActive) ctx.clearRect(0, 0, W, H);
+          ctx.fillStyle = lsc.bg;
+          ctx.fillRect(0, 0, W, H);
         }
 
         bmp.close();
@@ -6092,7 +6106,8 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
     } else if (conn.mode === "wifi" && conn.url) {
       // 50 ms delay avoids React StrictMode double-mount closing a CONNECTING socket.
       const WIFI_CAM = "res=320x240&q=40&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0&vflip=1&hmirror=0";
-      const wsUrl = conn.url.replace(/^http(s?):\/\//i, (_, s) => `ws${s}://`) + "/ws";
+      const wsToken = localStorage.getItem("kl-ws-token") || "";
+      const wsUrl = conn.url.replace(/^http(s?):\/\//i, (_, s) => `ws${s}://`) + "/ws" + (wsToken ? `?token=${wsToken}` : "");
 
       // Latest-frame ref: onmessage just stores the newest blob; rAF drain loop consumes it.
       const latestBlobRef = { current: null };
@@ -6101,7 +6116,17 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
       const wsTimer = setTimeout(() => {
         if (cancelled) return;
         fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
-        sock = new WebSocket(wsUrl);
+        // Safari on HTTPS blocks ws:// as mixed content — surface a clear hint.
+        if (window.location.protocol === "https:" && wsUrl.startsWith("ws://")) {
+          setHint("Safari HTTPS blocks camera (ws://). Use BLE or open the app over HTTP.");
+          return;
+        }
+        try {
+          sock = new WebSocket(wsUrl);
+        } catch (e) {
+          setHint("WebSocket blocked (mixed content). Try BLE or serve app over HTTP.");
+          return;
+        }
         sock.binaryType = "arraybuffer";
         sock.onmessage = ({ data }) => { latestBlobRef.current = new Blob([data], { type: "image/jpeg" }); };
         sock.onerror   = () => { if (!cancelled) console.warn("[LiveScreen] WS error"); };
@@ -6737,6 +6762,35 @@ function ProfileScreen({ profile, muscleStatus, theme }) {
 // ─── SettingsScreen ───────────────────────────────────────────────────────────
 
 function SettingsScreen({ profile, deviceUrl, setDeviceUrl, connMode, setConnMode, theme, setTheme, onSwitchUser }) {
+  const [probeState, setProbeState] = useState("idle"); // "idle" | "checking" | "ok" | "err"
+  const [probeInfo, setProbeInfo]   = useState(null);
+
+  async function probeDevice(url) {
+    const base = (url || "").replace(/\/+$/, "");
+    if (!base) return;
+    setProbeState("checking");
+    setProbeInfo(null);
+    try {
+      const r = await fetch(`${base}/hello`, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      if (d.ws_token) localStorage.setItem("kl-ws-token", d.ws_token);
+      setProbeState("ok");
+      setProbeInfo(`${d.device_id || base} · ${d.cam_model || "camera"} · fw ${d.fw_version || "?"}`);
+    } catch {
+      setProbeState("err");
+      setProbeInfo(null);
+    }
+  }
+
+  // Auto-probe saved address on mount
+  useEffect(() => {
+    if (deviceUrl && deviceUrl.startsWith("http")) probeDevice(deviceUrl);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const probeDot = probeState === "ok" ? "var(--em-b)" : probeState === "err" ? "var(--am-a)" : probeState === "checking" ? "#6b7280" : "transparent";
+
   return (
     <div className="screen-pad">
       <div className="settings-wrap">
@@ -6771,16 +6825,39 @@ function SettingsScreen({ profile, deviceUrl, setDeviceUrl, connMode, setConnMod
         </motion.div>
 
         <motion.div className="glass settings-section" custom={2} variants={panelVariants} initial="hidden" animate="visible">
-          <div className="settings-section-title">WiFi / Debug Config</div>
+          <div className="settings-section-title">WiFi Device</div>
           <div>
-            <label className="ath-field-label" htmlFor="device-url">Device Address</label>
-            <input
-              id="device-url"
-              className="ath-input"
-              value={deviceUrl}
-              onChange={(e) => setDeviceUrl(e.target.value)}
-              placeholder="http://fitcam-xxxxxx.local or IP"
-            />
+            <label className="ath-field-label" htmlFor="device-url">Camera Address</label>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <input
+                id="device-url"
+                className="ath-input"
+                style={{ flex: 1, margin: 0 }}
+                value={deviceUrl}
+                onChange={(e) => { setDeviceUrl(e.target.value); setProbeState("idle"); }}
+                placeholder="http://fitcam-xxxxxx.local or IP"
+              />
+              <button
+                className="mode-btn"
+                style={{ whiteSpace: "nowrap", padding: "0.45rem 0.9rem" }}
+                onClick={() => probeDevice(deviceUrl)}
+                disabled={probeState === "checking"}
+              >
+                {probeState === "checking" ? "…" : "Test"}
+              </button>
+            </div>
+          </div>
+          {/* Connection status */}
+          <div className="settings-row" style={{ marginTop: "4px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: probeDot, display: "inline-block", flexShrink: 0 }} />
+              <span className="settings-sub" style={{ color: probeState === "ok" ? "var(--em-b)" : probeState === "err" ? "var(--am-a)" : undefined }}>
+                {probeState === "idle"     && "Device not checked"}
+                {probeState === "checking" && "Reaching device…"}
+                {probeState === "ok"       && (probeInfo || "Device online")}
+                {probeState === "err"      && `No response — check address and WiFi`}
+              </span>
+            </div>
           </div>
           <div className="settings-row">
             <div>

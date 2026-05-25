@@ -192,9 +192,11 @@ export function createFeedbackEffects({ repNumEl } = {}) {
       }
 
       if (lm && errorBoneSet.size) {
-        const pulse = 0.5 + 0.5 * Math.sin(now / 120);
-        const alpha = reduceMotion ? 0.28 : 0.18 + pulse * 0.28;
-        const width = reduceMotion ? 10 : 9 + pulse * 7;
+        // Fixed width keeps shadowBlur constant so Chrome skips per-frame blur recalculation.
+        // Only alpha pulses (slower cycle) to preserve the visual warning without GPU churn.
+        const pulse = 0.5 + 0.5 * Math.sin(now / 220);
+        const alpha = reduceMotion ? 0.30 : 0.20 + pulse * 0.24;
+        const width = reduceMotion ? 10 : 12;
         for (const key of errorBoneSet) {
           drawBoneGlow(ctx, vidTransform, lm, key, alpha, width, RED);
         }

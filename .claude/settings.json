@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pytest tests/test_templates.py -v)",
+      "Bash(python3 -m py.test tests/test_templates.py -v)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -m unittest discover -s tests -v)",
+      "Bash(git checkout *)",
+      "Bash(node --input-type=module --eval ' *)"
+    ]
+  }
+}
