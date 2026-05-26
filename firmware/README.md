@@ -1,6 +1,6 @@
 # KineticLife Firmware
 
-ESP32-S3 firmware workspace for camera bring-up, WiFi pairing (QR + Soft AP), WebSocket binary streaming, and LED behavior.
+ESP32-S3 firmware workspace for camera bring-up, BLE-first boot mode, WiFi pairing (QR + Soft AP), WebSocket binary streaming, and LED behavior.
 
 ## Hardware Baseline
 
@@ -16,9 +16,29 @@ pio run --target upload
 pio device monitor
 ```
 
+## Boot Mode
+
+The firmware now boots in **BLE mode by default** when no explicit mode is stored in NVS.
+
+Boot mode is stored in NVS under `kl_mode.mode`:
+
+- `ble` → advertise the BLE GATT service and skip WiFi/AP/HTTP/WebSocket startup.
+- `wifi` → use the original WiFi session flow and start HTTP + WebSocket camera streaming.
+
+Mode switching:
+
+```text
+BLE RX command: mode=wifi
+BLE RX command: mode=ble
+WiFi HTTP:      GET http://<ESP32-IP>/mode?set=wifi
+WiFi HTTP:      GET http://<ESP32-IP>/mode?set=ble
+```
+
+Physical fallback: press reset twice within the 8 s boot window to clear WiFi credentials and force `mode=wifi`, which returns the device to WiFi pairing/recovery.
+
 ## WiFi Pairing
 
-The firmware stores WiFi credentials in NVS only as the active demo session. There is no default hotspot fallback. Boot behavior:
+In `mode=wifi`, the firmware stores WiFi credentials in NVS only as the active demo session. There is no default hotspot fallback. Boot behavior:
 
 - NVS has an active session → connect to WiFi, start HTTP server + WebSocket.
 - NVS is empty → enter Pairing Mode (blue LED flashing), offer **two paths** simultaneously:
@@ -93,17 +113,17 @@ Firmware uses **ESPAsyncWebServer + AsyncWebSocket** (non-blocking). Transport:
 
 REST endpoints: `GET /hello`, `GET /status`, `GET /capture`, `GET|POST /cam`, `GET|POST /end`
 
-## Optional BLE Throughput Test
+## Default BLE Mode
 
-ESP32-S3 supports BLE, not Bluetooth Classic. The BLE code is isolated behind a separate PlatformIO environment so the normal WiFi/AP camera firmware stays unchanged at runtime. The BLE test firmware waits briefly for OV2640 power stabilization, initializes the camera in low-resolution snapshot mode, verifies one captured frame, then advertises the GATT service. It intentionally skips WiFi/AP, HTTP, and WebSocket startup.
+ESP32-S3 supports BLE, not Bluetooth Classic. BLE mode waits briefly for OV2640 power stabilization, initializes the camera in low-resolution snapshot mode, verifies one captured frame when possible, then advertises the GATT service. It intentionally skips WiFi/AP, HTTP, and WebSocket startup.
 
 ```bash
 pio run
-pio run -e freenove_esp32s3_wroom_n16r8_ble_test --target upload
+pio run --target upload
 pio device monitor
 ```
 
-When flashed with the BLE test environment, the device advertises as:
+In BLE mode, the device advertises as:
 
 ```text
 KineticLife-BLE-<mac6>
@@ -120,6 +140,8 @@ GATT contract:
 Control commands written as UTF-8 text:
 
 ```text
+mode=wifi
+mode=ble
 size=<8..180>
 gap=<4..100>
 start=<1000..60000>
