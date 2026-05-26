@@ -1231,6 +1231,136 @@ const css = `
   color: var(--am-b);
 }
 
+/* ── Sunset: Nexus Social ── */
+/* Stage: warm milky-white glass — same feel as other panels */
+[data-theme="sunset"] .nexus-stage {
+  background:
+    radial-gradient(circle at 50% 52%, rgba(232,40,94,0.09), transparent 38%),
+    radial-gradient(circle at 18% 24%, rgba(255,95,31,0.07), transparent 30%),
+    radial-gradient(circle at 80% 70%, rgba(255,149,0,0.06), transparent 26%),
+    rgba(255,228,200,0.72);
+  border-color: rgba(160,64,16,0.18);
+}
+/* Orbit ring */
+[data-theme="sunset"] .nexus-stage::after {
+  border-color: rgba(140,50,10,0.22);
+}
+/* Ambient pulse */
+[data-theme="sunset"] .nexus-stage-pulse {
+  background: radial-gradient(circle at 50% 50%,
+    rgba(232,40,94,0.06), transparent 52%);
+}
+
+/* ── Lines: darker + higher-opacity animation on light bg ── */
+[data-theme="sunset"] .nexus-links line {
+  stroke: rgba(100,30,8,0.55);
+  animation: nexus-link-flow-su 4.8s ease-in-out infinite;
+}
+@keyframes nexus-link-flow-su {
+  0%, 100% { stroke-dashoffset: 0;   opacity: 0.60; }
+  50%       { stroke-dashoffset: -12; opacity: 1;    }
+}
+[data-theme="sunset"] .nexus-links line.active {
+  stroke: rgba(180,20,55,0.92);
+  stroke-width: 0.7;
+  filter: drop-shadow(0 0 4px rgba(200,20,60,0.50));
+}
+
+/* ── Node glow blob: opaque enough to show on light bg ── */
+[data-theme="sunset"] .nexus-node::before {
+  background: color-mix(in srgb, var(--mood) 45%, rgba(60,15,5,0.20));
+  filter: blur(12px);
+  opacity: 0.82;
+}
+[data-theme="sunset"] .nexus-node.active::before,
+[data-theme="sunset"] .nexus-node.mine::before {
+  opacity: 1;
+  animation: none;
+}
+/* Shining node: stronger blob */
+[data-theme="sunset"] .nexus-node.shining::before {
+  background: color-mix(in srgb, var(--mood) 58%, rgba(60,15,5,0.20));
+}
+/* Needs-boost: dim with slight warm cast */
+[data-theme="sunset"] .nexus-node.needs-boost .nexus-avatar-wrap {
+  opacity: 0.70;
+  filter: saturate(0.55) brightness(0.92);
+}
+
+/* ── Avatar ring: visible border + dark depth shadow ── */
+[data-theme="sunset"] .nexus-avatar-wrap {
+  border-width: 2.5px;
+  border-color: color-mix(in srgb, var(--mood) 80%, rgba(60,15,5,0.30));
+  box-shadow: 0 2px 10px rgba(60,20,5,0.22),
+              0 0 12px color-mix(in srgb, var(--mood) 28%, transparent);
+}
+
+/* ── Tap ring: thicker, fully opaque mood color ── */
+[data-theme="sunset"] .nexus-node::after {
+  border: 2px solid color-mix(in srgb, var(--mood) 90%, rgba(60,15,5,0.25));
+}
+
+/* ── Burst ring: higher-opacity on light bg ── */
+[data-theme="sunset"] .nexus-node-burst.active {
+  animation: nexus-burst-ring-su 1.8s ease-out forwards;
+}
+@keyframes nexus-burst-ring-su {
+  0%   { box-shadow: 0 0 0 0   color-mix(in srgb, var(--mood) 80%, rgba(0,0,0,0.20)); opacity: 1; }
+  14%  { box-shadow: 0 0 0 13px color-mix(in srgb, var(--mood) 70%, rgba(0,0,0,0.15)); }
+  100% { box-shadow: 0 0 0 26px color-mix(in srgb, var(--mood) 0%,  transparent);     opacity: 0; }
+}
+
+/* ── Resonate button fire flash: stronger on light bg ── */
+[data-theme="sunset"] .nexus-resonate.firing {
+  animation: nexus-resonate-fire-su 0.52s ease-out;
+}
+@keyframes nexus-resonate-fire-su {
+  0%   { transform: scale(1); }
+  22%  { transform: scale(0.95);
+         box-shadow: 0 0 22px 8px color-mix(in srgb, var(--mood) 55%, rgba(0,0,0,0.15)); }
+  100% { transform: scale(1);
+         box-shadow: 0 0 10px 3px color-mix(in srgb, var(--mood) 25%, transparent); }
+}
+
+/* ── Text ── */
+[data-theme="sunset"] .nexus-node-name {
+  color: var(--text);
+  text-shadow: 0 1px 5px rgba(255,228,200,0.85);
+}
+[data-theme="sunset"] .nexus-node-meta { color: var(--text-m); }
+
+/* ── Header & back button ── */
+[data-theme="sunset"] .nexus-back {
+  border-color: rgba(160,64,16,0.22);
+  color: rgba(80,38,14,0.75);
+  background: rgba(255,225,200,0.40);
+}
+/* ── Detail panel ── */
+[data-theme="sunset"] .nexus-detail-name { color: rgba(32,14,6,0.92); }
+[data-theme="sunset"] .nexus-detail-sub  { color: rgba(80,38,14,0.72); }
+[data-theme="sunset"] .nexus-mood-line   { color: rgba(80,38,14,0.65); }
+/* ── Resonate button ── */
+[data-theme="sunset"] .nexus-resonate {
+  border-color: color-mix(in srgb, var(--mood) 52%, rgba(120,40,10,0.25));
+  color: rgba(32,14,6,0.88);
+}
+[data-theme="sunset"] .nexus-resonate.boost-mode {
+  border-color: rgba(200,100,0,0.60);
+  background: rgba(255,149,0,0.18);
+  color: rgba(32,14,6,0.88);
+}
+/* ── Mood chip ── */
+[data-theme="sunset"] .mood-chip {
+  border-color: rgba(160,64,16,0.18);
+  background: rgba(255,215,180,0.28);
+  color: rgba(60,28,8,0.82);
+}
+[data-theme="sunset"] .mood-chip.active {
+  border-color: var(--mood);
+  background: color-mix(in srgb, var(--mood) 20%, rgba(255,220,190,0.35));
+}
+[data-theme="sunset"] .nexus-boost-tag { color: #B04800; }
+
 html, body { background: var(--base); overflow: hidden; height: 100svh; }
 
 body {
@@ -7669,12 +7799,12 @@ function NexusCheckInScreen({ checkins, onBack }) {
                 animationDelay: `${index * 0.15}s`,
                 ...(!isActive ? {
                   strokeWidth: (0.22 + supportNeed * 0.95).toFixed(2),
+                  // low-DTW lines: amber override works in both themes
+                  // high-DTW lines: NO inline stroke — let CSS theme rule control color
                   ...(node.dtwAvg < 82 ? {
                     stroke: `rgba(255,184,0,${(0.18 + supportNeed * 0.58).toFixed(2)})`,
                     strokeDasharray: "2 3",
-                  } : {
-                    stroke: `rgba(0,219,233,${(0.1 + (node.dtwAvg / 100) * 0.18).toFixed(2)})`,
-                  }),
+                  } : {}),
                 } : {}),
               };
               return (
