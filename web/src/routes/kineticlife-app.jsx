@@ -98,6 +98,7 @@ const AI_PLAN = [
 const AI_CORE_PROFILE_KEY = "ath_ai_core_profile";
 const AI_MESSAGES_KEY = "ath_ai_messages";
 const AI_UNREAD_KEY = "ath_ai_unread";
+const NEXUS_CHECKINS_KEY = "ath_nexus_checkins";
 const ACTIVE_USER_KEY = "ath_active_user";
 const KNOWN_USERS_KEY = "ath_known_users";
 const PROFILE_KEY = "ath_profile";
@@ -125,6 +126,24 @@ const AI_CORE_EXERCISE_RULES = {
   bicep_curl: { group: "Arms", baseSets: 3, reps: 12, risk: { elbow: 60, wrist: 25 } },
   right_bicep_curl: { group: "Arms", baseSets: 3, reps: 12, risk: { elbow: 60, wrist: 25 } },
 };
+
+const NEXUS_MOODS = [
+  { id: "tired", label: "Tired", tone: "#7C8CFF", face: "tired" },
+  { id: "sleepy", label: "Sleepy", tone: "#A58BFF", face: "sleepy" },
+  { id: "satisfied", label: "Good", tone: "#00FF9D", face: "satisfied" },
+  { id: "happy", label: "Happy", tone: "#00DBE9", face: "happy" },
+  { id: "laughing", label: "Pumped", tone: "#FFB800", face: "laughing" },
+];
+
+const NEXUS_MOOD_BY_ID = Object.fromEntries(NEXUS_MOODS.map((mood) => [mood.id, mood]));
+
+const NEXUS_MOCK_CHECKINS = [
+  { id: "mock_0x4f", name: "Athlete_0x4F", exerciseId: "lateral_raise", reps: 14, dtwAvg: 91, mood: "satisfied", resonance: 8, x: 18, y: 30 },
+  { id: "mock_0xa2", name: "Athlete_0xA2", exerciseId: "push_up_side", reps: 18, dtwAvg: 84, mood: "tired", resonance: 5, x: 75, y: 24 },
+  { id: "mock_0xc9", name: "Athlete_0xC9", exerciseId: "deadlift_side", reps: 9, dtwAvg: 88, mood: "happy", resonance: 11, x: 82, y: 63 },
+  { id: "mock_0x71", name: "Athlete_0x71", exerciseId: "squat", reps: 16, dtwAvg: 93, mood: "laughing", resonance: 15, x: 28, y: 72 },
+  { id: "mock_0xbd", name: "Athlete_0xBD", exerciseId: "bicep_curl", reps: 12, dtwAvg: 79, mood: "sleepy", resonance: 3, x: 52, y: 18 },
+];
 
 // large = 2-3 days rest, small = 1 day rest
 const EXERCISE_MUSCLE_CLASS = {
@@ -339,6 +358,24 @@ function saveAiUnread(value, name = getActiveUserName()) {
   } catch {}
 }
 
+function loadNexusCheckins(name = getActiveUserName()) {
+  const userName = String(name ?? "").trim();
+  try {
+    const raw = userName ? localStorage.getItem(userStorageKey(NEXUS_CHECKINS_KEY, userName)) : null;
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveNexusCheckins(checkins, name = getActiveUserName()) {
+  try {
+    const userName = String(name ?? "").trim();
+    if (userName) localStorage.setItem(userStorageKey(NEXUS_CHECKINS_KEY, userName), JSON.stringify(checkins.slice(0, 6)));
+  } catch {}
+}
+
 function loadUserValue(baseKey, fallback, name = getActiveUserName()) {
   const userName = String(name ?? "").trim();
   try {
@@ -389,6 +426,7 @@ function clearLegacySingleUserKeys() {
       AI_CORE_PROFILE_KEY,
       AI_MESSAGES_KEY,
       AI_UNREAD_KEY,
+      NEXUS_CHECKINS_KEY,
       DEVICE_URL_KEY,
       CONN_MODE_KEY,
       THEME_KEY,
@@ -2140,12 +2178,13 @@ h2.ath-title {
   flex: 1;
   display: flex; flex-direction: column;
   align-items: center; gap: 4px;
-  padding: 0.4rem 0.5rem;
+  padding: 0.4rem 0.25rem;
   background: none; border: none;
   cursor: pointer;
   transition: opacity 0.15s;
   color: var(--text-d);
   position: relative;
+  min-width: 0;
 }
 
 .nav-item.active { color: var(--em-b); }
@@ -3186,6 +3225,430 @@ h2.ath-title {
   font-size: 0.85rem;
   line-height: 1.65;
   color: var(--text-m);
+}
+
+.nexus-share-panel {
+  padding: 1rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.nexus-share-title {
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.nexus-share-sub {
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-m);
+}
+
+.mood-picker {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.38rem;
+}
+
+.mood-chip {
+  min-width: 0;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+  color: var(--text-m);
+  border-radius: 12px;
+  padding: 0.46rem 0.24rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.24rem;
+  font-family: var(--font);
+  font-size: 0.68rem;
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.mood-chip.active {
+  color: var(--text);
+  border-color: var(--mood);
+  background: color-mix(in srgb, var(--mood) 15%, transparent);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--mood) 28%, transparent);
+}
+
+.mood-chip:active { transform: scale(0.96); }
+.mood-chip .mood-avatar { width: 28px; height: 28px; }
+.nexus-share-btn { padding: 0.82rem 1rem; font-size: 0.76rem; }
+
+/* ── Nexus Check-ins ── */
+.nexus-wrap {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  padding: 1.5rem 0 2rem;
+  gap: 0.85rem;
+  overflow-y: auto;
+}
+
+.nexus-header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding-top: 0.5rem;
+}
+
+.nexus-back {
+  flex: 0 0 auto;
+  border: 1px solid var(--gb);
+  color: var(--text-m);
+  background: rgba(255,255,255,0.04);
+  border-radius: 999px;
+  padding: 0.48rem 0.75rem;
+  font-family: var(--font);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.nexus-stage {
+  min-height: 430px;
+  height: min(58svh, 520px);
+  border-radius: 22px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 52%, rgba(var(--em-a-rgb),0.18), transparent 34%),
+    radial-gradient(circle at 18% 24%, rgba(0,122,255,0.12), transparent 28%),
+    radial-gradient(circle at 82% 70%, rgba(255,184,0,0.10), transparent 26%),
+    rgba(10,12,16,0.36);
+}
+
+.nexus-stage::after {
+  content: "";
+  position: absolute;
+  inset: 14%;
+  border: 1px dashed rgba(255,255,255,0.08);
+  border-radius: 48%;
+  animation: nexus-orbit 18s linear infinite;
+  pointer-events: none;
+}
+
+.nexus-links {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.nexus-links line {
+  stroke: rgba(var(--em-a-rgb),0.18);
+  stroke-width: 0.32;
+  stroke-linecap: round;
+  stroke-dasharray: 3 4;
+  animation: nexus-link-flow 4.8s ease-in-out infinite;
+}
+
+.nexus-links line.active {
+  stroke: rgba(var(--em-b-rgb),0.66);
+  stroke-width: 0.55;
+  filter: drop-shadow(0 0 8px rgba(var(--em-b-rgb),0.75));
+}
+
+.nexus-node {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+  width: 96px;
+  min-height: 104px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  animation: nexus-float 4.8s ease-in-out infinite;
+}
+
+.nexus-node::before {
+  content: "";
+  position: absolute;
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--mood) 18%, transparent);
+  filter: blur(18px);
+  opacity: 0.75;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  animation: nexus-breathe-glow 3.8s ease-in-out infinite;
+}
+
+.nexus-node.active::before,
+.nexus-node.mine::before {
+  opacity: 1;
+  transform: scale(1.22);
+  animation: none;
+}
+
+.nexus-node::after {
+  content: "";
+  position: absolute;
+  width: 60px; height: 60px;
+  border-radius: 50%;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%) scale(0);
+  border: 1.5px solid color-mix(in srgb, var(--mood) 80%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+.nexus-node.tapping::after {
+  animation: nexus-tap-ring 0.42s ease-out forwards;
+}
+@keyframes nexus-tap-ring {
+  0%   { transform: translate(-50%, -50%) scale(0.5); opacity: 0.9; }
+  100% { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
+}
+@keyframes nexus-breathe-glow {
+  0%, 100% { transform: scale(1);    opacity: 0.6; }
+  50%       { transform: scale(1.35); opacity: 0.92; }
+}
+
+.nexus-node .mood-avatar {
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--mood) 58%, transparent));
+}
+
+.nexus-node-name,
+.nexus-node-meta {
+  position: relative;
+  z-index: 1;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 8px rgba(0,0,0,0.72);
+}
+
+.nexus-node-name {
+  margin-top: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.nexus-node-meta {
+  margin-top: 0.1rem;
+  font-family: var(--mono);
+  font-size: 0.56rem;
+  color: var(--text-m);
+}
+
+.nexus-detail {
+  padding: 1rem;
+  display: grid;
+  gap: 0.8rem;
+}
+
+.nexus-detail-main {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.nexus-detail-name {
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.nexus-detail-sub {
+  margin-top: 0.22rem;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--text-m);
+}
+
+.nexus-mood-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-m);
+}
+
+.nexus-resonate {
+  border: 1px solid color-mix(in srgb, var(--mood) 44%, transparent);
+  background: color-mix(in srgb, var(--mood) 13%, rgba(255,255,255,0.02));
+  color: var(--text);
+  border-radius: 12px;
+  padding: 0.82rem 1rem;
+  font-family: var(--font);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--mood) 20%, transparent);
+}
+
+.mood-avatar {
+  display: block;
+  overflow: visible;
+}
+
+/* ── Nexus DiceBear avatar ── */
+.nexus-avatar-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--mood) 58%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--mood) 36%, transparent),
+              inset 0 0 8px color-mix(in srgb, var(--mood) 12%, transparent);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.nexus-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+  filter: saturate(1.15);
+}
+.nexus-avatar-dot {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--mood);
+  border: 2px solid rgba(3,5,8,0.9);
+  box-shadow: 0 0 6px var(--mood);
+}
+
+@keyframes nexus-orbit {
+  0% { transform: rotate(0deg) scale(1); opacity: 0.45; }
+  50% { transform: rotate(180deg) scale(1.08); opacity: 0.72; }
+  100% { transform: rotate(360deg) scale(1); opacity: 0.45; }
+}
+
+@keyframes nexus-link-flow {
+  0%, 100% { stroke-dashoffset: 0; opacity: 0.45; }
+  50% { stroke-dashoffset: -12; opacity: 0.86; }
+}
+
+@keyframes nexus-float {
+  0%, 100% { margin-top: 0; }
+  50% { margin-top: -10px; }
+}
+
+/* ── DTW-based node tiers ── */
+/* High performer: full glow */
+.nexus-node.shining .nexus-avatar-wrap {
+  box-shadow: 0 0 22px color-mix(in srgb, var(--mood) 52%, transparent),
+              inset 0 0 10px color-mix(in srgb, var(--mood) 18%, transparent);
+}
+.nexus-node.shining::before {
+  background: color-mix(in srgb, var(--mood) 26%, transparent);
+}
+/* Low performer: dimmed, desaturated */
+.nexus-node.needs-boost .nexus-avatar-wrap {
+  opacity: 0.68;
+  filter: saturate(0.55);
+}
+.nexus-node.needs-boost::before {
+  opacity: 0.42;
+  background: color-mix(in srgb, var(--mood) 10%, transparent);
+}
+
+/* Amber support badge on needy nodes */
+.nexus-boost-badge {
+  position: absolute; top: -3px; right: -3px;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: #FFB800;
+  border: 2px solid rgba(3,5,8,0.92);
+  box-shadow: 0 0 8px rgba(255,184,0,0.75);
+  animation: nexus-boost-pulse 2.1s ease-in-out infinite;
+  z-index: 5; pointer-events: none;
+}
+@keyframes nexus-boost-pulse {
+  0%, 100% { transform: scale(1);   opacity: 0.8; }
+  50%       { transform: scale(1.35); opacity: 1;   }
+}
+
+/* Support-need label in detail panel */
+.nexus-boost-tag {
+  display: inline-block;
+  margin-left: 0.45rem;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #FFB800;
+}
+
+/* Resonance burst ring overlay */
+.nexus-node-burst {
+  position: absolute; inset: -12px;
+  border-radius: 50%; pointer-events: none; z-index: 3;
+}
+.nexus-node-burst.active {
+  animation: nexus-burst-ring 1.8s ease-out forwards;
+}
+@keyframes nexus-burst-ring {
+  0%   { box-shadow: 0 0 0 0   color-mix(in srgb, var(--mood) 70%, transparent); opacity: 1; }
+  14%  { box-shadow: 0 0 0 14px color-mix(in srgb, var(--mood) 60%, transparent); }
+  100% { box-shadow: 0 0 0 28px color-mix(in srgb, var(--mood) 0%,  transparent); opacity: 0; }
+}
+
+/* Stage ambient breathing div */
+.nexus-stage-pulse {
+  position: absolute; inset: 0;
+  border-radius: inherit; pointer-events: none; z-index: 0;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(0,219,233,0.09), transparent 52%);
+  animation: nexus-ambient-breathe 5.4s ease-in-out infinite;
+}
+@keyframes nexus-ambient-breathe {
+  0%, 100% { opacity: 0.42; transform: scale(0.88); }
+  50%       { opacity: 1;    transform: scale(1.12); }
+}
+
+/* Resonate button firing flash */
+.nexus-resonate.firing {
+  animation: nexus-resonate-fire 0.52s ease-out;
+}
+.nexus-resonate.boost-mode {
+  border-color: color-mix(in srgb, #FFB800 50%, transparent);
+  background: color-mix(in srgb, #FFB800 14%, rgba(255,255,255,0.02));
+  box-shadow: 0 0 22px color-mix(in srgb, #FFB800 24%, transparent);
+}
+@keyframes nexus-resonate-fire {
+  0%   { transform: scale(1); }
+  22%  { transform: scale(0.95);
+         box-shadow: 0 0 30px 10px color-mix(in srgb, var(--mood) 60%, transparent); }
+  100% { transform: scale(1);
+         box-shadow: 0 0 18px  4px color-mix(in srgb, var(--mood) 22%, transparent); }
+}
+
+@media (max-width: 420px) {
+  .mood-picker { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.25rem; }
+  .mood-chip { font-size: 0.62rem; padding: 0.42rem 0.16rem; }
+  .nexus-stage { min-height: 390px; height: 54svh; }
+  .nexus-node { width: 82px; }
+  .nexus-node-name, .nexus-node-meta { max-width: 82px; }
+  .nexus-node-name { font-size: 0.62rem; }
 }
 
 /* ── Profile Screen ── */
@@ -4852,27 +5315,44 @@ function MuscleBodyMap({
 
 function JourneyPanel({ profile }) {
   const sessions = profile?.sessionsCount ?? 0;
+  const form = profile?.averageForm ?? 0;
   const stages = [
-    { label: "Seed", at: 0, copy: "Initialize profile" },
-    { label: "Baseline", at: 3, copy: "Capture first form pattern" },
-    { label: "Rhythm", at: 8, copy: "Build weekly consistency" },
-    { label: "Control", at: 16, copy: "Reduce problem vectors" },
-    { label: "Mastery", at: 28, copy: "Stabilize advanced load" },
+    { label: "Seed",     at: 0,  formReq: 0,  copy: "Initialize profile" },
+    { label: "Baseline", at: 3,  formReq: 0,  copy: "Complete first sessions" },
+    { label: "Rhythm",   at: 8,  formReq: 50, copy: "Build consistency · 50% form" },
+    { label: "Control",  at: 16, formReq: 65, copy: "Refine movement · 65% form" },
+    { label: "Mastery",  at: 28, formReq: 78, copy: "Advanced load · 78% form" },
   ];
-  const activeIndex = stages.reduce((acc, stage, idx) => (sessions >= stage.at ? idx : acc), 0);
+  const activeIndex = stages.reduce(
+    (acc, stage, idx) => (sessions >= stage.at && form >= stage.formReq ? idx : acc), 0
+  );
+  const isMax = activeIndex === stages.length - 1;
   const nextStage = stages[Math.min(activeIndex + 1, stages.length - 1)];
-  const remaining = Math.max(0, nextStage.at - sessions);
+  const sessionsLeft = Math.max(0, nextStage.at - sessions);
+  const formLeft = Math.max(0, nextStage.formReq - form);
+  const subText = isMax
+    ? "Peak phase reached"
+    : sessionsLeft > 0 && formLeft > 0
+      ? `${sessionsLeft} sessions · +${formLeft}% form → ${nextStage.label}`
+      : sessionsLeft > 0
+        ? `${sessionsLeft} more sessions → ${nextStage.label}`
+        : formLeft > 0
+          ? `Avg form needs +${formLeft}% → ${nextStage.label}`
+          : `${nextStage.label} unlocked`;
 
   return (
     <motion.div className="glass journey-card" custom={6} variants={panelVariants} initial="hidden" animate="visible">
       <div className="journey-head">
         <div>
           <div className="journey-title">Journey Progress</div>
-          <div className="journey-sub">
-            {remaining > 0 ? `${remaining} sessions to ${nextStage.label}` : "Current phase stabilized"}
+          <div className="journey-sub">{subText}</div>
+        </div>
+        <div className="journey-score" style={{ textAlign: "right" }}>
+          <div>{sessions}<span style={{ fontSize: "0.6rem", opacity: 0.65, marginLeft: 2 }}>S</span></div>
+          <div style={{ fontSize: "0.68rem", color: form >= 65 ? "var(--em-b)" : "var(--text-m)", marginTop: "0.1rem" }}>
+            {form}% form
           </div>
         </div>
-        <div className="journey-score">{sessions} S</div>
       </div>
       <div className="journey-stream">
         {stages.map((stage, idx) => (
@@ -6510,7 +6990,8 @@ function analysisAdvice(dtw, exerciseId) {
     : "Depth and alignment need work. Slow down the descent and keep knees tracking over toes.";
 }
 
-function AnalysisScreen({ result, onNewSet, onDone, theme }) {
+function AnalysisScreen({ result, onNewSet, onDone, onShareCheckIn, theme }) {
+  const [selectedMood, setSelectedMood] = useState("satisfied");
   const accuracy = Math.round((result?.dtw ?? 0.74) * 100);
   const dtwOk = accuracy >= 70;
   const radius = 40;
@@ -6668,6 +7149,30 @@ function AnalysisScreen({ result, onNewSet, onDone, theme }) {
         <motion.div className="glass advice-glass" custom={6} variants={panelVariants} initial="hidden" animate="visible">
           <div className="advice-label">Coach Feedback</div>
           <div className="advice-text">{analysisAdvice(result?.dtw ?? 0.74, result?.exerciseId)}</div>
+        </motion.div>
+
+        <motion.div className="glass nexus-share-panel" custom={7} variants={panelVariants} initial="hidden" animate="visible">
+          <div>
+            <div className="nexus-share-title">Nexus Check-in</div>
+            <div className="nexus-share-sub">Share today's progress as an anonymous support signal.</div>
+          </div>
+          <div className="mood-picker" aria-label="Choose today's mood">
+            {NEXUS_MOODS.map((mood) => (
+              <button
+                key={mood.id}
+                className={`mood-chip ${selectedMood === mood.id ? "active" : ""}`}
+                style={{ "--mood": mood.tone }}
+                onClick={() => setSelectedMood(mood.id)}
+                type="button"
+              >
+                <MoodAvatar mood={mood.id} size={28} />
+                <span>{mood.label}</span>
+              </button>
+            ))}
+          </div>
+          <button className="btn-init nexus-share-btn" onClick={() => onShareCheckIn?.(selectedMood)}>
+            Share Check-in
+          </button>
         </motion.div>
 
         <div style={{ display: "flex", gap: "0.6rem" }}>
@@ -7028,6 +7533,256 @@ function CoreScreen({ messages, onSend, onExecutePlan, onQuickPlan }) {
   );
 }
 
+// ─── Nexus Check-ins ─────────────────────────────────────────────────────────
+
+function NexusNodeAvatar({ id, mood = "satisfied", size = 58, isMine = false }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const seed = String(id ?? "athlete")
+    .replace("mock_", "")
+    .replace(/^me_\d+$/, isMine ? "you" : "athlete");
+  const url = `https://api.dicebear.com/9.x/thumbs/svg?seed=${encodeURIComponent(seed)}&backgroundColor=transparent`;
+  const moodColor = NEXUS_MOOD_BY_ID[mood]?.tone ?? "#00FF9D";
+  if (imgFailed) return <MoodAvatar mood={mood} size={size} />;
+  return (
+    <span
+      className="nexus-avatar-wrap"
+      style={{ "--mood": moodColor, width: `${size}px`, height: `${size}px` }}
+    >
+      <img
+        src={url}
+        width={size}
+        height={size}
+        className="nexus-avatar-img"
+        onError={() => setImgFailed(true)}
+        alt=""
+        aria-hidden="true"
+      />
+      <span className="nexus-avatar-dot" />
+    </span>
+  );
+}
+
+function MoodAvatar({ mood = "satisfied", size = 54, className = "" }) {
+  const meta = NEXUS_MOOD_BY_ID[mood] ?? NEXUS_MOOD_BY_ID.satisfied;
+  const face = meta.face;
+  const mouth = face === "laughing"
+    ? <path d="M18 31c3.2 4 8.8 4 12 0" />
+    : face === "happy"
+    ? <path d="M18 31c3 2.8 8.5 2.8 12 0" />
+    : face === "satisfied"
+    ? <path d="M19 31c2.5 1.6 7.5 1.6 10 0" />
+    : face === "sleepy"
+    ? <path d="M19 32h10" />
+    : <path d="M19 33c2.4-1.2 7.6-1.2 10 0" />;
+  const eyes = face === "sleepy"
+    ? <><path d="M16 23h6" /><path d="M26 23h6" /></>
+    : face === "laughing"
+    ? <><path d="M16 22l5 3" /><path d="M32 22l-5 3" /></>
+    : <><circle cx="19" cy="23" r="1.6" /><circle cx="29" cy="23" r="1.6" /></>;
+
+  return (
+    <svg className={`mood-avatar ${className}`} width={size} height={size} viewBox="0 0 48 48" fill="none" style={{ "--mood": meta.tone }}>
+      <circle cx="24" cy="24" r="18" fill="rgba(255,255,255,0.08)" stroke="var(--mood)" strokeWidth="2" />
+      <path d="M15 39c2.5-5 15.5-5 18 0" stroke="var(--mood)" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
+      <g stroke="var(--mood)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {eyes}
+        {mouth}
+      </g>
+      {face === "tired" && <path d="M34 26c2 2 2 4 0 6" stroke="var(--mood)" strokeWidth="1.7" strokeLinecap="round" opacity="0.8" />}
+    </svg>
+  );
+}
+
+function NexusCheckInScreen({ checkins, onBack }) {
+  const [selectedId, setSelectedId] = useState(() => checkins[0]?.id ?? NEXUS_MOCK_CHECKINS[0].id);
+  const [boosts, setBoosts] = useState({});
+  const [tapId, setTapId] = useState(null);
+  const [resonateKey, setResonateKey] = useState(0);
+  const [resonatingTo, setResonatingTo] = useState(null);
+  const [burstIds, setBurstIds] = useState({});
+  const [btnFiring, setBtnFiring] = useState(false);
+
+  const owned = checkins.map((item, index) => ({
+    ...item,
+    isMine: true,
+    x: index === 0 ? 50 : 40 + index * 8,
+    y: index === 0 ? 52 : 58 + index * 4,
+  }));
+  const nodes = [...owned, ...NEXUS_MOCK_CHECKINS];
+  const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
+  const selectedExercise = exerciseById(selected?.exerciseId);
+  const selectedMood = NEXUS_MOOD_BY_ID[selected?.mood] ?? NEXUS_MOOD_BY_ID.satisfied;
+  const selectedResonance = (selected?.resonance ?? 0) + (boosts[selected?.id] ?? 0);
+  const mine = nodes.find((node) => node.isMine) ?? nodes[0];
+
+  useEffect(() => {
+    if (checkins[0]?.id) setSelectedId(checkins[0].id);
+  }, [checkins]);
+
+  function handleNodeClick(id) {
+    setSelectedId(id);
+    setTapId(id);
+    setTimeout(() => setTapId(null), 450);
+  }
+
+  function resonate(id) {
+    const target = nodes.find((n) => n.id === id);
+    setBoosts((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+    setBtnFiring(true);
+    setTimeout(() => setBtnFiring(false), 600);
+    if (target && mine) {
+      setResonatingTo(target);
+      setResonateKey((k) => k + 1);
+      setTimeout(() => {
+        setResonatingTo(null);
+        setBurstIds((prev) => ({ ...prev, [id]: true }));
+        setTimeout(() => setBurstIds((prev) => { const n = { ...prev }; delete n[id]; return n; }), 2000);
+      }, 700);
+    }
+  }
+
+  return (
+    <div className="screen-pad">
+      <div className="nexus-wrap">
+        <div className="nexus-header">
+          <button className="nexus-back" type="button" onClick={onBack}>Back</button>
+          <div>
+            <div className="sys-label-em">Mutual Check-ins</div>
+            <h2 className="ath-title" style={{ fontSize: "1.3rem", marginTop: "0.25rem" }}>Nexus Room</h2>
+          </div>
+        </div>
+
+        <motion.div className="glass nexus-stage" variants={panelVariants} initial="hidden" animate="visible">
+          <div className="nexus-stage-pulse" />
+
+          <svg className="nexus-links" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <defs>
+              <filter id="nexus-glow-filter" x="-120%" y="-120%" width="340%" height="340%">
+                <feGaussianBlur stdDeviation="2.2" result="blur"/>
+                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+            {nodes.filter((node) => node.id !== mine?.id).map((node, index) => {
+              const isActive = node.id === selected?.id;
+              const supportNeed = Math.max(0, 1 - (node.dtwAvg ?? 100) / 100);
+              const lineStyle = {
+                animationDelay: `${index * 0.15}s`,
+                ...(!isActive ? {
+                  strokeWidth: (0.22 + supportNeed * 0.95).toFixed(2),
+                  ...(node.dtwAvg < 82 ? {
+                    stroke: `rgba(255,184,0,${(0.18 + supportNeed * 0.58).toFixed(2)})`,
+                    strokeDasharray: "2 3",
+                  } : {
+                    stroke: `rgba(0,219,233,${(0.1 + (node.dtwAvg / 100) * 0.18).toFixed(2)})`,
+                  }),
+                } : {}),
+              };
+              return (
+                <line
+                  key={node.id}
+                  x1={mine?.x ?? 50} y1={mine?.y ?? 52}
+                  x2={node.x} y2={node.y}
+                  className={isActive ? "active" : ""}
+                  style={lineStyle}
+                />
+              );
+            })}
+            {resonatingTo && mine && (
+              <g key={resonateKey} filter="url(#nexus-glow-filter)">
+                <circle r="1.8" fill={resonatingTo.dtwAvg < 82 ? "#FFB800" : "#00FF9D"}>
+                  <animateMotion
+                    dur="0.68s" fill="freeze"
+                    path={`M${mine.x},${mine.y} L${resonatingTo.x},${resonatingTo.y}`}
+                  />
+                  <animate attributeName="r"       dur="0.68s" values="1;2.6;2;3.8" fill="freeze" />
+                  <animate attributeName="opacity" dur="0.68s" values="0;1;1;0.1"   fill="freeze" />
+                </circle>
+              </g>
+            )}
+          </svg>
+
+          {nodes.map((node, index) => {
+            const mood = NEXUS_MOOD_BY_ID[node.mood] ?? NEXUS_MOOD_BY_ID.satisfied;
+            const ex = exerciseById(node.exerciseId);
+            const active = node.id === selected?.id;
+            const needsBoost = !node.isMine && (node.dtwAvg ?? 100) < 82;
+            const shining = !node.isMine && (node.dtwAvg ?? 0) >= 88;
+            return (
+              <button
+                key={node.id}
+                className={[
+                  "nexus-node",
+                  node.isMine ? "mine" : "",
+                  active ? "active" : "",
+                  tapId === node.id ? "tapping" : "",
+                  needsBoost ? "needs-boost" : "",
+                  shining ? "shining" : "",
+                ].filter(Boolean).join(" ")}
+                style={{
+                  left: `${node.x}%`,
+                  top: `${node.y}%`,
+                  "--mood": mood.tone,
+                  animationDelay: `${index * 0.22}s`,
+                }}
+                onClick={() => handleNodeClick(node.id)}
+                type="button"
+              >
+                <span className={`nexus-node-burst ${burstIds[node.id] ? "active" : ""}`} style={{ "--mood": mood.tone }} />
+                {needsBoost && <span className="nexus-boost-badge" />}
+                <NexusNodeAvatar id={node.id} mood={node.mood} size={node.isMine ? 70 : 58} isMine={!!node.isMine} />
+                <span className="nexus-node-name">{node.isMine ? "You" : node.name.replace("Athlete_", "")}</span>
+                <span className="nexus-node-meta">{ex.short} · {node.dtwAvg}%</span>
+              </button>
+            );
+          })}
+        </motion.div>
+
+        {(() => {
+          const targetNeedsBoost = !selected?.isMine && (selected?.dtwAvg ?? 100) < 82;
+          const resonateLabel = selected?.isMine
+            ? "Your check-in"
+            : targetNeedsBoost ? "Boost Signal" : "Send Resonance";
+          const resonateBtnLabel = targetNeedsBoost ? "Send Boost" : "Send Resonance";
+          const supportHint = targetNeedsBoost
+            ? `${selected?.dtwAvg ?? 0}% form — a signal keeps the chain going.`
+            : selected?.isMine
+              ? `Your signal. ${selectedResonance} resonance received.`
+              : `${selected?.dtwAvg ?? 0}% form — strong session.`;
+          return (
+            <motion.div className="glass nexus-detail" custom={1} variants={panelVariants} initial="hidden" animate="visible">
+              <div className="nexus-detail-main">
+                <MoodAvatar mood={selected?.mood} size={58} />
+                <div>
+                  <div className="nexus-detail-name">
+                    {selected?.isMine ? "Your check-in" : (selected?.name?.replace("Athlete_", "") ?? "—")}
+                    {targetNeedsBoost && <span className="nexus-boost-tag">Needs Boost</span>}
+                  </div>
+                  <div className="nexus-detail-sub">{selectedExercise.label} · {selected?.reps ?? 0} reps</div>
+                  <div className="nexus-detail-sub" style={{ marginTop: "0.18rem", opacity: 0.72 }}>{supportHint}</div>
+                </div>
+              </div>
+              <div className="nexus-mood-line">
+                <span style={{ color: selectedMood.tone }}>{selectedMood.label}</span>
+                <span>{selectedResonance} resonance</span>
+              </div>
+              {!selected?.isMine && (
+                <button
+                  className={`nexus-resonate ${btnFiring ? "firing" : ""} ${targetNeedsBoost ? "boost-mode" : ""}`}
+                  type="button"
+                  style={{ "--mood": targetNeedsBoost ? "#FFB800" : selectedMood.tone }}
+                  onClick={() => resonate(selected.id)}
+                >
+                  {resonateBtnLabel}
+                </button>
+              )}
+            </motion.div>
+          );
+        })()}
+      </div>
+    </div>
+  );
+}
+
 // ─── BottomNav ────────────────────────────────────────────────────────────────
 
 const BaseBadge = ({ code, className = "" }) => (
@@ -7102,6 +7857,20 @@ const IconCore = ({ className = "" }) => (
   </svg>
 );
 
+const IconNexus = ({ className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="12" r="2.6" />
+    <circle cx="5" cy="7" r="2" />
+    <circle cx="19" cy="7" r="2" />
+    <circle cx="6" cy="18" r="2" />
+    <circle cx="18" cy="18" r="2" />
+    <path d="M7 8.2l3.1 2.1" />
+    <path d="M17 8.2l-3.1 2.1" />
+    <path d="M7.8 17l2.4-3.1" />
+    <path d="M16.2 17l-2.4-3.1" />
+  </svg>
+);
+
 const IconProfile = ({ className = "" }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -7120,6 +7889,7 @@ function BottomNav({ tab, onChange, aiUnread }) {
   const items = [
     { id: "home",    label: "Home",    Icon: IconHome },
     { id: "core",    label: "Core",    Icon: IconCore },
+    { id: "nexus",   label: "Nexus",   Icon: IconNexus },
     { id: "profile", label: "Profile", Icon: IconProfile },
     { id: "setup",   label: "Setup",   Icon: IconSetup },
   ];
@@ -7162,13 +7932,14 @@ export default function KineticLifeApp() {
   const [theme, setTheme] = useState(() => loadTheme());
   const [aiMessages, setAiMessages] = useState(() => loadAiMessages());
   const [aiUnread, setAiUnread] = useState(() => loadAiUnread());
+  const [nexusCheckins, setNexusCheckins] = useState(() => loadNexusCheckins());
   const iotConnRef = useRef(null);
 
   useEffect(() => { saveDeviceUrl(deviceUrl, currentUser); }, [deviceUrl, currentUser]);
   useEffect(() => { saveConnMode(connMode, currentUser); }, [connMode, currentUser]);
   useEffect(() => { saveTheme(theme, currentUser); }, [theme, currentUser]);
 
-  const NAV_SCREENS = ["dashboard", "core", "profile", "settings"];
+  const NAV_SCREENS = ["dashboard", "core", "nexus", "profile", "settings"];
   const showNav = NAV_SCREENS.includes(screen);
 
   function appendAiMessage(message, { unread = true } = {}) {
@@ -7205,6 +7976,7 @@ export default function KineticLifeApp() {
     const nextMuscleStatus = loadMuscleStatus(userName);
     const nextAiMessages = loadAiMessages(userName);
     const nextAiUnread = loadAiUnread(userName);
+    const nextNexusCheckins = loadNexusCheckins(userName);
     const nextDeviceUrl = loadDeviceUrl(userName);
     const nextConnMode = loadConnMode(userName);
     const nextLastDevice = loadLastDevice(userName);
@@ -7223,6 +7995,7 @@ export default function KineticLifeApp() {
     setMuscleStatus(nextMuscleStatus);
     setAiMessages(nextAiMessages);
     setAiUnread(nextAiUnread);
+    setNexusCheckins(nextNexusCheckins);
     setDeviceUrl(nextDeviceUrl);
     setConnMode(nextConnMode);
     setLastDevice(nextLastDevice);
@@ -7231,6 +8004,7 @@ export default function KineticLifeApp() {
     saveMuscleStatus(nextMuscleStatus, userName);
     saveAiMessages(nextAiMessages, userName);
     saveAiUnread(nextAiUnread, userName);
+    saveNexusCheckins(nextNexusCheckins, userName);
     saveDeviceUrl(nextDeviceUrl, userName);
     saveConnMode(nextConnMode, userName);
     saveTheme(nextTheme, userName);
@@ -7253,6 +8027,7 @@ export default function KineticLifeApp() {
     setNavTab(tab);
     if (tab === "home") { setScreen("dashboard"); setVisualState("idle"); }
     if (tab === "core") { setScreen("core"); setVisualState("idle"); clearAiUnread(); }
+    if (tab === "nexus") { setScreen("nexus"); setVisualState("idle"); }
     if (tab === "profile") { setScreen("profile"); setVisualState("idle"); }
     if (tab === "setup") { setScreen("settings"); setVisualState("idle"); }
   }
@@ -7345,6 +8120,26 @@ export default function KineticLifeApp() {
         exerciseShort: finishedExercise?.short ?? "--",
       },
     }));
+  }
+
+  function handleShareCheckIn(mood) {
+    const exerciseId = sessionResult?.exerciseId ?? exercise?.id ?? "squat";
+    const checkIn = {
+      id: `me_${Date.now()}`,
+      name: profile?.name ? `${profile.name}` : "You",
+      exerciseId,
+      reps: sessionResult?.reps ?? 0,
+      dtwAvg: Math.round((sessionResult?.dtw ?? 0.74) * 100),
+      mood: NEXUS_MOOD_BY_ID[mood] ? mood : "satisfied",
+      resonance: 1,
+      timestamp: Date.now(),
+    };
+    const next = [checkIn, ...nexusCheckins].slice(0, 6);
+    setNexusCheckins(next);
+    saveNexusCheckins(next, currentUser);
+    setScreen("nexus");
+    setNavTab("nexus");
+    setVisualState("idle");
   }
 
   function handleNewSet() {
@@ -7506,7 +8301,15 @@ export default function KineticLifeApp() {
             result={sessionResult}
             onNewSet={handleNewSet}
             onDone={handleDone}
+            onShareCheckIn={handleShareCheckIn}
             theme={theme}
+          />
+        );
+      case "nexus":
+        return (
+          <NexusCheckInScreen
+            checkins={nexusCheckins}
+            onBack={handleDone}
           />
         );
       case "core":
