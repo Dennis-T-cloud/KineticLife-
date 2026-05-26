@@ -1,6 +1,6 @@
 # KineticLife Firmware
 
-ESP32-S3 firmware workspace for camera bring-up, BLE-first boot mode, WiFi pairing (QR + Soft AP), WebSocket binary streaming, and LED behavior.
+ESP32-S3 firmware workspace for camera bring-up, default BLE camera mode, WiFi pairing (QR + preset-network Soft AP), token-gated WebSocket binary streaming, and LED behavior.
 
 ## Hardware Baseline
 
@@ -34,7 +34,7 @@ WiFi HTTP:      GET http://<ESP32-IP>/mode?set=wifi
 WiFi HTTP:      GET http://<ESP32-IP>/mode?set=ble
 ```
 
-Physical fallback: press reset twice within the 8 s boot window to clear WiFi credentials and force `mode=wifi`, which returns the device to WiFi pairing/recovery.
+Physical fallback: press reset twice within the 8 s boot window to clear WiFi credentials and return to the default BLE mode.
 
 ## WiFi Pairing
 
@@ -43,13 +43,15 @@ In `mode=wifi`, the firmware stores WiFi credentials in NVS only as the active d
 - NVS has an active session → connect to WiFi, start HTTP server + WebSocket.
 - NVS is empty → enter Pairing Mode (blue LED flashing), offer **two paths** simultaneously:
 
-### Path 1 — Soft AP (Config Tab in pair.html)
+### Path 1 — Soft AP Preset Networks (Config Tab in pair.html)
 
 1. ESP32 broadcasts a soft AP: **SSID `KineticLife-Setup` / password `kineticlife`**
-2. Laptop connects to `KineticLife-Setup` (leave phone hotspot temporarily)
-3. Open `web/pair.html` → Config tab → pick target WiFi → enter password → Connect
+2. Laptop connects to `KineticLife-Setup`
+3. Open `web/pair.html` -> Config tab -> load preset networks -> Connect
 4. ESP32 connects, saves credentials, reboots
 5. Laptop reconnects to phone hotspot; find device via mDNS `fitcam-xxxxxx.local`
+
+Preset networks come from local `firmware/src/config.h`, which is gitignored. Add or update networks there, then re-flash.
 
 ### Path 2 — QR Camera Scan
 
@@ -112,6 +114,12 @@ Firmware uses **ESPAsyncWebServer + AsyncWebSocket** (non-blocking). Transport:
 - `ws.cleanupClients()` — called every loop tick to reclaim closed-connection memory
 
 REST endpoints: `GET /hello`, `GET /status`, `GET /capture`, `GET|POST /cam`, `GET|POST /end`
+
+`GET /hello` returns `ws_token`. WiFi WebSocket clients should connect to:
+
+```text
+ws://<ESP32-IP>/ws?token=<ws_token>
+```
 
 ## Default BLE Mode
 

@@ -1,279 +1,238 @@
-# 01 · IoT / ESP32-S3 Firmware
+# 01 - IoT / ESP32-S3 Firmware
 
-> **Version**: v0.3
-> **Audience**: IoT engineer
-> **Contracts**: For any external data format, MUST read [`04_Interface_Contracts.md`](./04_Interface_Contracts.md) §2 and §6
+> Last updated: 2026-05-26
+> Hardware baseline: Freenove ESP32-S3-WROOM Board (N16R8), FNK0085 B, OV2640 140-degree camera
 
----
-
-## §1 Scope & External Commitments
-
-| You own | You don't own |
-|-----------|-------------|
-| Board selection + soldering + bring-up | MediaPipe / Web UI / DTW algorithm |
-| ESP32 firmware (WebSocket streaming + QR pairing + LED + watchdog) | Cloud services |
-| Honoring [04 §2 contract](./04_Interface_Contracts.md#2-esp32--phone-local-wifi): `/hello`, `/ws`, mDNS, WiFi QR parsing | Protocol field definitions (in 04) |
-| Hardware reliability for both demo units on Demo Day | |
-
-**External commitments**:
-- After power-on or pairing (QR or Soft AP), ESP32 self-reports via **HTTP /hello** and streams binary JPEG frames via **WebSocket /ws**.
-- Serves the stream + inference page from **SPIFFS** at `http://fitcam-xxxxxx.local/` so the browser can connect to `ws://` without mixed-content issues.
-- Frame rate target ≥ 9 FPS at 320×240 JPEG on the OV2640/140° calibration hardware; 30+ minutes continuous operation without drops.
+This document describes the active firmware in `firmware/src/`.
 
 ---
 
-## §2 Hardware Baseline
+## Current Scope
 
-**Current board**: **Freenove ESP32-S3-WROOM Board (N16R8), FNK0085 B**
+Firmware owns:
 
-**Camera**: **OV2640 140° wide-angle**
+- boot-mode selection stored in NVS
+- BLE camera snapshot streaming and test commands
+- WiFi QR parsing and preset-network pairing
+- HTTP diagnostics and camera tuning
+- binary JPEG WebSocket streaming
+- RGB status LED behavior
+- session cleanup and mode switching
 
-**Hardware reference**: [Freenove ESP32-S3-WROOM Board GitHub](https://github.com/Freenove/Freenove_ESP32_S3_WROOM_Board)
-
-Why:
-- ESP32-S3-WROOM module with **16 MB Flash + 8 MB PSRAM** (`N16R8`), enough for WebSocket buffering and QR decode work.
-- Freenove board is the team calibration target, so firmware pin mapping and camera bring-up should be validated against **FNK0085 B** first.
-- OV2640 140° wide-angle is the active camera module for resolution, exposure, white-balance, and low-light tuning.
-- Full Arduino / PlatformIO workflow remains suitable for the demo firmware.
-
-**Board assumptions to verify during bring-up**:
-
-| Item | Baseline value | Why it matters |
-|----|------|------|
-| Board model | Freenove ESP32-S3-WROOM Board (N16R8), FNK0085 B | Pin map and boot behavior |
-| Flash / PSRAM | 16 MB Flash / 8 MB PSRAM | WebSocket frame buffers, QR decode memory |
-| Camera | OV2640 140° wide-angle | Camera driver, frame size, exposure tuning |
-| Default stream | 320×240 @ 9 FPS target | OV2640/140° calibration target at QVGA JPEG |
-
-**Alternatives** are not part of v0.3 calibration. If a backup board is used, create a separate pin-map note before flashing.
-
-**Auxiliary**:
-- USB-C power supply (5V/2A)
-- Small tripod or clip mount
-- **5V fill light** (REQUIRED — OV2640 noise in low light kills MediaPipe accuracy)
-- Short USB-C cable (<30 cm, less noise)
+Firmware does not run MediaPipe, rep counting, DTW, or cloud advice.
 
 ---
 
-## §3 Firmware Architecture
+## File Map
 
-**Framework**: **Arduino IDE + PlatformIO** (faster ramp than ESP-IDF; sufficient for demo)
+| File | Responsibility |
+| --- | --- |
+| `main.cpp` | boot flow, mode selection, WiFi connection, main loop |
+| `ble_test.cpp` / `.h` | BLE GATT service, throughput test, camera snapshot chunks, mode commands |
+| `http_server.cpp` / `.h` | Async HTTP routes, WebSocket stream, token gate, mDNS |
+| `wifi_qr.cpp` / `.h` | QR decode, compact/standard WiFi payload parsing, NVS WiFi session |
+| `wifi_ap_config.cpp` / `.h` | `KineticLife-Setup` Soft AP and preset-network config server |
+| `camera_init.cpp` / `.h` | stream, QR, and BLE camera modes |
+| `status_led.cpp` / `.h` | LED state and blink patterns |
+| `config.h` | local preset networks; gitignored |
 
-**Actual layout**:
-```
-firmware/
-├── platformio.ini
-├── src/
-│   ├── main.cpp          # setup() + loop()
-│   ├── camera_init.cpp   # esp_camera config, OV2640 defaults
-│   ├── wifi_qr.cpp       # quirc parsing + NVS write
-│   ├── http_server.cpp   # REST + WebSocket /ws
-│   ├── status_led.cpp    # RGB status indicator
-│   └── debug_log.cpp     # serial logging helpers
-└── data/                 # SPIFFS root — stream page served from here
-    └── index.html        # stream + inference page (MediaPipe)
+Third-party QR code detection is vendored in `firmware/lib/quirc/`.
+
+---
+
+## Boot Modes
+
+Default mode is BLE unless `kl_mode.mode` in NVS is set to `wifi`.
+
+| Mode | Behavior |
+| --- | --- |
+| `ble` | waits for OV2640 power stabilization, initializes a low-resolution camera mode when possible, advertises BLE, skips WiFi/HTTP/WS |
+| `wifi` | loads WiFi session or enters pairing, starts HTTP server and `/ws` stream after network connection |
+
+Mode switch commands:
+
+```text
+BLE RX:   mode=wifi
+BLE RX:   mode=ble
+HTTP:     GET/POST /mode?set=wifi
+HTTP:     GET/POST /mode?set=ble
 ```
 
-**Core libraries**:
-- `esp_camera` (Espressif official)
-- `ESPAsyncWebServer` + `AsyncWebSocket` (non-blocking WS)
-- `quirc` (C-language QR decoder)
-- `WiFi.h` + `Preferences.h` (NVS wrapper)
-- `ESPmDNS`
+Double reset within the boot window clears WiFi credentials and restores the default BLE mode.
 
 ---
 
-## §4 State Machine & LED Codes
+## BLE Camera Mode
 
-```mermaid
-stateDiagram-v2
-    [*] --> BootCheck: Power on
-    BootCheck --> StreamMode: NVS has active session WiFi creds
-    BootCheck --> PairMode: NVS active session empty
+BLE name:
 
-    PairMode --> ScanQR: Camera continuous refresh
-    ScanQR --> Connecting: Parsed K1 or WIFI QR
-    Connecting --> StreamMode: WiFi OK + temporary NVS session write
-    Connecting --> PairFailed: 3 retries failed
-    PairFailed --> PairMode: Retry after 1s
-
-    StreamMode --> StreamMode: Push MJPEG
-    StreamMode --> PairMode: Web End button calls /end
-    StreamMode --> PairMode: Long-press RESET 5s
-    StreamMode --> Disconnected: WiFi lost 5s
-    Disconnected --> StreamMode: WiFi recovered
-    Disconnected --> Reboot: 30s no recovery
-    Reboot --> BootCheck
+```text
+KineticLife-BLE-<mac6>
 ```
 
-**RGB LED color codes** (single RGB LED is enough):
+GATT UUIDs:
 
-| Color | Pattern | Meaning |
-|-----|---------|------|
-| Blue | Blink (1Hz) | Pairing mode, awaiting QR |
-| Yellow | Blink (2Hz) | QR parsed, connecting WiFi |
-| Green | Solid | WiFi OK + HTTP server up |
-| Green | Fast blink (4Hz) | Client is pulling stream |
-| Red | Blink (1Hz) | Connection failed |
-| Red | Solid | Fatal error (e.g. camera init failure) |
+| Item | UUID | Direction |
+| --- | --- | --- |
+| Service | `9b8f0001-6f4d-4d4f-9c9a-4b4c49464501` | discover |
+| TX notify | `9b8f0002-6f4d-4d4f-9c9a-4b4c49464501` | ESP32 to browser |
+| RX control | `9b8f0003-6f4d-4d4f-9c9a-4b4c49464501` | browser to ESP32 |
 
-Current firmware maps the RGB status LED to `STATUS_RGB_PIN=48` in `platformio.ini`. If the Freenove board revision uses a different onboard RGB pin, update that build flag.
+Supported text commands:
 
----
-
-## §5 WebSocket Streaming
-
-**Transport**: Binary WebSocket (`ws://fitcam-xxxxxx.local/ws`). Each message is one complete JPEG frame. Firmware uses a latest-frame policy: each frame is sent only to clients whose WebSocket queue is empty; slow clients skip stale frames instead of building a delayed queue. `esp_camera_fb_return()` is called right after send attempts, safe because accepted frames are already copied.
-
-**Key camera config**:
-
-```cpp
-// camera_init.cpp
-config.pixel_format = PIXFORMAT_JPEG;
-config.frame_size   = FRAMESIZE_QVGA;   // 320×240 default; switchable via /cam
-config.jpeg_quality = 12;               // lower = better; tunable via /cam?q=
-config.fb_count     = 2;               // PSRAM double-buffer, eliminates DMA contention
-config.grab_mode    = CAMERA_GRAB_LATEST;
-config.fb_location  = CAMERA_FB_IN_PSRAM;
+```text
+mode=wifi
+mode=ble
+size=<8..180>
+gap=<4..100>
+start=<1000..60000>
+cam=<0..60000>
+stop
 ```
 
-**OV2640 sensor defaults** (set at init):
+`start` runs synthetic throughput notifications. `cam` starts camera snapshots. Camera metadata is sent as ASCII:
 
-```cpp
-s->set_brightness(s, 0);   s->set_contrast(s, 1);
-s->set_saturation(s, 0);   s->set_sharpness(s, 1);
-s->set_bpc(s, 1);          s->set_wpc(s, 1);   s->set_lenc(s, 1);
-s->set_whitebal(s, 1);     s->set_awb_gain(s, 1);
-s->set_gain_ctrl(s, 1);    s->set_exposure_ctrl(s, 1);   s->set_aec2(s, 1);
+```text
+CAM:<frame_id>:<bytes>:<chunks>:<size>:<q>
 ```
 
-**HTTP + WS routes**:
+Raw JPEG chunks follow over TX notifications until the frame byte count is complete.
 
-| Path | Method | Purpose |
-|------|--------|---------|
-| `/` | GET | Serves SPIFFS `index.html` (stream + inference page) |
-| `/ws` | WS | Binary JPEG stream |
-| `/hello` | GET | device_id, fw_version, state, ws_clients |
-| `/status` | GET | WiFi RSSI, camera mode/settings, memory stats |
-| `/capture` | GET | Single JPEG snapshot |
-| `/cam` | GET/POST | Live camera tuning: `?res=&q=&brightness=&contrast=&saturation=&sharpness=&ae_level=&vflip=&hmirror=` |
-| `/end` | GET/POST | Clear NVS credentials and reboot to pairing mode |
-
-**SPIFFS page**: `data/index.html` is served at the root. Because the page is on `http://`, it can open `ws://` without mixed-content issues. The page POSTs workout results back to the cloud API over HTTPS (an HTTP page requesting an HTTPS resource is allowed).
-
-**Max JPEG size**: 256 KB limit (raised from 128 KB to support VGA frames). At 320×240 q=12, frames are typically 15–40 KB. VGA (640×480) frames can reach 80–150 KB.
-
-**Resolution switching**: DMA buffers are allocated at init time. Switching to a larger frame size requires `esp_camera_deinit()` + reinit. `camera_set_framesize()` handles this automatically when the new size exceeds the init allocation.
+Browser support note: Web Bluetooth works in Chromium-based browsers from HTTPS or `localhost`; iOS Safari does not expose Web Bluetooth.
 
 ---
 
-## §6 WiFi Pairing — Two Paths
+## WiFi Pairing Mode
 
-Both paths run simultaneously while the device is in pairing mode (blue LED blinking). Either can complete pairing.
+WiFi mode has two pairing paths when no active session is stored.
 
-### Path A — Soft AP (recommended, primary path)
+### QR Path
 
-1. ESP32 broadcasts `KineticLife-Setup` / password `kineticlife`
-2. User connects laptop/phone to that AP
-3. Opens `pair.html` → Config tab → selects target WiFi → enters password
-4. ESP32 connects, saves credentials to NVS, reboots into stream mode
+The camera scans either compact KineticLife QR payloads or standard WiFi QR strings:
 
-Soft AP IP: `192.168.4.1`. No QR scanning required; works even when the phone screen is off.
-
-### Path B — QR Camera Scan
-
-**QR format**: compact `K1:<type>:<ssid_len>:<ssid><pass>` (generated by `pair.html`); firmware also accepts `WIFI:S:<ssid>;T:WPA;P:<pass>;;` for compatibility.
-
-```mermaid
-flowchart LR
-    A[Grab grayscale frame] --> B[quirc_decode every 200ms]
-    B -->|fail| A
-    B -->|success| C[Parse K1 or WIFI:S]
-    C --> D[WiFi.begin SSID/pass]
-    D --> E[NVS write + ESP.restart]
+```text
+K1:<TYPE_CODE>:<SSID_LEN>:<SSID><PASSWORD>
+WIFI:S:<SSID>;T:<TYPE>;P:<PASSWORD>;;
 ```
 
-**OV2640 note**: The 140° wide-angle lens can introduce enough barrel distortion to degrade QR ECC success rate. Soft AP is the more reliable path for this camera module. QR path still works at optimal distance (~20–30 cm) with screen at 100% brightness.
+`TYPE_CODE` is `W`, `E`, or `N` for WPA/WPA2, WEP, or no password.
 
-**Security**:
-- Password written directly to NVS, never logged to serial
-- NVS namespace `wifi`, keys: `ssid` / `pass` / `type`
-- `/end` clears credentials and reboots to pairing mode
+### Preset-Network Soft AP Path
 
-**Reset**:
-- `POST /end` from the stream page, or `pio run --target erase` + reflash
+Firmware starts a Soft AP:
 
----
-
-## §7 Power, Stability, Tuning
-
-| Item | Setting |
-|---|------|
-| CPU frequency | 240 MHz (default) |
-| WiFi sleep | **Disabled** (`WiFi.setSleep(false)`) — critical for demo, USB power is sufficient |
-| Task watchdog | 30 s |
-| Client disconnect detection | Check `client.connected()` per frame; idle after 5 s for power saving |
-
-**Demo Day on-site checklist**:
-
-```
-[ ] LED states correct after power-on (blue→green)
-[ ] Phone hits http://fitcam-XXXXXX.local/hello → returns JSON
-[ ] Browser WebSocket ws://.../ws receives video frames (debug.html shows ~9fps)
-[ ] 30 min continuous run with no resets (do this on W6 weekend)
-[ ] Backup pre-paired ESP32 ready
-[ ] Fill light positioned, low-light scenario tested
+```text
+SSID: KineticLife-Setup
+Password: kineticlife
+URL: http://192.168.4.1
 ```
 
----
+The AP exposes preset networks from local `firmware/src/config.h`:
 
-## §8 6-Week Milestones
+| Endpoint | Purpose |
+| --- | --- |
+| `/` | minimal config page |
+| `/config-networks` | list preset SSIDs and auth types |
+| `/try-config?idx=N` | try one preset |
+| `/config-status` | report connecting/connected/failed |
 
-| Week | Your goal | Acceptance criteria |
-|---|---------|---------|
-| **W1** | MJPEG firmware + LED state machine | Browser sees ≥ 12 FPS on any router; LED states correct |
-| **W2** | QR pairing across networks | Demo: pair with 3 different hotspots without reflashing firmware |
-| **W3** | Stability burn-in | 60 min continuous stream with no reboot; under fill light, MediaPipe misdetect rate < 5% |
-| **W4** | (support Web integration) | `/hello` aligns with `client_capabilities`; verify timestamp precision |
-| **W5** | (maintenance + occasional bugs) | Deliver 1-week stability report |
-| **W6** | Second unit + venue setup | Day before Demo: both units cold-boot to streaming in < 30s |
-
-**Total estimate**: ~50 h (part-time, 8–10 h/week)
+`config.h` is local and gitignored. Do not document or commit real credentials.
 
 ---
 
-## §9 Risks (IoT Perspective)
+## WiFi HTTP and WebSocket API
 
-| Risk | Likelihood | Impact | Mitigation |
-|-----|-----|------|------|
-| OV2640 low-light noise | High | High | 5V fill light + lock white balance + control venue lighting |
-| PSRAM config missed → boot crash | Med | Med | platformio.ini configured AND tested with full build + boot once |
-| Venue WiFi interference | Med | High | Backup 4G router; phone hotspot must be 2.4 GHz |
-| Camera connection loose | Low | High | Tape + hot glue before Demo |
-| `quirc` parsing fails in low light | Med | Med | Pairing mode UI guidance: **screen brightness 100%** + 30 cm distance |
+Main WiFi endpoints from `http_server.cpp`:
 
----
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/hello` | GET | device identity, firmware metadata, WebSocket token |
+| `/status` | GET | WiFi, heap, PSRAM, camera, stream counters |
+| `/capture` | GET | one JPEG snapshot |
+| `/cam` | GET/POST | deferred camera tuning |
+| `/mode` | GET/POST | switch between BLE and WiFi modes |
+| `/end` | GET/POST | clear WiFi credentials and reboot |
+| `/ws` | WebSocket | binary JPEG stream |
 
-## §10 Extension Placeholders (post-Demo)
+`/hello` includes `ws_token`. Current firmware installs a token gate for `/ws`; clients should open:
 
-> Note: Outside the 6-week sprint.
+```text
+ws://<device>/ws?token=<ws_token>
+```
 
-- **WebRTC instead of WebSocket**: latency under 100 ms, but requires full SRTP/DTLS stack on ESP32; future optimization
-- **OTA upgrade**: ESP-IDF built-in, post-Demo
-- **Multi-device coexistence**: mDNS name already includes MAC suffix, no contract change needed
-- **Sensor reporting (gyro / temperature)**: add as optional fields in `/hello` (per §1.3 additive rule)
-
----
-
-## §11 Contract Quick-Reference
-
-| What you need | Jump to |
-|---------|------|
-| WiFi QR string fields | [04 §2.1](./04_Interface_Contracts.md#21-wifi-qr-string-format-phone--esp32-one-shot-pairing) |
-| `/hello` JSON fields | [04 §2.3](./04_Interface_Contracts.md#23-http-handshake-hello) |
-| `/ws` binary stream contract | [04 §2.5](./04_Interface_Contracts.md#25-websocket-stream-ws) |
-| Protocol versioning | [04 §1.3](./04_Interface_Contracts.md#13-global-conventions) |
+Known integration gap: several current web callers still open `/ws` without the token. Update web before relying on WiFi streaming.
 
 ---
 
-*Last updated: 2026-04-24*
+## WebSocket Stream
+
+Transport behavior:
+
+- each message is one complete JPEG
+- maximum JPEG size is 256 KB
+- target throttle is 67 ms per frame
+- actual QVGA OV2640 throughput is camera-bound, commonly around 9 FPS
+- latest-frame policy: send only to connected clients with an empty queue
+- slow clients skip stale frames instead of accumulating latency
+- `ws.cleanupClients()` runs from the main loop
+
+Camera tuning parameters accepted by `/cam`:
+
+```text
+res, q, brightness, contrast, saturation, sharpness, ae_level, vflip, hmirror
+```
+
+The request handler only records pending values; sensor writes are applied later from `http_server_handle()` to avoid blocking the async TCP task.
+
+---
+
+## Camera Modes
+
+| Mode | Function | Notes |
+| --- | --- | --- |
+| WiFi stream | `camera_init()` | QVGA JPEG, 2 PSRAM frame buffers |
+| QR pairing | `camera_init_qr()` | grayscale QVGA, DRAM buffer |
+| BLE camera | `camera_init_ble()` | low-resolution JPEG snapshots for GATT chunking |
+
+Keep these constraints:
+
+- PSRAM memory type must stay configured for the Freenove N16R8 board.
+- XCLK must stay at the tested value for FNK0085 B stability.
+- OV2640 needs several seconds of power stabilization before BLE camera self-test is reliable.
+
+---
+
+## LED States
+
+| State | Meaning |
+| --- | --- |
+| boot | startup |
+| pairing | WiFi pairing / QR / Soft AP |
+| connecting | WiFi connect attempt |
+| ready | BLE ready or WiFi HTTP server ready |
+| streaming | WiFi WebSocket client connected |
+| error | recoverable problem |
+| fatal | camera or hardware initialization failure |
+
+The LED is part of the operator UI. Keep it aligned with `status_led_state_name()` because `/hello` and `/status` expose that same state.
+
+---
+
+## Verification
+
+```bash
+cd firmware
+pio run
+pio run --target upload
+pio device monitor
+```
+
+Useful smoke tests:
+
+- BLE advertises as `KineticLife-BLE-<mac6>`
+- BLE `cam=0` produces JPEG frames in `pair.html`
+- BLE `mode=wifi` reboots into WiFi flow
+- WiFi `/hello` returns `ws_token`
+- WiFi `/capture` returns a JPEG
+- WebSocket client uses `/ws?token=...`
+- `/end` clears WiFi session and reboots

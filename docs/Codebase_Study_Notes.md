@@ -1,289 +1,158 @@
-# KineticLife Firmware Notes
+# KineticLife Codebase Study Notes
 
-## Overview
+> Last updated: 2026-05-26
 
-The firmware already implements the most complete part of the KineticLife system. Its job is to turn the ESP32-S3 + OV2640 into a session-based camera device that can:
+These notes describe the current repository, not the archived v0.3 plan.
 
-- pair to a phone hotspot by reading a QR code
-- temporarily save WiFi credentials in NVS
-- reconnect on reboot
-- expose a small HTTP API
-- stream MJPEG frames to a browser
-- clear the active session and return to pairing mode
+---
 
-The firmware is built around a simple state machine rather than a complicated framework. That is the main idea to keep in mind while reading it.
+## Mental Model
 
-## The Core Mental Model
+KineticLife has three active layers:
 
-The firmware has two main operating modes:
+1. Firmware turns the ESP32-S3 + OV2640 into either a BLE camera device or a WiFi WebSocket camera device.
+2. Web code runs MediaPipe locally, draws the live experience, counts reps, and produces immediate local feedback.
+3. Server code analyzes submitted joint-angle sequences after a set using template matching and DTW-style alignment.
 
-1. Pairing mode
-2. Streaming mode
+The live user experience should continue working when the server is offline.
 
-Pairing mode uses the camera as a QR scanner. Streaming mode uses the camera as a JPEG video source.
+---
 
-This split matters because the camera is intentionally reconfigured depending on what the device is trying to do:
+## Firmware Reading Path
 
-- pairing mode: grayscale frames for QR decoding
-- streaming mode: JPEG frames for browser consumption
+Start with:
 
-That means the camera setup is part of the product flow, not just low-level hardware setup.
+- `firmware/src/main.cpp`
+- `firmware/src/ble_test.cpp`
+- `firmware/src/http_server.cpp`
+- `firmware/src/wifi_ap_config.cpp`
+- `firmware/src/wifi_qr.cpp`
+- `firmware/src/camera_init.cpp`
+- `firmware/src/status_led.cpp`
 
-## File Map
+The important idea in `main.cpp` is boot-mode selection:
 
-The most important firmware files are:
+- default `ble`
+- stored under `kl_mode.mode`
+- `ble` skips WiFi/HTTP/WS
+- `wifi` loads WiFi credentials or enters pairing
 
-- [firmware/src/main.cpp](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/main.cpp)
-- [firmware/src/wifi_qr.cpp](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/wifi_qr.cpp)
-- [firmware/src/http_server.cpp](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/http_server.cpp)
-- [firmware/src/camera_init.cpp](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/camera_init.cpp)
-- [firmware/src/status_led.cpp](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/status_led.cpp)
-- [firmware/src/wifi_qr.h](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/wifi_qr.h)
-- [firmware/src/http_server.h](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/http_server.h)
-- [firmware/src/camera_init.h](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/camera_init.h)
+BLE mode is not just a test stub anymore. It initializes the camera when possible, advertises `KineticLife-BLE-<mac6>`, and can send JPEG snapshots in chunks after the browser writes `cam=0`.
 
-There is also a third-party QR library here:
+WiFi mode starts HTTP and `/ws` after pairing or a saved session. `/hello` now returns a `ws_token`, and `/ws` is protected by a token gate.
 
-- [firmware/lib/quirc/src/quirc.h](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/lib/quirc/src/quirc.h)
+---
 
-That file is dependency code, not KineticLife-specific logic.
+## Firmware Pairing
 
-## What `main.cpp` Is Doing
+There are two WiFi pairing paths:
 
-`main.cpp` is the coordinator for the whole firmware.
+- QR camera scan using compact `K1:` or standard `WIFI:` payloads
+- Soft AP `KineticLife-Setup`, which serves preset networks from local `config.h`
 
-Its responsibilities are:
+`config.h` is gitignored and should stay local because it contains real WiFi credentials.
 
-- initialize serial and logging
-- initialize the status LED
-- load saved WiFi credentials from NVS
-- choose pairing mode or streaming mode
-- initialize the camera for the chosen mode
-- connect to WiFi
-- start the HTTP server
-- keep servicing HTTP requests and LED behavior in the main loop
+The Soft AP path does not accept arbitrary typed SSID/passwords in current firmware. It lists compiled preset networks and lets the user choose one.
 
-The key branch in `setup()` is:
+---
 
-- no saved credentials -> go to QR pairing mode
-- saved credentials exist -> initialize camera for stream mode and try WiFi
+## Web Reading Path
 
-That is the firmware’s top-level control flow.
+Start with:
 
-## Boot Flow
+- `web/src/main.tsx`
+- `web/src/routes/kineticlife-app.jsx`
+- `web/src/hooks/useIoTConnection.ts`
+- `web/lib/exercise-rules.js`
+- `web/lib/landmark-smoothing.js`
+- `web/lib/pose-renderer.js`
+- `web/lib/feedback-effects.js`
+- `web/pair.html`
 
-The boot process is straightforward:
+`useIoTConnection.ts` is the key integration file. It owns:
 
-1. Start serial and quiet noisy camera logs.
-2. Start the RGB status LED.
-3. Log firmware version, board model, and free memory.
-4. Attempt to load an active WiFi session from NVS.
-5. If no session exists, enter QR pairing mode.
-6. If a session exists, initialize the camera for JPEG streaming.
-7. Connect to WiFi.
-8. Start the HTTP server and mark the device ready.
+- BLE device discovery and GATT command writes
+- BLE JPEG chunk reassembly
+- WiFi WebSocket JPEG decode
+- MediaPipe runtime loading
+- frame rotation into portrait inference canvas
+- local exercise state machine
+- local analysis summary
+- async `/api/actions` submission
 
-Important detail:
+React state is deliberately throttled. Camera frames and high-frequency session state live in refs.
 
-- WiFi credentials are treated as a temporary active session, not as a permanent device configuration.
+---
 
-That explains why `/end` clears credentials and reboots back to pairing mode.
+## Static Pages
 
-## Pairing Mode
+`pair.html` is the hardware operator page:
 
-Pairing mode is implemented by `run_pairing_mode()` in [main.cpp](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/main.cpp).
+- QR Pair
+- Config Networks
+- Direct Connect
+- BLE Test
+- Host QR
 
-In this mode the firmware:
+`debug.html` is the camera and MediaPipe diagnostics page.
 
-- sets the LED to the pairing state
-- initializes the camera in QR mode
-- repeatedly captures frames
-- scans each frame for QR codes
-- parses WiFi credentials from a successful QR decode
-- attempts to connect to WiFi
-- stores credentials in NVS if the connection succeeds
-- reboots into streaming mode
+`demo-table.html` is useful for tablet testing and has BLE/local-camera/ESP32 paths.
 
-The loop is intentionally persistent. If scanning fails or WiFi connection fails, the device does not give up. It returns to scanning and waits for another QR.
+`kinetic-demo.html` is the fuller UI showcase surface.
 
-That makes the firmware demo-friendly and resilient to bad lighting, bad QR distance, or phone hotspot quirks.
+---
 
-## QR Parsing and `quirc`
+## Server Reading Path
 
-The QR scan logic lives in [wifi_qr.cpp](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/wifi_qr.cpp).
+Start with:
 
-There are two layers here:
+- `server/app/main.py`
+- `server/app/ml/dtw_engine.py`
+- `server/app/ml/preprocessing.py`
+- `server/app/ml/templates.py`
+- `server/app/ml/thresholds.py`
+- `server/app/advice/service.py`
+- `server/app/advice/rules.py`
 
-1. `quirc` detects and decodes QR content
-2. KineticLife code validates and interprets that payload as WiFi credentials
+`main.py` registers only:
 
-Important takeaway:
+- `GET /health`
+- `GET /api/templates`
+- `POST /api/actions`
+- `GET /api/history/{action_id}`
 
-- `quirc` handles QR recognition
-- KineticLife code handles product behavior
+The server loads templates at startup and stores submitted actions in memory. It gzip-compresses the submitted frames for the history endpoint.
 
-The firmware supports two payload formats:
+The DTW implementation is custom code. It computes a banded alignment path over 14-D frames, derives aligned per-joint errors, then finds sustained error spikes.
 
-- compact KineticLife format: `K1:<TYPE_CODE>:<SSID_LEN>:<SSID><PASSWORD>`
-- standard WiFi QR format: `WIFI:S:<SSID>;T:<TYPE>;P:<PASSWORD>;;`
+---
 
-The compact format exists because reliable ESP32-side decoding matters for the demo flow.
+## Tests
 
-## What `wifi_qr.cpp` Is Responsible For
+Server tests are currently the strongest automated coverage:
 
-`wifi_qr.cpp` does more than decode QR codes. It owns several practical responsibilities:
+- `server/tests/test_dtw_engine.py`
+- `server/tests/test_templates.py`
+- `server/tests/test_thresholds.py`
+- `server/tests/test_advice_rules.py`
+- `server/tests/test_calc_timeseries_variance.py`
 
-- loading credentials from NVS
-- saving credentials to NVS
-- clearing credentials from NVS
-- validating auth type
-- parsing compact and standard QR payloads
-- grabbing grayscale camera frames
-- feeding those frames into `quirc`
-- logging scan statistics and decode failures
+Useful commands:
 
-This file is a good example of project-specific glue code. It sits between:
+```bash
+cd server && uv run pytest
+cd web && npm run typecheck
+cd firmware && pio run
+```
 
-- persistent storage
-- camera capture
-- third-party QR decoding
-- WiFi connection setup
+---
 
-## WiFi Connection Behavior
+## Important Current Gaps
 
-The connection logic is in `connect_wifi()` in [main.cpp](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/main.cpp).
+- WiFi `/ws` token: firmware requires `?token=...`; web callers should fetch `/hello` and append it.
+- Server URL: `useIoTConnection.ts` posts to production by default.
+- Advice service: implemented as helper code but not exposed as a route.
+- Persistence: action history is in-memory only.
+- Angle formula: web hook computes 14-D angles from 2D image landmarks, while the long-term contract wants world-landmark angles.
 
-Key behaviors to remember:
-
-- the device enters station mode
-- WiFi sleep is disabled
-- it tries to connect without a pre-scan
-- it polls `WiFi.status()` for up to 60 attempts
-- it logs status names like `connect_failed`, `disconnected`, and `connection_lost`
-- after a successful connection, it waits again to verify the connection is stable
-
-That last stability check is important. The code is built around the reality that iPhone hotspots can briefly accept a connection and then drop it.
-
-The comment about removing the scan is also important:
-
-- iOS may hide the hotspot SSID when the screen is off
-- `WiFi.begin()` can still succeed even when scanning is misleading
-
-This is a good example of the firmware being shaped by real-world testing rather than textbook flow.
-
-## Camera Setup
-
-Camera configuration lives in [camera_init.cpp](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/camera_init.cpp).
-
-The firmware assumes a strict hardware baseline:
-
-- Freenove ESP32-S3-WROOM Board (N16R8), FNK0085 B
-- OV2640 camera
-
-The pin mapping is hardcoded for that board. If the board or camera differs, camera init can fail.
-
-The two main camera setups are:
-
-- `camera_init()`: JPEG stream mode
-- `camera_init_qr()`: grayscale QR mode
-
-Important practical choices:
-
-- stream mode uses PSRAM frame buffers
-- QR mode uses DRAM and grayscale
-- stream mode targets `240x240`
-- the code comments mention DMA throughput issues and avoiding WiFi/camera contention
-
-That means performance and stability are being managed very deliberately.
-
-## HTTP Server Responsibilities
-
-The HTTP layer is in [http_server.cpp](/c:/Users/domin/Downloads/ECE 140B PROJECT/Kinetic-Life-Repo/KineticLife-/firmware/src/http_server.cpp).
-
-Its job is to expose the firmware to the phone browser.
-
-Main endpoints:
-
-- `/hello`
-- `/status`
-- `/capture`
-- `/stream`
-- `/cam`
-- `/end`
-
-What each one means:
-
-- `/hello`: identity and capability handshake
-- `/status`: device health and runtime state
-- `/capture`: one JPEG frame
-- `/stream`: long-lived MJPEG stream
-- `/cam`: runtime camera tuning
-- `/end`: clear credentials and reboot back to pairing
-
-The server also sets permissive CORS headers, which makes browser-based testing easier.
-
-## MJPEG Streaming
-
-`/stream` is the heart of the firmware’s runtime behavior once pairing is complete.
-
-The firmware:
-
-- allows only one active stream at a time
-- applies optional resolution arguments
-- returns multipart MJPEG over HTTP
-- stamps each frame with `X-Frame-Id`
-- stamps each frame with `X-Timestamp-Ms`
-- drops oversized frames above the contract limit
-- updates LED behavior while streaming
-
-This is simple but effective. Instead of a complex media stack, the project uses browser-friendly MJPEG and focuses on reliability.
-
-One especially useful detail is that the stream loop still calls `server.handleClient()`. That lets the board keep responding to other requests while a stream is active.
-
-## Status LED as a State Indicator
-
-The LED behavior is not cosmetic. It communicates device state to the user during demos.
-
-`status_led.cpp` maps states to colors and blink patterns:
-
-- boot -> white
-- pairing -> blue blink
-- connecting -> yellow blink
-- ready/streaming -> green
-- error/fatal -> red
-
-This matters because many embedded flows are hard to debug without a screen. The LED gives immediate physical feedback about what the firmware thinks is happening.
-
-## Session-Based Design
-
-One of the most important product ideas in the firmware is that WiFi is session-based.
-
-This means:
-
-- credentials are stored only for the current demo session
-- the board does not keep a permanent default network
-- ending the session wipes WiFi state
-- the device returns to a clean pairing flow for the next user
-
-That is a strong fit for a demo booth environment where multiple people may use the same hardware one after another.
-
-## Important Takeaways
-
-- `main.cpp` is the state-machine hub.
-- The firmware is organized around pairing mode versus streaming mode.
-- QR pairing is a first-class part of the product, not a setup afterthought.
-- `wifi_qr.cpp` is the key integration file between camera, QR decode, NVS, and WiFi credentials.
-- `quirc.h` is third-party library code; the product logic lives around it, not inside it.
-- The code is heavily shaped by real hotspot behavior, especially iPhone hotspot quirks.
-- The hardware baseline is strict and baked into camera configuration.
-- MJPEG over HTTP is a deliberate simplicity choice for browser compatibility.
-- The LED is part of the debugging and user-feedback system.
-- The firmware already reflects the product’s privacy and demo-session goals.
-
-## Good Questions to Keep Asking While Reading
-
-- Where is behavior driven by the hardware, and where is it driven by product requirements?
-- Which failures return to pairing, and which failures become fatal?
-- What assumptions depend on the Freenove FNK0085 B pin mapping?
-- Why does the code prefer the simplest reliable transport over a more advanced one?
-- How much of the user experience is embedded directly in firmware state transitions?
+These are good first places to look before adding new features.

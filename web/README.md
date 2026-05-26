@@ -1,6 +1,6 @@
 # KineticLife Web
 
-React PWA — ESP32 stream ingest, MediaPipe pose extraction, real-time Aetheris UI, Kinetic Core AI plan engine, and WebSocket/BLE transport.
+React/Vite web workspace — BLE or WiFi camera ingest, browser-local MediaPipe pose extraction, real-time Aetheris UI, Kinetic Core local plan engine, and summary-time DTW submission.
 
 ## Quick Start
 
@@ -74,7 +74,7 @@ Legacy and diagnostic pages served alongside the SPA. Not part of the React buil
 | `debug.html` | ESP32 WS stream + MediaPipe + 14-D angles + lens calibration LUT |
 | `demo.html` | ESP32-only workout demo (v0.2 baseline, stable) |
 | `demo-table.html` | Tablet/desktop: ESP32 or `getUserMedia` fallback (v0.2 baseline) |
-| `kinetic-demo.html` | Experimental page (do not rely on for demos) |
+| `kinetic-demo.html` | Full UI showcase with BLE/WiFi camera support and server DTW submission |
 
 `demo.html` and `demo-table.html` are stable reference pages. New exercises go into `lib/exercise-rules.js`; visual changes into `lib/pose-renderer.js`.
 
@@ -113,7 +113,7 @@ Live SPA cam params (set via `/cam` before WebSocket stream starts):
 | WiFi | 320×240    | 40 | 1     |
 | BLE  | 160×120    | 25 | 1     |
 
-Lens distortion calibration parameters (140° OV5647, fisheye theta model — shared between WiFi and BLE modes):
+Lens distortion calibration parameters used by the current debug/demo pages (OV2640 140° wide-angle, fisheye theta model):
 
 ```
 k1=-0.38  k2=0.18  k3=0  p1=0  p2=0
@@ -138,4 +138,5 @@ Pipeline (both modes): hardware `vflip=1` → software +90° rotate (landscape�
 | Front-camera mirror: flip before inference | Makes lm[12/14/16] map to anatomical right arm |
 | EMA α=0.45 display only, raw for logic | Smooth display without affecting rep counts |
 | Error debounce 4 frames | ~0.4 s at 10 fps matches natural error perception |
-| DTW in Web Worker | O(N²) blocks main thread if inline |
+| WiFi `/ws` token | Firmware returns `ws_token` from `/hello`; WiFi clients should append `?token=...` before relying on `/ws` |
+| DTW is summary-time only | Live feedback stays local; server results merge asynchronously after stop |

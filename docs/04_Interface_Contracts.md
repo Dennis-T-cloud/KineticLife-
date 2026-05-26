@@ -1,739 +1,459 @@
-# 04 · Interface Contracts
+# 04 - Interface Contracts
 
-> **Version**: v0.3 · **Status**: Single source of truth (read by all 3 roles)
-> **Audience**: IoT / Frontend / Backend — **all required**
-> **Change rule**: Any field change must be PR'd here first, reviewed by all 3, then propagated to role docs
+> Last updated: 2026-05-26
+> Status: source of truth for current cross-layer payloads
+
+Any field or semantic change that crosses firmware, web, and server boundaries must be documented here first.
 
 ---
 
-## §1 General
-
-### 1.1 Why this document exists
-
-The project spans 3 platforms (ESP32 C++ / Web TypeScript / Python) with **4 transport interfaces**. Any misalignment explodes at integration time. This contract is **the joint commitment of all 3 engineers**.
-
-Role docs (01/02/03) **do not redefine any format** — they only reference this document.
-
-### 1.2 Protocol overview
-
-```
-┌──────────┐  ① WiFi QR (one-shot)            ┌─────────┐
-│  Phone   │  ───────────────────────>         │ ESP32-S3│
-│   Web    │  ② HTTP /hello (handshake)        │         │
-│          │  <───────────────────────         │         │
-│          │  ③ WebSocket /ws (binary JPEG)    │         │
-│          │  <═══════════════════════         │         │
-└────┬─────┘                                    └─────────┘
-     │ ④ HTTPS REST JSON (post-set reports; WS reserved)
-     ↓
-┌──────────┐
-│  Cloud   │
-└──────────┘
-```
-
-### 1.3 Global conventions
+## 1. Conventions
 
 | Item | Rule |
-|---|------|
-| **Endianness** | All binary little-endian |
-| **Encoding** | UTF-8 |
-| **Timestamps** | `ts_ms` = UTC epoch ms, int64; `frame_id` = monotonic uint32 starting from ESP32 boot |
-| **Cloud protocol version** | Every cloud JSON payload MUST carry `"v": 1`; only **backwards-compatible additions** allowed (new fields must be optional); breaking changes bump to `v: 2` and are negotiated by endpoint/client capability |
-| **ID generation** | `session_id` / `user_id` = UUIDv4 string; `device_id` = ESP32 MAC last 6 bytes hex |
-| **Coordinate units** | 3D world landmarks = meters; image landmarks = normalized [0, 1] |
-| **Numeric precision** | Landmark coords 4 decimals; angles 1 decimal; confidence 2 decimals |
+| --- | --- |
+| JSON encoding | UTF-8 |
+| Binary camera frames | raw JPEG bytes |
+| Timestamps | `ts_ms` is epoch milliseconds unless noted |
+| Frame ids | monotonically increasing within the local stream/action |
+| Protocol version | cloud action submissions use `v: 1` |
+| Joint angle count | exactly 14 values |
+| Missing angle | JSON `null` |
+| Device id | MAC last 3 bytes as lowercase hex |
 
 ---
 
-## §2 ESP32 ↔ Phone (local WiFi)
+## 2. Firmware BLE Contract
 
-### 2.1 WiFi QR string format (Phone → ESP32, one-shot pairing)
+### 2.1 BLE Advertised Name
 
-**Primary format**: compact KineticLife v1 WiFi QR string, optimized for reliable ESP32 camera decoding.
-
+```text
+KineticLife-BLE-<mac6>
 ```
+
+### 2.2 GATT UUIDs
+
+| Item | UUID | Direction |
+| --- | --- | --- |
+| Service | `9b8f0001-6f4d-4d4f-9c9a-4b4c49464501` | discover |
+| TX notify | `9b8f0002-6f4d-4d4f-9c9a-4b4c49464501` | ESP32 to browser |
+| RX control | `9b8f0003-6f4d-4d4f-9c9a-4b4c49464501` | browser to ESP32 |
+
+### 2.3 RX Commands
+
+Commands are UTF-8 text:
+
+```text
+mode=wifi
+mode=ble
+size=<8..180>
+gap=<4..100>
+start=<1000..60000>
+cam=<0..60000>
+stop
+```
+
+`cam=0` means stream camera snapshots until disconnect or `stop`.
+
+### 2.4 Camera Snapshot Notifications
+
+Frame metadata notification:
+
+```text
+CAM:<frame_id>:<bytes>:<chunks>:<size>:<q>
+```
+
+Then raw JPEG chunks are sent until `<bytes>` have been received. The browser reconstructs a Blob/ImageBitmap from those chunks.
+
+---
+
+## 3. Firmware WiFi Contract
+
+### 3.1 Pairing QR
+
+Compact KineticLife payload:
+
+```text
 K1:<TYPE_CODE>:<SSID_LEN>:<SSID><PASSWORD>
 ```
 
-`TYPE_CODE` values: `W` = WPA/WPA2, `E` = WEP, `N` = no password.
+`TYPE_CODE`:
 
-**Compatibility format**: firmware also accepts the industry-standard WiFi QR string.
+| Code | Meaning |
+| --- | --- |
+| `W` | WPA/WPA2 |
+| `E` | WEP |
+| `N` | no password |
 
-```
+Compatibility payload:
+
+```text
 WIFI:S:<SSID>;T:<TYPE>;P:<PASSWORD>;;
 ```
 
-**Fields**:
+### 3.2 Preset-Network Soft AP
 
-| Field | Required | Value | Notes |
-|-----|------|---|------|
-| `S` | yes | string | Phone hotspot SSID. `;` `:` `,` `\` must be backslash-escaped |
-| `T` | yes | `WPA` / `WEP` / `nopass` | Encryption type |
-| `P` | omit if `T=nopass` | string | Password |
+When WiFi mode has no active session, firmware starts:
 
-**Examples**:
-```
-K1:W:13:DennisPhone5Gmy_pass_123
-WIFI:S:DennisPhone-5G;T:WPA;P:my_pass_123;;
+```text
+SSID: KineticLife-Setup
+Password: kineticlife
+Base URL: http://192.168.4.1
 ```
 
-**Constraints**:
-- SSID **must not contain spaces** (the spec allows them, but some phone hotspots break)
-- Phone hotspot **must be 2.4 GHz** (ESP32-S3 doesn't support 5 GHz)
-- Web must show this constraint to the user before generating the QR
+Endpoints:
 
-### 2.2 mDNS discovery
+| Endpoint | Response |
+| --- | --- |
+| `/config-networks` | array of `{ssid, auth}` from local firmware config |
+| `/try-config?idx=N` | `{ok, ssid}` or `{ok:false,error}` |
+| `/config-status` | `{state,msg}` where state is `idle`, `connecting`, `connected`, or `failed` |
 
-After joining WiFi, ESP32 broadcasts:
+### 3.3 mDNS
 
+After WiFi connection:
+
+```text
+http://fitcam-<mac6>.local
 ```
-fitcam-<mac6>.local
-```
 
-where `<mac6>` = lowercase hex of last 6 bytes of MAC (e.g. `a1b2c3`).
+### 3.4 `GET /hello`
 
-Web tries to resolve on launch; falls back to manual IP entry on failure.
-
-### 2.3 HTTP handshake `/hello`
-
-**Request**: `GET http://fitcam-<mac6>.local/hello`
-**Timeout**: 2 s
-
-**Response**: `200 OK`, `Content-Type: application/json`
+Current firmware response:
 
 ```json
 {
   "v": 1,
-  "device_id": "a1b2c3",
+  "device_id": "d37d7c",
   "fw_version": "0.3.0",
-  "mac": "aa:bb:cc:a1:b2:c3",
+  "mac": "80:b5:4e:d3:7d:7c",
   "board_model": "Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B",
   "cam_model": "OV2640 140deg wide-angle",
   "state": "ready",
-  "supported_resolutions": ["160x120@20", "240x240@15", "320x240@10"],
-  "default_resolution": "240x240@15",
+  "ws_clients": 0,
   "uptime_s": 42,
-  "free_psram_kb": 2048
+  "free_psram_kb": 8144,
+  "ws_token": "a1b2c3d4"
 }
 ```
 
-`board_model` is the v0.3 calibration baseline and should remain exactly `"Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B"` unless the connected hardware is intentionally different.
+Clients must treat `ws_token` as required for WiFi WebSocket streaming.
 
-**Errors**: connection failure → Web shows "device not found"; any non-200 = pairing incomplete.
+### 3.5 `GET /status`
 
-### 2.4 HTTP status `/status`
-
-**Request**: `GET http://fitcam-<mac6>.local/status`
-**Timeout**: 2 s
-
-**Response**: `200 OK`, `Content-Type: application/json`
+Current firmware response includes:
 
 ```json
 {
   "state": "ready",
-  "device_id": "a1b2c3",
+  "device_id": "d37d7c",
   "fw_version": "0.3.0",
-  "board_model": "Freenove ESP32-S3-WROOM Board (N16R8) FNK0085 B",
   "cam_model": "OV2640 140deg wide-angle",
   "camera_mode": "stream",
   "pixel_format": "JPEG",
-  "frame_size": "240x240",
+  "frame_size": "320x240",
   "jpeg_quality": 12,
   "ip": "192.168.1.23",
-  "rssi_dbm": -42,
+  "rssi_dbm": -55,
+  "wifi_quality": 90,
+  "wifi_channel": 6,
+  "wifi_bssid": "aa:bb:cc:dd:ee:ff",
   "wifi_status": 3,
-  "stream_count": 1,
+  "wifi_status_name": "connected",
+  "stream_count": 0,
+  "ws_clients": 0,
   "uptime_s": 42,
-  "free_heap_kb": 240,
-  "free_psram_kb": 2048
+  "cpu_mhz": 240,
+  "free_heap_kb": 180,
+  "min_free_heap_kb": 160,
+  "largest_heap_block_kb": 80,
+  "free_psram_kb": 8144,
+  "psram_size_kb": 8192,
+  "largest_psram_block_kb": 7600
 }
 ```
 
-`state` values: `boot`, `pairing`, `connecting`, `ready`, `streaming`, `error`, `fatal`.
+### 3.6 `GET/POST /cam`
 
-### 2.5 WebSocket stream `/ws`
+Accepted query params:
 
-**Endpoint**: `ws://fitcam-<mac6>.local/ws`
-
-**Transport**: Binary WebSocket. Each WebSocket message is one complete JPEG frame (raw JPEG bytes, no wrapper). Firmware uses a latest-frame policy: it sends only to clients whose WebSocket send queue is empty. If a client is still draining an older frame, the current frame is skipped for that client instead of being queued behind stale data.
-
-**Before connecting**, client should apply camera settings:
-
+```text
+res
+q
+brightness
+contrast
+saturation
+sharpness
+ae_level
+vflip
+hmirror
 ```
-GET http://fitcam-<mac6>.local/cam?res=320x240&q=12&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0
-```
 
-**Constraints**:
-- Each binary message = one complete JPEG; client decodes with `createImageBitmap()` or `URL.createObjectURL()`
-- Frame rate target ≈ 9 FPS at QVGA JPEG on the OV2640/140° calibration hardware
-- Max JPEG size 256 KB (frames exceeding this are dropped by firmware)
-- Firmware and client both implement backpressure: firmware skips clients with pending send queues; client decodes one frame at a time and keeps only the newest pending frame
-- ESP32 calls `ws.cleanupClients()` every loop tick to reclaim closed-connection memory
-
-### 2.6 End session `/end`
-
-**Request**: `POST http://fitcam-<mac6>.local/end`
-
-**Response**: `200 OK`, `Content-Type: application/json`
+Response:
 
 ```json
 {
   "ok": true,
-  "action": "clear_wifi_and_reboot"
+  "scheduled": true,
+  "frame_size": "320x240",
+  "jpeg_quality": 12
 }
 ```
 
-ESP32 clears the temporary WiFi session in NVS and reboots into QR pairing mode. Web should navigate back to `pair.html` after calling this endpoint.
+The response means values were accepted for deferred application, not necessarily already written to the sensor.
 
-### 2.7 `/ctrl` parameter adjustment (placeholder, not in v0.3)
+### 3.7 `GET /capture`
 
-`POST /ctrl` body `{"brightness": 0.6}` etc. **Reserved, not implemented**.
+Returns a single `image/jpeg` frame or:
+
+```json
+{"ok": false, "error": "capture_failed"}
+```
+
+### 3.8 `GET/POST /mode`
+
+Request:
+
+```text
+/mode?set=wifi
+/mode?set=ble
+```
+
+Success response:
+
+```json
+{"ok": true, "switching_to": "ble"}
+```
+
+### 3.9 `GET/POST /end`
+
+Response:
+
+```json
+{"ok": true, "action": "clear_wifi_and_reboot"}
+```
+
+Firmware clears WiFi credentials and reboots.
+
+### 3.10 WebSocket `/ws`
+
+Endpoint:
+
+```text
+ws://<device>/ws?token=<ws_token from /hello>
+```
+
+Payload:
+
+- binary WebSocket
+- one message equals one complete JPEG
+- max JPEG size 256 KB
+- no JSON wrapper
+- no frame id on the wire
+
+Unauthorized WebSocket upgrades return HTTP 401.
 
 ---
 
-## §3 Phone → Cloud (summary/report upstream; WS reserved)
+## 4. Browser to Server Contract
 
-**Current demo URL**: `POST https://api.kineticlife.app/api/actions`
-**Reserved full-cloud URL**: `wss://api.kineticlife.app/ws?token=<jwt>`
-**Reserved WS subprotocol**: `kineticlife.v1`
-**Reserved WS heartbeat**: client sends `{"type":"ping"}` every 20 s; server replies `{"type":"pong"}`
+### 4.1 `POST /api/actions`
 
-### 3.1 `client.hello` — session init (reserved logged-in / full-cloud modes)
-
-> Current standalone Demo Mode may skip `client.hello` and call `/api/actions` directly with a generated `session_id`. Logged-in modes and future realtime cloud modes should use this session handshake.
-
-```json
-{
-  "v": 1,
-  "type": "client.hello",
-  "session_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "user_id": "anon-a1b2c3",
-  "mode": "jumpin",
-  "action_hint": null,
-  "device_id": "a1b2c3",
-  "client_ts_ms": 1745520000000,
-  "client_capabilities": {
-    "mediapipe_version": "0.10.14",
-    "has_world_landmarks": true,
-    "joint_angles_version": 1
-  }
-}
-```
-
-| Field | Type | Notes |
-|-----|------|------|
-| `session_id` | UUIDv4 | Unique ID for this training session |
-| `user_id` | string / null | Logged-in user ID; in Jump-in anonymous mode = `"anon-<deviceId>"` |
-| `mode` | `"jumpin"` / `"duolingo"` / `"demo"` | Entry mode |
-| `action_hint` | string / null | Expected action in Duolingo (`"squat"` etc.); `null` for Jump-in |
-| `client_capabilities.joint_angles_version` | int | Version from §5; consistency check between client and server algorithms |
-
-**Server response**: `server.ack` (see §4.1)
-
-### 3.2 `client.keypoints` — realtime keypoints (reserved full-cloud mode)
-
-> Current Demo Mode does **not** send realtime keypoints to the cloud. Live feedback is local heuristic logic in the browser. This message is reserved for future Jump-in/Duolingo modes that need cloud-side realtime feedback.
-
-```json
-{
-  "v": 1,
-  "type": "client.keypoints",
-  "session_id": "f47ac10b-...",
-  "frame_id": 1234,
-  "ts_ms": 1745520001500,
-  "world_landmarks": [
-    [0.0123, -0.4521, 0.0987, 0.98],
-    "... 33 × [x, y, z, visibility]"
-  ],
-  "joint_angles": [
-    158.2, 162.5, 91.3, 89.7, 174.2, 172.8,
-    165.0, 164.3, 175.0, 176.1, 178.5, 177.2, 10.2, 8.5
-  ],
-  "classifier_hint": null
-}
-```
-
-| Field | Type | Notes |
-|-----|------|------|
-| `world_landmarks` | `[33][4]` float | 3D world coords (x,y,z meters) + visibility [0,1] |
-| `joint_angles` | `[14]` float | See §5; degrees, range [0, 180] |
-| `classifier_hint` | string / null | Edge coarse hint (e.g. `"suspect_knee_valgus"`); nullable |
-
-**Send rate**: 10–15 Hz (matches MJPEG; client may downsample)
-
-**Server response**: `server.feedback` (see §4.2) in full-cloud modes only. Demo Mode does not depend on this response for live counting or form hints.
-
-### 3.3 `client.gesture` — gesture event
-
-```json
-{
-  "v": 1,
-  "type": "client.gesture",
-  "session_id": "f47ac10b-...",
-  "ts_ms": 1745520005000,
-  "gesture": "start",
-  "hold_ms": 1500
-}
-```
-
-`gesture` enum: `"start"` / `"end_set"` / `"pause"` / `"resume"` / `"calibrate"` / `"toggle"`
-
-### 3.4 `client.set_control` — manual fallback (lowest-priority UX)
-
-```json
-{
-  "v": 1,
-  "type": "client.set_control",
-  "session_id": "f47ac10b-...",
-  "ts_ms": 1745520030000,
-  "action": "start"
-}
-```
-
-`action` enum: `"start"` / `"end"`
-
-### 3.5 `client.action_submit` — completed action sequence (post-set DTW report)
-
-After the browser detects a complete rep, or when the user presses Finish Set, the client may submit completed-rep sequences for summary-time DTW. This is not a realtime dependency; local heuristic feedback remains available if the request fails.
+Current request:
 
 ```json
 {
   "v": 1,
   "type": "client.action_submit",
-  "session_id": "f47ac10b-...",
-  "action_id": "act-2025-4-24-00012",
+  "session_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "action_id": "act-2026-05-26-0001",
   "exercise_hint": "squat",
-  "ts_start_ms": 1745520010000,
-  "ts_end_ms": 1745520012500,
+  "ts_start_ms": 1779820800000,
+  "ts_end_ms": 1779820804000,
   "frames": [
     {
-      "frame_id": 1234,
-      "ts_ms": 1745520010000,
-      "joint_angles": [158.2, 162.5, "..."],
-      "world_landmarks": [
-        [0.0123, -0.4521, 0.0987, 0.98],
-        "... 33 × [x, y, z, visibility]"
-      ]
-    },
-    "... 25–60 frames"
+      "frame_id": 0,
+      "ts_ms": 1779820800000,
+      "joint_angles": [153.6, 151.2, null, 152.0, 162.6, 161.7, 15.6, 14.1, 106.8, 107.9, 150.1, 155.5, 11.2, 1.3]
+    }
   ]
 }
 ```
 
-| Field | Required | Notes |
-| --- | --- | --- |
-| `frames[].joint_angles` | yes | 14 dims; see §5 |
-| `frames[].world_landmarks` | **optional** | `[33][4]` floats `[x, y, z, visibility]`; pelvis-origin meters; included when client supports replay (see §9) |
+Field rules:
 
-> `world_landmarks` is omitted by default and only included when the client opts in for replay recording. DTW and classification use only `joint_angles`. The server stores `world_landmarks` separately and never uses them for scoring.
+| Field | Rule |
+| --- | --- |
+| `v` | must be `1` |
+| `type` | `"client.action_submit"` |
+| `session_id` | string; UUID preferred |
+| `action_id` | unique string for this submission |
+| `exercise_hint` | client-selected hint; server may classify to another template |
+| `frames` | non-empty list |
+| `frames[].joint_angles` | exactly 14 floats/nulls |
 
-**Replay opt-in**: client signals intent by setting `"replay": true` in `client.hello.client_capabilities` (additive field, ignored by servers that don't support it).
+Current server models do not accept `world_landmarks`.
 
----
+### 4.2 `GET /api/templates`
 
-## §4 Cloud → Phone (summary/report responses; WS reserved)
-
-### 4.1 `server.ack` — handshake confirm
+Response:
 
 ```json
 {
-  "v": 1,
-  "type": "server.ack",
-  "session_id": "f47ac10b-...",
-  "server_ts_ms": 1745520000123,
-  "server_version": "0.3.0",
-  "negotiated_v": 1,
-  "templates_available": ["squat", "pushup", "plank"]
+  "squat": [153.6, 154.2],
+  "deadlift": [162.2, 160.8]
 }
 ```
 
-### 4.2 `server.feedback` — DTW feedback / summary report item
+The key is exercise id. The value is the representative key-angle signal for charting.
+
+### 4.3 `GET /api/history/{action_id}`
+
+Response:
 
 ```json
 {
-  "v": 1,
-  "type": "server.feedback",
-  "session_id": "f47ac10b-...",
-  "for_frame_id": 1234,
-  "server_ts_ms": 1745520001700,
+  "action_id": "act-...",
+  "exercise": "squat",
+  "correct": true,
+  "dtw_distance": 1.2345,
+  "completeness": 0.87,
+  "problem_joints": [],
+  "frames": [
+    {
+      "frame_id": 0,
+      "ts_ms": 1779820800000,
+      "joint_angles": [153.6, 151.2, 141.0, 152.0, 162.6, 161.7, 15.6, 14.1, 106.8, 107.9, 150.1, 155.5, 11.2, 1.3]
+    }
+  ]
+}
+```
+
+History is in-memory only in current code.
+
+---
+
+## 5. Server to Browser Action Response
+
+`POST /api/actions` returns:
+
+```json
+{
+  "action_id": "act-...",
+  "exercise": "squat",
   "correct": false,
-  "classified_as": "squat",
-  "classifier_confidence": 0.92,
+  "dtw_distance": 6.421,
+  "completeness": 0.63,
   "problem_joints": [
-    {"joint": "left_knee", "severity": 0.72, "issue": "valgus"},
-    {"joint": "lumbar", "severity": 0.41, "issue": "rounded"}
+    {
+      "joint": "left_knee",
+      "severity": 0.72,
+      "issue": "deviation"
+    }
   ],
-  "completeness": 0.68,
-  "dtw_distance": 3.42,
-  "dtw_threshold": 2.10,
-  "reference_template_id": "squat_standard_v2"
+  "processed_at": "2026-05-26T10:00:00.000000+00:00"
 }
 ```
 
-| Field | Type | Notes |
-|-----|------|------|
-| `for_frame_id` | uint32 / null | The `client.keypoints.frame_id` this feedback addresses in full-cloud mode; null/omitted for post-set reports |
-| `correct` | bool | Overall correctness |
-| `problem_joints[].joint` | string | English joint name from §5 |
-| `problem_joints[].severity` | [0,1] | Higher = more wrong |
-| `problem_joints[].issue` | string | Issue enum, see §6.2 |
-| `completeness` | [0,1] | Range-of-motion completion |
-| `dtw_distance` | float | Distance to template |
-
-### 4.3 `server.set_event` — auto-set detection / summary events
-
-```json
-{
-  "v": 1,
-  "type": "server.set_event",
-  "session_id": "f47ac10b-...",
-  "ts_ms": 1745520040000,
-  "event": "rep_detected",
-  "rep_index": 8,
-  "set_index": 1
-}
-```
-
-`event` enum: `"set_start"` / `"rep_detected"` / `"rest_started"` / `"set_end"`
-
-For `"set_end"`, an additional `summary` may be included. In the current demo, the browser can show a local summary immediately and merge this server summary when a post-set DTW report returns:
-```json
-{
-  "summary": {
-    "rep_count": 12,
-    "correct_count": 9,
-    "avg_completeness": 0.82,
-    "duration_s": 38.5
-  }
-}
-```
-
-### 4.4 `server.advice_tip` — async coaching advice (off main path)
-
-```json
-{
-  "v": 1,
-  "type": "server.advice_tip",
-  "session_id": "f47ac10b-...",
-  "scope": "set_end",
-  "markdown": "Set complete at 85%. Knee valgus is half of last week — keep going!",
-  "generated_at_ms": 1745520041000,
-  "model": "claude-haiku"
-}
-```
-
-`scope` enum: `"login"` / `"set_end"` / `"day_end"` / `"consecutive_fail"`
-
-### 4.5 `server.error` — error notification
-
-```json
-{
-  "v": 1,
-  "type": "server.error",
-  "session_id": "f47ac10b-...",
-  "code": "classifier_reject",
-  "message": "Action not recognized. Hold T-pose for 2s to recalibrate.",
-  "recoverable": true
-}
-```
-
-Error codes in §6.1.
+Current issue code emitted by `main.py` is `"deviation"` for detected spikes.
 
 ---
 
-## §5 14-D Joint Angle Definitions
+## 6. 14-D Joint Angle Order
 
-> **Version**: `joint_angles_version = 1`. Client and server algorithms must match exactly. Any algorithmic change → bump this version → check at `client.hello`.
+`joint_angles_version = 1`
 
-**Index rule**: array indices 0–13, fixed order.
-
-| Idx | Name | Calculation (vector angle) | Range (°) |
-|-----|------|---------------------------|---------|
-| 0 | `left_knee` | angle(L_HIP→L_KNEE, L_KNEE→L_ANKLE) | [0, 180] |
-| 1 | `right_knee` | angle(R_HIP→R_KNEE, R_KNEE→R_ANKLE) | [0, 180] |
-| 2 | `left_elbow` | angle(L_SHOULDER→L_ELBOW, L_ELBOW→L_WRIST) | [0, 180] |
-| 3 | `right_elbow` | angle(R_SHOULDER→R_ELBOW, R_ELBOW→R_WRIST) | [0, 180] |
-| 4 | `left_hip` | angle(L_SHOULDER→L_HIP, L_HIP→L_KNEE) | [0, 180] |
-| 5 | `right_hip` | angle(R_SHOULDER→R_HIP, R_HIP→R_KNEE) | [0, 180] |
-| 6 | `left_shoulder` | angle(L_HIP→L_SHOULDER, L_SHOULDER→L_ELBOW) | [0, 180] |
-| 7 | `right_shoulder` | angle(R_HIP→R_SHOULDER, R_SHOULDER→R_ELBOW) | [0, 180] |
-| 8 | `left_ankle` | angle(L_KNEE→L_ANKLE, L_ANKLE→L_FOOT_INDEX) | [0, 180] |
-| 9 | `right_ankle` | angle(R_KNEE→R_ANKLE, R_ANKLE→R_FOOT_INDEX) | [0, 180] |
-| 10 | `left_wrist` | angle(L_ELBOW→L_WRIST, L_WRIST→L_INDEX) | [0, 180] |
-| 11 | `right_wrist` | angle(R_ELBOW→R_WRIST, R_WRIST→R_INDEX) | [0, 180] |
-| 12 | `trunk_lean` | angle(MID_HIP→MID_SHOULDER, world_up=[0,-1,0]) | [0, 90] |
-| 13 | `pelvis_tilt` | angle(L_HIP→R_HIP, world_horizontal) | [0, 45] |
-
-**`MID_HIP` / `MID_SHOULDER`** = arithmetic mean of left/right counterparts.
-
-**MediaPipe landmark indices** (for implementation):
-- L_HIP = 23, R_HIP = 24, L_KNEE = 25, R_KNEE = 26, L_ANKLE = 27, R_ANKLE = 28
-- L_SHOULDER = 11, R_SHOULDER = 12, L_ELBOW = 13, R_ELBOW = 14, L_WRIST = 15, R_WRIST = 16
-- L_FOOT_INDEX = 31, R_FOOT_INDEX = 32, L_INDEX = 19, R_INDEX = 20
-
-**Formula** (reference, JS/Python must match):
-
-```
-angle(v1, v2) = degrees(arccos(dot(v1, v2) / (|v1| × |v2|)))
-```
-
-**Low-confidence handling**:
-- If any related landmark has `visibility < 0.3`, the angle = `NaN`
-- On the wire, `NaN` is encoded as JSON `null`
-
----
-
-## §6 Error & Issue Codes
-
-### 6.1 Error codes (`server.error.code`)
-
-| Code | Meaning | recoverable |
-|------|------|-------------|
-| `auth_failed` | JWT invalid | false |
-| `bad_message` | malformed JSON | true |
-| `version_mismatch` | protocol version incompatible | false |
-| `joint_angles_version_mismatch` | §5 version mismatch | false |
-| `classifier_reject` | classifier can't recognize action | true |
-| `low_visibility` | keypoint confidence too low | true |
-| `template_not_found` | no matching template | true |
-| `rate_limit` | upstream too fast | true |
-| `internal_error` | server exception | true |
-
-### 6.2 Problem joint codes (`problem_joints[].issue`)
-
-| Code | Meaning | Applicable joints |
-|------|------|---------|
-| `valgus` | inward collapse | knee, elbow |
-| `varus` | outward bow | knee |
-| `rounded` | rounded back | lumbar, trunk |
-| `hyperextended` | over-extended | knee, elbow, lumbar |
-| `insufficient_depth` | not deep enough | hip, knee |
-| `excessive_lean` | leaning too far forward | trunk |
-| `asymmetric` | left-right asymmetric | knee, hip, shoulder |
-
-New issue codes must be registered here AND bump §5 version.
-
----
-
-## §7 Minimum Round-trip Example (for joint integration testing)
-
-A complete demo squat set with local live feedback and a post-set DTW report:
-
-```
-[Web] opens demo.html?cam=http://fitcam-xxxxxx.local
-[Web] connects to ESP32 /ws and runs MediaPipe locally
-[Web] local heuristic state machine counts rep 1
-[Web] local heuristic state machine counts rep 2
-[Web] user presses "Finish Set"
-[Web] immediately shows local summary {rep_count: 2, duration_s, heuristic_accuracy}
-
-[Web] → POST /api/actions for rep 1 {
-  type: "client.action_submit",
-  exercise_hint: "squat",
-  frames: ["... rep 1 joint_angles[T,14]"]
-}
-[Cloud] → ActionResponse {
-  correct: true,
-  completeness: 0.86,
-  dtw_distance: 1.9,
-  problem_joints: []
-}
-[Web] repeats for rep 2 and aggregates DTW report items into the summary card
-```
-
-**Integration test**: Web must still work with cloud disabled. With cloud enabled, Finish Set should submit completed-rep angle sequences and merge a DTW report without blocking the local summary.
-
----
-
-## §8 Database Schema Contract (server-internal, but client needs to know)
-
-Actual Postgres tables live in `03_Cloud_DTW.md`. This section only enumerates **fields whose semantics must align across client and server**.
-
-| Table | Field | Type | Source |
-|---|------|------|-----|
-| `sessions` | `session_id` | UUID | `client.hello` |
-| | `user_id` | UUID / null | `client.hello` |
-| | `mode` | enum | `client.hello` |
-| | `started_at` | timestamptz | server on hello |
-| `actions` | `action_id` | string | `client.action_submit` |
-| | `session_id` | UUID FK | |
-| | `exercise` | string | classifier output |
-| | `correct` | bool | DTW output |
-| | `dtw_distance` | float | |
-| | `joint_angles_compressed` | bytea | gzip of `joint_angles` series |
-| | `world_landmarks_compressed` | bytea / null | gzip of `world_landmarks` series; **null unless client sent replay opt-in**; see privacy note below |
-| `gesture_events` | `gesture` | enum | `client.gesture` |
-| `advice_tips` | `markdown` | text | `server.advice_tip` |
-
-**Privacy contract**: NO table may store raw video or raw `image_landmarks`. Only:
-
-- 14-D `joint_angles` (view-invariant, de-identified) — always stored
-- Derived labels (`correct`, `problem_joints`, `completeness`) — always stored
-- `world_landmarks` (pelvis-origin body geometry, NOT absolute spatial position, NOT tied to location or identity) — **stored only when client explicitly opts in for replay** (`client.hello.client_capabilities.replay: true`); retained per-rep for replay playback only; never used for scoring or external processing
-
-> **Why worldLandmarks are permitted for replay**: MediaPipe `worldLandmarks` use the pelvis midpoint as origin (meter-scale body geometry). They encode body shape/pose, not spatial location. This is meaningfully different from GPS or camera-position data. The scoped exception applies only to replay-enabled sessions and is always nullable.
-
----
-
-## §9 Versioning Rules
-
-1. **Adding a field** = compatible, no `v` bump. New fields must be optional; receivers must ignore unknown fields without erroring.
-2. **Removing a field / changing semantics** = breaking, **bump `v`**. Logged-in/full-cloud modes negotiate at `client.hello`; REST-only demo endpoints reject unsupported versions explicitly.
-3. **§5 joint angle changes** = bump `joint_angles_version` (independent from `v`).
-4. **Change process**: PR this doc → 3-way review → merge → propagate to role docs.
-
----
-
-## §10 Demo Mode — Local Heuristic Feedback + DTW Summary Report
-
-> **Status**: real-time feedback implemented in `web/demo.html` / `web/demo-table.html`; DTW report is an optional summary-time integration.
-> **Purpose**: Demo Day prototype demonstrating stable real-time form feedback, rep counting, and a summary card that can later merge DTW report data.
-> This replaces the old cloud-DTW-as-live-main-path plan. The live path must stay usable with no server.
-
-### 10.1 Architecture
-
-```
-ESP32 /ws (binary JPEG, 320×240 landscape)
-       → WebSocket → createImageBitmap() → latestBitmap
-       → rotate 90° CW → inferCanvas (120×160 portrait)
-       → MediaPipe PoseLandmarker.detectForVideo(inferCanvas)
-       → result.landmarks[0]  (image-normalized coords)
-       → calcAngle()          (Kaggle arctan2 method, 2D)
-       → threshold checks     → colored skeleton overlay
-       → state machine        → rep counter
-       [on "Finish Set"] → immediate in-browser summary card
-                         → optional POST completed reps for DTW summary report
-```
-
-**Camera source**: ESP32 WebSocket stream only. No local webcam.
-If no `?cam=` URL parameter and no `kineticlife.camUrl` in localStorage, page shows error badge and stays black (MediaPipe is not loaded).
-
-**Entry point**: `pair.html` → "Demo Mode" button → `demo.html?cam=<url>`.
-
-No server calls during recording. Data stays entirely in the browser until Finish Set. If DTW reporting is enabled, only completed-rep joint-angle sequences are submitted after the set.
-
-### 10.1.1 WebSocket stream handling
-
-Identical pattern to `debug.html`. One decode in flight at a time; newest frame wins when a second arrives during decoding (no latency creep). Auto-reconnects every 2 s on close.
-
-```text
-Binary JPEG ArrayBuffer
-  → createImageBitmap(Blob)  [async, GPU-accelerated]
-  → latestBitmap (ImageBitmap, previous released via .close())
-```
-
-### 10.2 Angle calculation — Kaggle arctan2 method (JS)
-
-```js
-function calcAngle(a, b, c) {
-  // a, b, c = MediaPipe landmark objects { x, y, visibility }
-  // b = vertex joint
-  const rad = Math.atan2(c.y - b.y, c.x - b.x)
-            - Math.atan2(a.y - b.y, a.x - b.x);
-  let deg = Math.abs(rad * 180 / Math.PI);
-  if (deg > 180) deg = 360 - deg;
-  return Math.round(deg);
-}
-```
-
-Uses **image-space 2D coords** (`result.landmarks[0]`), not world landmarks.
-This differs from `debug.html`'s `computeAngles()` which uses 3D world landmarks.
-
-### 10.3 Exercises and key parameters
-
-| Exercise | Key landmark triplet (vertex = middle) | Rest condition | Work condition |
-|---|---|---|---|
-| Bodyweight Squat | hip→knee→ankle (both sides, avg) | avg > 160° | avg < 100° |
-| Dumbbell Curl (Right Arm) | shoulder→elbow→wrist (right) | angle > 155° | angle < 55° |
-| Dumbbell Lateral Raise | hip→shoulder→elbow (both sides, avg) | avg < 30° | avg > 75° |
-
-Rep counted when state transitions: `neutral → rest → work → rest`.
-
-### 10.4 Form checks per exercise
-
-#### Bodyweight Squat
-
-| Check | Condition (fail = red) | Hint |
-| --- | --- | --- |
-| Left depth | During work: knee angle ≥ 110° | Squat lower on the left |
-| Right depth | During work: knee angle ≥ 110° | Squat lower on the right |
-| Symmetry | `\|left − right\|` ≥ 20° at any time | Uneven leg drive |
-
-#### Dumbbell Curl (Right Arm)
-
-| Check | Condition (fail = red) | Hint |
-| --- | --- | --- |
-| Curl range | During work: elbow angle ≥ 60° | Curl higher |
-| Elbow height | `elbow.y − shoulder.y < −0.05` (elbow above shoulder) | Do not lift your elbow |
-
-#### Dumbbell Lateral Raise
-
-| Check | Condition (fail = red) | Hint |
-| --- | --- | --- |
-| Right height | During work: shoulder abduction ≤ 70° | Raise your right arm to shoulder height |
-| Left height | During work: shoulder abduction ≤ 70° | Raise your left arm to shoulder height |
-| Elbow lock (R) | During work: elbow angle ≥ 165° | Keep your right elbow slightly bent; do not lock it |
-| Symmetry | `\|right − left\|` ≥ 25° at any time | Arm heights do not match |
-
-### 10.5 Canvas rendering spec
-
-**Display vs. logic landmark split**: `rawLm = result.landmarks[0]` drives all rep counting, angle thresholds, and form checks. A separate `displayLm` (EMA-smoothed, α = 0.45; low-visibility joints hold last position) is used exclusively for skeleton drawing, angle annotations, and non-authoritative UI effects. Error bones/hints are debounced: 4 consecutive failing frames to turn red, 4 consecutive passing frames to clear.
-
-**Current shared modules**:
-
-| Module | Responsibility |
+| Index | Name |
 | --- | --- |
-| `web/lib/exercise-rules.js` | Exercise definitions, threshold checks, angle math, skeleton constants |
-| `web/lib/landmark-smoothing.js` | Display-only EMA landmark smoothing |
-| `web/lib/pose-renderer.js` | Canvas skeleton and angle annotation rendering |
-| `web/lib/feedback-effects.js` | Non-authoritative visual effects for reps, success scanlines, particles, and error pulses |
-| `web/mediapipe_loader.mjs` | Remote/local MediaPipe bundle, WASM, and model fallback |
-| `web/runtime_log.mjs` | Low-frequency browser diagnostics |
+| 0 | `left_knee` |
+| 1 | `right_knee` |
+| 2 | `left_elbow` |
+| 3 | `right_elbow` |
+| 4 | `left_hip` |
+| 5 | `right_hip` |
+| 6 | `left_shoulder` |
+| 7 | `right_shoulder` |
+| 8 | `left_ankle` |
+| 9 | `right_ankle` |
+| 10 | `left_wrist` |
+| 11 | `right_wrist` |
+| 12 | `trunk_lean` |
+| 13 | `pelvis_tilt` |
 
-| Element | Style |
+MediaPipe indices used by the web hook:
+
+| Landmark | Index |
 | --- | --- |
-| Background | `#000000` + `rgba(0,0,0,0.38)` video overlay |
-| Skeleton — correct | stroke `#DEFF9A`, lineWidth 6 |
-| Skeleton — error | stroke `#FF5555`, lineWidth 8 (shown only after 4-frame debounce) |
-| Skeleton — low visibility | stroke `rgba(255,255,255,0.45)`, lineWidth 2, alpha 0.4 |
-| Joint dots | radius 5px, same color as connected bones |
-| Head center anchor | nose (lm[0]); hollow circle radius 8, fill `rgba(255,255,255,0.22)`, stroke `rgba(255,255,255,0.65)` lineWidth 2; drawn only when visibility ≥ 0.5; reserved for head-motion features |
-| Angle annotation | white 24 px bold text drawn on canvas near vertex joint; background `rgba(0,0,0,0.55)` rect |
-| Rep-count effect | Lime counter pop, small `+N` float, 20-40 particle burst near torso center |
-| Success scanline | Lime circular glow sweep over display skeleton after a counted rep |
-| Error effect | Red pulsing glow over debounced failing bones only; no change to detection logic |
+| left shoulder | 11 |
+| right shoulder | 12 |
+| left elbow | 13 |
+| right elbow | 14 |
+| left wrist | 15 |
+| right wrist | 16 |
+| left index | 19 |
+| right index | 20 |
+| left hip | 23 |
+| right hip | 24 |
+| left knee | 25 |
+| right knee | 26 |
+| left ankle | 27 |
+| right ankle | 28 |
+| left foot index | 31 |
+| right foot index | 32 |
 
-### 10.6 demo-table.html — tablet variant differences
+Current implementation note:
 
-`web/demo.html` and `web/demo-table.html` are sibling HTML entry points, not an inheritance hierarchy. They share exercise logic, smoothing, rendering, MediaPipe loading, runtime logging, and feedback effects through ES modules, but still keep separate page-level orchestration. Key differences:
-
-| Aspect | demo.html | demo-table.html |
-| --- | --- | --- |
-| Camera source | ESP32 WS only | ESP32 WS (`?cam=<url>`) **or** device front camera (`getUserMedia`) |
-| Source detection | `?cam=` or localStorage | `?cam=` URL param only (localStorage not used for mode selection) |
-| Local camera pipeline | — | Frame flipped horizontally before MediaPipe inference so landmark left/right matches anatomical side |
-| Source badge | — | `ESP32` (green) or `Local Cam` (blue) shown in header |
-
-**Local camera mirror note**: `getUserMedia` front-camera delivers unmirrored raw frames; MediaPipe labels sides by image position. The horizontal flip (`scale(-1,1)` draw to `localInferCanvas`) makes the display a selfie-mirror and ensures MediaPipe lm[12/14/16] (right arm) maps to the user's anatomical right arm.
-
-### 10.7 Post-set summary + optional DTW report
-
-Triggered by "Finish Set" button. Displays:
-
-- Total rep count
-- Session duration (seconds)
-- Accuracy = `(totalFrames − errorFrames) / totalFrames × 100%`
-- Top 3 most frequent form errors (sorted by frame count, with relative frequency bar)
-
-This local summary appears immediately and is the fallback if cloud is unavailable.
-
-Optional DTW report mode:
-
-- Submit each completed rep's `joint_angles[T,14]` sequence after Finish Set
-- Aggregate returned `correct`, `completeness`, `dtw_distance`, and `problem_joints` into `correct_count`, `avg_completeness`, and top problem joints in the summary card
-- Do not block or revise live rep counting while the user is exercising
-- If the request fails, keep the local heuristic summary and show DTW as unavailable
+- The active React hook computes these angles from image landmarks.
+- The longer-term contract goal is a world-landmark implementation for view invariance.
+- If the formula changes, bump `joint_angles_version`.
 
 ---
 
-Last updated: 2026-05-02 (§10.5 display/logic landmark split + debounce; §10.6 demo-table.html local-camera mirror pipeline; §10.7 local summary + optional DTW report) · Maintained jointly by all 3 engineers
+## 7. Template Schema
+
+Server template files use:
+
+```json
+{
+  "template_id": "squat_v1",
+  "exercise": "squat",
+  "display_name": "Squat",
+  "joint_angles_version": 1,
+  "source": "recorded_sq1.json",
+  "frame_rate_hz": 30,
+  "frames": [
+    {
+      "frame_id": 0,
+      "ts_ms": 0,
+      "joint_angles": [153.6, 151.2, 141.0, 152.0, 162.6, 161.7, 15.6, 14.1, 106.8, 107.9, 150.1, 155.5, 11.2, 1.3]
+    }
+  ]
+}
+```
+
+Each frame must contain exactly 14 joint-angle values.
+
+---
+
+## 8. Privacy and Storage
+
+Current server storage:
+
+- process-local `_actions` dictionary
+- gzip-compressed JSON frames
+- no raw video
+- no image landmarks
+- no durable database
+
+Reserved replay fields such as `world_landmarks` require a contract update and matching server model change before use.
+
+---
+
+## 9. Known Contract Mismatches to Fix
+
+| Area | Current mismatch |
+| --- | --- |
+| WiFi WebSocket | firmware requires `?token=...`; web callers mostly omit it |
+| 14-D angles | contract aspires to world-landmark angles; active web hook uses 2D image landmarks |
+| Server URL | web hook targets production API; local dev server needs config/proxy |
+| Advice | contract reserves advice concepts; current server advice helper is not exposed as an API route |
+| Persistence | previous docs described Postgres/Redis; current code uses memory only |
