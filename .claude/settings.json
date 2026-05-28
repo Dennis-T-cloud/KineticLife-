@@ -8,7 +8,11 @@
       "Bash(git checkout *)",
       "Bash(node --input-type=module --eval ' *)",
       "Bash(truncate -s 208480 /Users/dennis/Desktop/ECE140B/KineticLife-/web/vendor/chart.umd.min.js)",
-      "Bash(xargs -I {} basename {})"
+      "Bash(xargs -I {} basename {})",
+      "Bash(npm info *)",
+      "Bash(python3 -c \"import sys,json; vs=json.load\\(sys.stdin\\); print\\([v for v in vs if v.startswith\\('9'\\)][-5:]\\)\")",
+      "Bash(node -e \"const t = require\\('/Users/dennis/Desktop/ECE140B/KineticLife-/web/node_modules/@dicebear/thumbs/lib/index.js'\\); console.log\\(Object.keys\\(t\\).slice\\(0,10\\)\\)\")",
+      "Bash(node -e \"const c = require\\('/Users/dennis/Desktop/ECE140B/KineticLife-/web/node_modules/@dicebear/core/lib/index.js'\\); console.log\\(Object.keys\\(c\\).slice\\(0,10\\)\\)\")"
     ]
   }
 }

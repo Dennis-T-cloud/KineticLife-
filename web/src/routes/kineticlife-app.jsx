@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { createAvatar } from "@dicebear/core";
+import { create as thumbs } from "@dicebear/thumbs";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -27,7 +29,6 @@ const MUSCLE_INTENSITY_BY_EXERCISE = {
   squat_side: { quads: 1, hamstrings: 0.74, core: 0.56, lower_back: 0.4, front_calves: 0.44, rear_calves: 0.44 },
   barbell_squat_side: { quads: 1, hamstrings: 0.78, core: 0.58, lower_back: 0.46, front_calves: 0.42, rear_calves: 0.42 },
   deadlift_side: { hamstrings: 1, lower_back: 0.9, core: 0.72, quads: 0.38, rear_calves: 0.28, upper_back: 0.46 },
-  push_up_side: { chest: 1, triceps: 0.86, shoulders: 0.62, core: 0.55 },
   both_bicep_curl: { biceps: 1, shoulders: 0.28, core: 0.18 },
 };
 
@@ -82,13 +83,6 @@ const EXERCISES = [
     joints: ["visible_hip", "visible_knee"],
   },
   {
-    id: "push_up_side",
-    label: "Push-up Side",
-    short: "PU",
-    muscles: Object.keys(MUSCLE_INTENSITY_BY_EXERCISE.push_up_side),
-    joints: ["visible_elbow", "plank_line"],
-  },
-  {
     id: "both_bicep_curl",
     label: "Both-Arms Bicep Curl",
     short: "BC",
@@ -129,7 +123,6 @@ const AI_CORE_EXERCISE_RULES = {
   squat_side: { group: "Lower Body", baseSets: 3, reps: 10, risk: { knee: 70 } },
   barbell_squat_side: { group: "Lower Body", baseSets: 3, reps: 8, risk: { knee: 65, lower_back: 25 } },
   deadlift_side: { group: "Posterior Chain", baseSets: 3, reps: 8, risk: { lower_back: 100, knee: 20 } },
-  push_up_side: { group: "Upper Body", baseSets: 3, reps: 10, risk: { shoulder: 25, elbow: 45, wrist: 35 } },
   lateral_raise: { group: "Upper Body", baseSets: 3, reps: 12, risk: { shoulder: 70 } },
   bicep_curl: { group: "Arms", baseSets: 3, reps: 12, risk: { elbow: 60, wrist: 25 } },
   right_bicep_curl: { group: "Arms", baseSets: 3, reps: 12, risk: { elbow: 60, wrist: 25 } },
@@ -148,7 +141,7 @@ const NEXUS_MOOD_BY_ID = Object.fromEntries(NEXUS_MOODS.map((mood) => [mood.id, 
 
 const NEXUS_MOCK_CHECKINS = [
   { id: "mock_0x4f", name: "Athlete_0x4F", exerciseId: "lateral_raise", reps: 14, dtwAvg: 91, mood: "satisfied", resonance: 8, x: 18, y: 30 },
-  { id: "mock_0xa2", name: "Athlete_0xA2", exerciseId: "push_up_side", reps: 18, dtwAvg: 84, mood: "tired", resonance: 5, x: 75, y: 24 },
+  { id: "mock_0xa2", name: "Athlete_0xA2", exerciseId: "both_bicep_curl", reps: 18, dtwAvg: 84, mood: "tired", resonance: 5, x: 75, y: 24 },
   { id: "mock_0xc9", name: "Athlete_0xC9", exerciseId: "deadlift_side", reps: 9, dtwAvg: 88, mood: "happy", resonance: 11, x: 82, y: 63 },
   { id: "mock_0x71", name: "Athlete_0x71", exerciseId: "squat", reps: 16, dtwAvg: 93, mood: "laughing", resonance: 15, x: 28, y: 72 },
   { id: "mock_0xbd", name: "Athlete_0xBD", exerciseId: "bicep_curl", reps: 12, dtwAvg: 79, mood: "sleepy", resonance: 3, x: 52, y: 18 },
@@ -157,7 +150,7 @@ const NEXUS_MOCK_CHECKINS = [
 // large = 2-3 days rest, small = 1 day rest
 const EXERCISE_MUSCLE_CLASS = {
   squat: "large", squat_side: "large", barbell_squat_side: "large",
-  deadlift_side: "large", push_up_side: "large",
+  deadlift_side: "large",
   lateral_raise: "small", bicep_curl: "small", right_bicep_curl: "small",
   both_bicep_curl: "small",
 };
@@ -166,7 +159,6 @@ const EXERCISE_MUSCLE_CLASS = {
 const EXERCISE_MUSCLE_GROUP_KEY = {
   squat: "lower", squat_side: "lower", barbell_squat_side: "lower",
   deadlift_side: "posterior",
-  push_up_side: "push",
   lateral_raise: "pull",
   bicep_curl: "arms", right_bicep_curl: "arms", both_bicep_curl: "arms",
 };
@@ -655,12 +647,9 @@ function movementProgress(exerciseId, keyAngle) {
   if (exerciseId === "bicep_curl" || exerciseId === "right_bicep_curl" || exerciseId === "both_bicep_curl") return Math.max(0, Math.min(1, (155 - keyAngle) / 100));
   if (exerciseId === "lateral_raise") return Math.max(0, Math.min(1, (keyAngle - 30) / 55));
   if (exerciseId === "deadlift_side") return Math.max(0, Math.min(1, (165 - keyAngle) / 55));
-  if (exerciseId === "push_up_side") return Math.max(0, Math.min(1, (155 - keyAngle) / 70));
   return Math.max(0, Math.min(1, (160 - keyAngle) / 55));
 }
 
-// push_up_side excluded: its quiet features (plank_quiet minAvg:142, knees_quiet minAvg:140)
-// are satisfied by anyone standing upright, causing constant false positives during front exercises.
 const AUTO_CLASSIFIER_IDS = ["squat", "bicep_curl", "right_bicep_curl", "both_bicep_curl", "lateral_raise", "squat_side", "barbell_squat_side", "deadlift_side"];
 const AUTO_REP_CONFIRMATIONS_REQUIRED = 2;
 const AUTO_ACTION_ROW_LIMIT = 4;
@@ -789,18 +778,6 @@ const AUTO_CLASSIFIER_SPECS = {
       { id: "hip_hinge", type: "active", weight: 0.42, minAmp: 28, strongAmp: 70, rest: 158, work: 118, direction: "down", fn: (lm) => avgFinite(classifierAngle(lm[11], lm[23], lm[25]), classifierAngle(lm[12], lm[24], lm[26])) },
       { id: "knee_quiet", type: "quiet", weight: 0.24, maxAmp: 34, minAvg: 116, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[25], lm[27]), classifierAngle(lm[24], lm[26], lm[28])) },
       { id: "shoulders_quiet", type: "quiet", weight: 0.10, maxAmp: 30, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[11], lm[13]), classifierAngle(lm[24], lm[12], lm[14])) },
-    ],
-  },
-  push_up_side: {
-    minAmp: 30,
-    strongAmp: 82,
-    rest: 148,
-    work: 96,
-    direction: "down",
-    features: [
-      { id: "visible_elbow", type: "active", weight: 0.38, minAmp: 30, strongAmp: 82, rest: 148, work: 96, direction: "down", fn: (lm) => avgFinite(classifierAngle(lm[11], lm[13], lm[15]), classifierAngle(lm[12], lm[14], lm[16])) },
-      { id: "plank_quiet", type: "quiet", weight: 0.20, maxAmp: 24, minAvg: 142, fn: (lm) => avgFinite(classifierAngle(lm[11], lm[23], lm[25]), classifierAngle(lm[12], lm[24], lm[26])) },
-      { id: "knees_quiet", type: "quiet", weight: 0.10, maxAmp: 22, minAvg: 140, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[25], lm[27]), classifierAngle(lm[24], lm[26], lm[28])) },
     ],
   },
 };
@@ -3438,10 +3415,11 @@ h2.ath-title {
 /* ── Nexus Check-ins ── */
 .nexus-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 1.5rem 0 2rem;
+  padding: 1.5rem 0 calc(4.5rem + env(safe-area-inset-bottom, 0px));
   gap: 0.85rem;
   overflow-y: auto;
 }
+.nexus-wrap > * { flex-shrink: 0; }
 
 .nexus-header {
   display: flex;
@@ -7002,7 +6980,6 @@ const ANGLE_RANGES = {
   squat_side: { min: 75, max: 170, rest: 158, work: 88 },
   barbell_squat_side: { min: 75, max: 170, rest: 158, work: 88 },
   deadlift_side: { min: 90, max: 175, rest: 165, work: 108 },
-  push_up_side: { min: 55, max: 170, rest: 155, work: 82 },
   both_bicep_curl: { min: 75, max: 160, rest: 148, work: 85 },
 };
 
@@ -7123,9 +7100,6 @@ function analysisAdvice(dtw, exerciseId) {
   if (ex === "deadlift_side") return dtw >= 0.70
     ? "Good hinge pattern. Keep knees quieter than a squat and finish each rep with a strong lockout."
     : "Hinge pattern is unstable. Push hips back, brace the trunk, and keep the knees from turning it into a squat.";
-  if (ex === "push_up_side") return dtw >= 0.70
-    ? "Solid push-up rhythm. Keep the plank line rigid as the elbows cycle."
-    : "Push-up pattern needs control. Keep shoulders, hips, and knees aligned while lowering with the elbows.";
   if (ex === "squat_side") return dtw >= 0.70
     ? "Good side-view squat rhythm. Keep knees and hips traveling together through depth."
     : "Side squat pattern needs calibration. Reach depth while keeping hips and knees coordinated.";
@@ -7690,24 +7664,24 @@ function CoreScreen({ messages, onSend, onExecutePlan, onQuickPlan }) {
 // ─── Nexus Check-ins ─────────────────────────────────────────────────────────
 
 function NexusNodeAvatar({ id, mood = "satisfied", size = 58, isMine = false }) {
-  const [imgFailed, setImgFailed] = useState(false);
   const seed = String(id ?? "athlete")
     .replace("mock_", "")
     .replace(/^me_\d+$/, isMine ? "you" : "athlete");
-  const url = `https://api.dicebear.com/9.x/thumbs/svg?seed=${encodeURIComponent(seed)}&backgroundColor=transparent`;
   const moodColor = NEXUS_MOOD_BY_ID[mood]?.tone ?? "#00FF9D";
-  if (imgFailed) return <MoodAvatar mood={mood} size={size} />;
+  const avatarUri = useMemo(
+    () => createAvatar(thumbs, { seed, backgroundType: ["transparent"] }).toDataUri(),
+    [seed],
+  );
   return (
     <span
       className="nexus-avatar-wrap"
       style={{ "--mood": moodColor, width: `${size}px`, height: `${size}px` }}
     >
       <img
-        src={url}
+        src={avatarUri}
         width={size}
         height={size}
         className="nexus-avatar-img"
-        onError={() => setImgFailed(true)}
         alt=""
         aria-hidden="true"
       />
