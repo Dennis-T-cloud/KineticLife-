@@ -6,7 +6,9 @@
       "Bash(python3 -c ' *)",
       "Bash(python3 -m unittest discover -s tests -v)",
       "Bash(git checkout *)",
-      "Bash(node --input-type=module --eval ' *)"
+      "Bash(node --input-type=module --eval ' *)",
+      "Bash(truncate -s 208480 /Users/dennis/Desktop/ECE140B/KineticLife-/web/vendor/chart.umd.min.js)",
+      "Bash(xargs -I {} basename {})"
     ]
   }
 }

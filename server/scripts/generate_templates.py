@@ -29,13 +29,15 @@ JOINT_NAMES = (
 # Note: 'work=valley' means angle DROPS during the work phase (squat/curl)
 #       'work=valley=False' means angle RISES during work (lateral raise)
 EXERCISE_MAP: dict[str, tuple[str, list[int], bool]] = {
-    "sq":    ("squat",            [0, 1], True),   # knees valley at bottom
-    "bsq":   ("barbell_squat",    [0, 1], True),
-    "dl":    ("deadlift",         [4, 5], True),   # hips valley at hinge
-    "lbi":   ("bicep_curl",       [3],    True),   # right_elbow valleys at curl peak
-    "lib":   ("bicep_curl",       [3],    True),   # typo variant of lbi
-    "rbi":   ("right_bicep_curl", [2],    True),   # left_elbow valleys at curl peak
-    "lbrid": ("lateral_raise",    [6, 7], False),  # shoulders rise to peak
+    "sq":       ("squat",            [0, 1], True),   # knees valley at bottom
+    "bsq":      ("barbell_squat",    [0, 1], True),
+    "dl":       ("deadlift",         [4, 5], True),   # hips valley at hinge
+    "lbi":      ("bicep_curl",       [3],    True),   # right_elbow valleys at curl peak
+    "lib":      ("bicep_curl",       [3],    True),   # typo variant of lbi
+    "rbi":      ("right_bicep_curl", [2],    True),   # left_elbow valleys at curl peak
+    "lbrid":    ("lateral_raise",    [6, 7], False),  # shoulders rise to peak
+    "sides":    ("squat_side",       [0, 1], True),   # side-view squat; knees valley at bottom
+    "bothcurl": ("both_bicep_curl",  [2, 3], True),   # both elbows valley at top of curl
 }
 
 SMOOTH_WINDOW  = 7

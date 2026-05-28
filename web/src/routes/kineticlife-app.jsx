@@ -28,6 +28,7 @@ const MUSCLE_INTENSITY_BY_EXERCISE = {
   barbell_squat_side: { quads: 1, hamstrings: 0.78, core: 0.58, lower_back: 0.46, front_calves: 0.42, rear_calves: 0.42 },
   deadlift_side: { hamstrings: 1, lower_back: 0.9, core: 0.72, quads: 0.38, rear_calves: 0.28, upper_back: 0.46 },
   push_up_side: { chest: 1, triceps: 0.86, shoulders: 0.62, core: 0.55 },
+  both_bicep_curl: { biceps: 1, shoulders: 0.28, core: 0.18 },
 };
 
 const EXERCISES = [
@@ -87,6 +88,13 @@ const EXERCISES = [
     muscles: Object.keys(MUSCLE_INTENSITY_BY_EXERCISE.push_up_side),
     joints: ["visible_elbow", "plank_line"],
   },
+  {
+    id: "both_bicep_curl",
+    label: "Both-Arms Bicep Curl",
+    short: "BC",
+    muscles: Object.keys(MUSCLE_INTENSITY_BY_EXERCISE.both_bicep_curl),
+    joints: ["left_elbow", "right_elbow"],
+  },
 ];
 
 const AI_PLAN = [
@@ -125,6 +133,7 @@ const AI_CORE_EXERCISE_RULES = {
   lateral_raise: { group: "Upper Body", baseSets: 3, reps: 12, risk: { shoulder: 70 } },
   bicep_curl: { group: "Arms", baseSets: 3, reps: 12, risk: { elbow: 60, wrist: 25 } },
   right_bicep_curl: { group: "Arms", baseSets: 3, reps: 12, risk: { elbow: 60, wrist: 25 } },
+  both_bicep_curl: { group: "Arms", baseSets: 3, reps: 12, risk: { elbow: 65, wrist: 30 } },
 };
 
 const NEXUS_MOODS = [
@@ -150,6 +159,7 @@ const EXERCISE_MUSCLE_CLASS = {
   squat: "large", squat_side: "large", barbell_squat_side: "large",
   deadlift_side: "large", push_up_side: "large",
   lateral_raise: "small", bicep_curl: "small", right_bicep_curl: "small",
+  both_bicep_curl: "small",
 };
 
 // muscle group key for rest-period conflict detection
@@ -158,7 +168,7 @@ const EXERCISE_MUSCLE_GROUP_KEY = {
   deadlift_side: "posterior",
   push_up_side: "push",
   lateral_raise: "pull",
-  bicep_curl: "arms", right_bicep_curl: "arms",
+  bicep_curl: "arms", right_bicep_curl: "arms", both_bicep_curl: "arms",
 };
 
 const ISSUE_LABELS = {
@@ -642,7 +652,7 @@ function fmt(s) {
 
 function movementProgress(exerciseId, keyAngle) {
   if (!Number.isFinite(keyAngle)) return 0;
-  if (exerciseId === "bicep_curl" || exerciseId === "right_bicep_curl") return Math.max(0, Math.min(1, (155 - keyAngle) / 100));
+  if (exerciseId === "bicep_curl" || exerciseId === "right_bicep_curl" || exerciseId === "both_bicep_curl") return Math.max(0, Math.min(1, (155 - keyAngle) / 100));
   if (exerciseId === "lateral_raise") return Math.max(0, Math.min(1, (keyAngle - 30) / 55));
   if (exerciseId === "deadlift_side") return Math.max(0, Math.min(1, (165 - keyAngle) / 55));
   if (exerciseId === "push_up_side") return Math.max(0, Math.min(1, (155 - keyAngle) / 70));
@@ -651,7 +661,7 @@ function movementProgress(exerciseId, keyAngle) {
 
 // push_up_side excluded: its quiet features (plank_quiet minAvg:142, knees_quiet minAvg:140)
 // are satisfied by anyone standing upright, causing constant false positives during front exercises.
-const AUTO_CLASSIFIER_IDS = ["squat", "bicep_curl", "right_bicep_curl", "lateral_raise", "squat_side", "barbell_squat_side", "deadlift_side"];
+const AUTO_CLASSIFIER_IDS = ["squat", "bicep_curl", "right_bicep_curl", "both_bicep_curl", "lateral_raise", "squat_side", "barbell_squat_side", "deadlift_side"];
 const AUTO_REP_CONFIRMATIONS_REQUIRED = 2;
 const AUTO_ACTION_ROW_LIMIT = 4;
 const AUTO_SWITCH_HOLD_MS = 2800;
@@ -754,6 +764,19 @@ const AUTO_CLASSIFIER_SPECS = {
       { id: "visible_knee", type: "active", weight: 0.34, minAmp: 22, strongAmp: 58, rest: 150, work: 124, direction: "down", fn: (lm) => avgFinite(classifierAngle(lm[23], lm[25], lm[27]), classifierAngle(lm[24], lm[26], lm[28])) },
       { id: "visible_hip", type: "active", weight: 0.30, minAmp: 18, strongAmp: 52, rest: 150, work: 118, direction: "down", fn: (lm) => avgFinite(classifierAngle(lm[11], lm[23], lm[25]), classifierAngle(lm[12], lm[24], lm[26])) },
       { id: "arms_quiet", type: "quiet", weight: 0.10, maxAmp: 34, fn: (lm) => avgFinite(classifierAngle(lm[11], lm[13], lm[15]), classifierAngle(lm[12], lm[14], lm[16])) },
+    ],
+  },
+  both_bicep_curl: {
+    minAmp: 30,
+    strongAmp: 85,
+    rest: 143,
+    work: 82,
+    direction: "down",
+    features: [
+      { id: "left_elbow", type: "active", weight: 0.34, minAmp: 30, strongAmp: 85, rest: 143, work: 82, direction: "down", fn: (lm) => classifierAngle(lm[11], lm[13], lm[15]) },
+      { id: "right_elbow", type: "active", weight: 0.34, minAmp: 30, strongAmp: 85, rest: 143, work: 82, direction: "down", fn: (lm) => classifierAngle(lm[12], lm[14], lm[16]) },
+      { id: "knees_quiet", type: "quiet", weight: 0.14, maxAmp: 24, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[25], lm[27]), classifierAngle(lm[24], lm[26], lm[28])) },
+      { id: "shoulder_quiet", type: "quiet", weight: 0.10, maxAmp: 30, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[11], lm[13]), classifierAngle(lm[24], lm[12], lm[14])) },
     ],
   },
   deadlift_side: {
@@ -6980,6 +7003,7 @@ const ANGLE_RANGES = {
   barbell_squat_side: { min: 75, max: 170, rest: 158, work: 88 },
   deadlift_side: { min: 90, max: 175, rest: 165, work: 108 },
   push_up_side: { min: 55, max: 170, rest: 155, work: 82 },
+  both_bicep_curl: { min: 75, max: 160, rest: 148, work: 85 },
 };
 
 function buildReference(exerciseId, numPts, reps) {
@@ -7094,7 +7118,7 @@ function DtwChart({ keyAngles, exerciseId, reps, theme }) {
 function analysisAdvice(dtw, exerciseId) {
   if (!exerciseId) return "No library movement was confidently matched. Repeat with a larger, steadier range of motion or add this motion to the library before counting it as a programmed set.";
   const ex = exerciseId ?? "squat";
-  const isCurl = ex === "bicep_curl" || ex === "right_bicep_curl";
+  const isCurl = ex === "bicep_curl" || ex === "right_bicep_curl" || ex === "both_bicep_curl";
   if (dtw >= 0.85) return "Excellent form consistency. Rhythm and depth are well-controlled — push rep count next set.";
   if (ex === "deadlift_side") return dtw >= 0.70
     ? "Good hinge pattern. Keep knees quieter than a squat and finish each rep with a strong lockout."

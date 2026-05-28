@@ -27,6 +27,8 @@ _KEY_JOINTS: dict[str, list[int]] = {
     "bicep_curl":       [3],      # right_elbow
     "right_bicep_curl": [2],      # left_elbow
     "lateral_raise":    [6, 7],   # left_shoulder + right_shoulder
+    "squat_side":       [0, 1],   # left_knee + right_knee (side-view squat)
+    "both_bicep_curl":  [2, 3],   # left_elbow + right_elbow
 }
 
 # ---------------------------------------------------------------------------

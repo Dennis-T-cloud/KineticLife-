@@ -66,6 +66,18 @@ EXERCISE_THRESHOLDS: dict[str, SpikeThresholdConfig] = {
         merge_gap=1,
         smooth_window=3,
     ),
+    "squat_side": SpikeThresholdConfig(
+        spike_threshold=4.0,
+        min_steps=3,
+        merge_gap=1,
+        smooth_window=5,
+    ),
+    "both_bicep_curl": SpikeThresholdConfig(
+        spike_threshold=3.5,
+        min_steps=2,
+        merge_gap=1,
+        smooth_window=3,
+    ),
     "plank": SpikeThresholdConfig(
         spike_threshold=2.5,
         min_steps=4,

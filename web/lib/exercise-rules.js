@@ -255,4 +255,80 @@ export const EXERCISES = {
       { label: 'Right Hip', fn: lm => calcAngle(lm[12],lm[24],lm[26]), joint: 24 },
     ],
   },
+
+  squat_side: {
+    label:    'Bodyweight Squat (Side)',
+    getKeyAngle: lm => sideAngle(lm, [23,25,27], [24,26,28]),
+    restCond: a => a > 150,   // data p90≈170°
+    workCond: a => a < 95,    // data p10≈35°
+    phaseLabel: { rest: 'Standing', work: 'Squatting' },
+    checks: [
+      {
+        id: 'sqs_depth',
+        getVal: lm => sideAngle(lm, [23,25,27], [24,26,28]),
+        valid: (v, phase) => phase !== 'work' || v < 110,
+        hint: 'Squat lower',
+        bones: [[23,25],[25,27],[24,26],[26,28]],
+      },
+      {
+        id: 'sqs_trunk',
+        getVal: lm => sideAngle(lm, [11,23,25], [12,24,26]),
+        valid: (v, phase) => phase !== 'work' || v > 50,
+        hint: 'Keep your chest up — do not lean too far forward',
+        bones: [[11,23],[12,24]],
+      },
+    ],
+    displayAngles: [
+      { label: 'Knee Angle', fn: lm => sideAngle(lm, [23,25,27], [24,26,28]), joint: 25 },
+    ],
+  },
+
+  both_bicep_curl: {
+    label:    'Both-Arms Bicep Curl',
+    getKeyAngle: lm => (calcAngle(lm[11],lm[13],lm[15]) + calcAngle(lm[12],lm[14],lm[16])) / 2,
+    restCond: a => a > 140,   // data p90≈155°
+    workCond: a => a < 85,    // data p10≈82°
+    phaseLabel: { rest: 'Arms Extended', work: 'Curling' },
+    checks: [
+      {
+        id: 'bc_range_l',
+        getVal: lm => calcAngle(lm[11], lm[13], lm[15]),
+        valid: (v, phase) => phase !== 'work' || v < 100,
+        hint: 'Curl your left arm higher',
+        bones: [[11,13],[13,15]],
+      },
+      {
+        id: 'bc_range_r',
+        getVal: lm => calcAngle(lm[12], lm[14], lm[16]),
+        valid: (v, phase) => phase !== 'work' || v < 100,
+        hint: 'Curl your right arm higher',
+        bones: [[12,14],[14,16]],
+      },
+      {
+        id: 'bc_sym',
+        getVal: lm => Math.abs(calcAngle(lm[11],lm[13],lm[15]) - calcAngle(lm[12],lm[14],lm[16])),
+        valid: v => v < 20,
+        hint: 'Arms are not curling evenly',
+        bones: [[11,13],[13,15],[12,14],[14,16]],
+      },
+      {
+        id: 'bc_elbow_l',
+        getVal: lm => lm[13].y - lm[11].y,
+        valid: v => v > -0.05,
+        hint: 'Do not raise your left elbow',
+        bones: [[11,13]],
+      },
+      {
+        id: 'bc_elbow_r',
+        getVal: lm => lm[14].y - lm[12].y,
+        valid: v => v > -0.05,
+        hint: 'Do not raise your right elbow',
+        bones: [[12,14]],
+      },
+    ],
+    displayAngles: [
+      { label: 'Left Arm',  fn: lm => calcAngle(lm[11],lm[13],lm[15]), joint: 13 },
+      { label: 'Right Arm', fn: lm => calcAngle(lm[12],lm[14],lm[16]), joint: 14 },
+    ],
+  },
 };
