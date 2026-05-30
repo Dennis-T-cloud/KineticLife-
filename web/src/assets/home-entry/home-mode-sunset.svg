@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 450" fill="none">
+  <defs>
+    <linearGradient id="hms-accent" x1="166" y1="356" x2="720" y2="94" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFAF5F"/>
+      <stop offset="1" stop-color="#FFF08A"/>
+    </linearGradient>
+    <filter id="hms-glow" x="-35%" y="-35%" width="170%" height="170%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 1 0 0 0 0 0.48 0 0 0 0 0.36 0 0 0 0.86 0"/>
+      <feBlend in="SourceGraphic"/>
+    </filter>
+  </defs>
+  <!-- House -->
+  <g transform="translate(300 42)" filter="url(#hms-glow)">
+    <path d="M34 134L150 40L266 134V270C266 286 254 298 238 298H62C46 298 34 286 34 270V134Z" fill="#21111E" fill-opacity="0.3" stroke="#FFB36B" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M0 146L150 20L300 146" stroke="url(#hms-accent)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="106" y="182" width="88" height="116" rx="28" fill="#351926" fill-opacity="0.3" stroke="#FFF08A" stroke-width="5"/>
+    <path d="M84 152H216" stroke="#FFE6C0" stroke-width="8" stroke-linecap="round"/>
+    <path d="M114 124H186" stroke="#FFB36B" stroke-width="6" stroke-linecap="round" opacity="0.92"/>
+  </g>
+  <!-- Dumbbell weights -->
+  <g transform="translate(512 242)">
+    <rect x="0" y="17" width="98" height="28" rx="14" fill="#21111E" fill-opacity="0.3" stroke="#FFF08A" stroke-width="5"/>
+    <rect x="-18" y="8" width="26" height="46" rx="8" fill="#FFAF5F"/>
+    <rect x="90" y="8" width="26" height="46" rx="8" fill="#FFF08A"/>
+  </g>
+</svg>

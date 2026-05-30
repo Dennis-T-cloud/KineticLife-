@@ -173,6 +173,20 @@ export const EXERCISES = {
         bones: [[14,16]],
       },
       {
+        id: 'lr_elbow_flex_r',
+        getVal: lm => calcAngle(lm[12], lm[14], lm[16]),
+        valid: (v, phase) => phase !== 'work' || v > 110,
+        hint: 'Do not curl — keep arms extended during the raise',
+        bones: [[12,14],[14,16]],
+      },
+      {
+        id: 'lr_elbow_flex_l',
+        getVal: lm => calcAngle(lm[11], lm[13], lm[15]),
+        valid: (v, phase) => phase !== 'work' || v > 110,
+        hint: 'Do not curl — keep arms extended during the raise',
+        bones: [[11,13],[13,15]],
+      },
+      {
         id: 'lr_sym',
         getVal: lm => Math.abs(calcAngle(lm[24],lm[12],lm[14]) - calcAngle(lm[23],lm[11],lm[13])),
         valid: v => v < 25,
@@ -323,6 +337,22 @@ export const EXERCISES = {
         getVal: lm => lm[14].y - lm[12].y,
         valid: v => v > -0.05,
         hint: 'Do not raise your right elbow',
+        bones: [[12,14]],
+      },
+      // Shoulder abduction check — arms should stay at sides, not flare outward.
+      // Catches form breakdown where this exercise blurs into a lateral raise.
+      {
+        id: 'bc_shoulder_abd_l',
+        getVal: lm => calcAngle(lm[23], lm[11], lm[13]),
+        valid: (v, phase) => phase !== 'work' || v < 50,
+        hint: 'Keep your left arm close to your body',
+        bones: [[11,13]],
+      },
+      {
+        id: 'bc_shoulder_abd_r',
+        getVal: lm => calcAngle(lm[24], lm[12], lm[14]),
+        valid: (v, phase) => phase !== 'work' || v < 50,
+        hint: 'Keep your right arm close to your body',
         bones: [[12,14]],
       },
     ],

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 450" fill="none">
+  <defs>
+    <linearGradient id="jd-bolt" x1="378" y1="96" x2="522" y2="318" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7FF8E"/>
+      <stop offset="0.46" stop-color="#44FFE0"/>
+      <stop offset="1" stop-color="#28FF89"/>
+    </linearGradient>
+    <filter id="jd-glow" x="-40%" y="-60%" width="180%" height="220%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.18 0 0 0 0 1 0 0 0 0 0.82 0 0 0 0.9 0"/>
+      <feBlend in="SourceGraphic"/>
+    </filter>
+  </defs>
+  <g transform="translate(368 88)" filter="url(#jd-glow)">
+    <path d="M78 0L18 126H78L45 250L178 92H110L146 0H78Z" fill="none" stroke="url(#jd-bolt)" stroke-width="5" stroke-linejoin="round"/>
+  </g>
+  <g opacity="0.82">
+    <path d="M836 66H786V116M836 384H786V334" stroke="#67FFE0" stroke-width="5" stroke-linecap="round"/>
+    <path d="M62 66H112V116M62 384H112V334" stroke="#67FFE0" stroke-width="5" stroke-linecap="round"/>
+  </g>
+</svg>
