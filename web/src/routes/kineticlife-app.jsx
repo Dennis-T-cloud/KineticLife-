@@ -181,6 +181,13 @@ const EXERCISE_MUSCLE_GROUP_KEY = {
   bicep_curl: "arms", right_bicep_curl: "arms", both_bicep_curl: "arms",
 };
 
+// Recovery window per muscle group (days until fully recovered).
+// Large muscles need 2 days; small/stabilizer muscles need 1 day.
+const MUSCLE_RECOVERY_DAYS = {
+  shoulders: 1, chest: 2, biceps: 1, triceps: 1, core: 1,
+  upper_back: 2, lower_back: 2, quads: 2, front_calves: 1, hamstrings: 2, rear_calves: 1,
+};
+
 const ISSUE_LABELS = {
   valgus: "Inward collapse",
   varus: "Outward bow",
@@ -410,6 +417,25 @@ function saveMuscleStatus(s, name = getActiveUserName()) {
     const userName = String(name ?? "").trim();
     if (userName) localStorage.setItem(userStorageKey(MUSCLE_STATUS_KEY, userName), JSON.stringify(s));
   } catch {}
+}
+
+// Returns a copy of muscleStatus with each load decayed by elapsed time since last workout.
+// Large muscles (2-day recovery): load halves each day, reaches 0 at day 2.
+// Small muscles (1-day recovery): load halves each day, reaches 0 at day 1.
+// The raw muscleStatus (for the heatmap display) is unchanged — only AI plan generation uses this.
+function decayedMuscleStatus(muscleStatus) {
+  const updatedAt = muscleStatus._updatedAt ?? {};
+  const now = Date.now();
+  return Object.fromEntries(
+    MUSCLE_GROUPS.map(({ id }) => {
+      const raw = muscleStatus[id] ?? 0;
+      const ts = updatedAt[id];
+      if (!ts || raw <= 0) return [id, raw];
+      const recoveryDays = MUSCLE_RECOVERY_DAYS[id] ?? 1;
+      const daysSince = (now - ts) / 86400000;
+      return [id, raw * Math.max(0, 1 - daysSince / recoveryDays)];
+    })
+  );
 }
 
 function makeDefaultAiCoreProfile() {
@@ -777,7 +803,7 @@ function generateAiCorePlan({ profile, muscleStatus, focusTags }) {
         fatiguePenalty,
       };
     })
-    .filter((item) => item.injuryPenalty < 100)
+    .filter((item) => item.injuryPenalty < 70)
     .sort((a, b) => b.score - a.score);
 
   const selected = [];
@@ -860,7 +886,7 @@ function buildWeekSchedule(trainingDaysPerWeek, muscleStatus, focusTags, injuryT
   const scoredPool = EXERCISES.map((ex) => {
     const rule = AI_CORE_EXERCISE_RULES[ex.id] ?? { baseSets: 3, reps: 10, risk: {} };
     const injuryPenalty = injuries.reduce((s, tag) => s + (rule.risk?.[tag] ?? 0), 0);
-    if (injuryPenalty >= 100) return null;
+    if (injuryPenalty >= 70) return null;
     const targets = Object.keys(getExerciseTargets(ex.id));
     const avgLoad = targets.length
       ? targets.reduce((s, m) => s + (muscleStatus?.[m] ?? 0), 0) / targets.length : 0;
@@ -4612,16 +4638,8 @@ h2.ath-title {
 }
 
 .plan-ai-icon {
-  width: 28px; height: 28px;
-  border-radius: 9px;
-  border: 1px solid rgba(var(--em-a-rgb),0.25);
-  background: rgba(var(--em-a-rgb),0.06);
-  color: var(--em-a);
+  width: 100px; height: 100px;
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--mono);
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
 }
 
 .plan-ai-icon-svg {
@@ -6534,7 +6552,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
   const [selectedEx, setSelectedEx] = useState(EXERCISES[0]);
   const aiReady = isAiCoreProfileReady(aiProfile);
   const focusTags = [...focus];
-  const aiDecision = generateAiCorePlan({ profile: aiProfile, muscleStatus, focusTags });
+  const aiDecision = generateAiCorePlan({ profile: aiProfile, muscleStatus: decayedMuscleStatus(muscleStatus), focusTags });
   const recommendedPlan = aiReady ? aiDecision.payload.exercises : AI_PLAN.map((item) => ({ ...item, reason: "Baseline demo plan" }));
   const targetMap = getExerciseTargets(selectedEx?.id);
   const selectedMuscles = [...new Set([...Object.keys(targetMap), ...focus])];
@@ -6586,7 +6604,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
     setFocus(new Set(updated.focusTags));
     setEditingCore(false);
     saveAiCoreProfile(updated, userName);
-    const decision = generateAiCorePlan({ profile: updated, muscleStatus, focusTags: updated.focusTags });
+    const decision = generateAiCorePlan({ profile: updated, muscleStatus: decayedMuscleStatus(muscleStatus), focusTags: updated.focusTags });
     onPlanGenerated?.(decision);
   }
 
@@ -6600,7 +6618,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
 
         <motion.div className="glass plan-ai-card" custom={0} variants={panelVariants} initial="hidden" animate="visible">
           <div className="plan-ai-header">
-            <span className="plan-ai-icon"><Lottie animationData={lottieAiCore} loop={true} style={{ width:20, height:20 }} /></span>
+            <span className="plan-ai-icon"><Lottie animationData={lottieAiCore} loop={true} style={{ width:100, height:100 }} /></span>
             <div>
               <span className="plan-ai-title">Kinetic Core</span>
               <div className="ai-core-status">{aiReady ? aiDecision.action_keyword : "ONBOARDING_REQUIRED"}</div>
@@ -6696,7 +6714,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
               <span className="plan-ai-title">AI Recommended Plan</span>
             </div>
           <div className="plan-list">
-            {buildWeekSchedule(aiProfile.trainingDaysPerWeek, muscleStatus, focusTags, aiProfile.injuryTags).map(({ dow, label, isTraining, isToday, isPast, exercise }) => {
+            {buildWeekSchedule(aiProfile.trainingDaysPerWeek, decayedMuscleStatus(muscleStatus), focusTags, aiProfile.injuryTags).map(({ dow, label, isTraining, isToday, isPast, exercise }) => {
               if (!isTraining) {
                 return (
                   <div key={dow} className={`plan-item plan-item-rest ${isToday ? "today" : ""} ${isPast ? "past" : ""}`}>
@@ -7920,12 +7938,18 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
             // t animates prev→last within the elapsed interval; clamps to 1.0 (hold-last) after.
             const intervalMs = lastInferenceTs - prevInferenceTs;
             const interpLm = (prevDisplayLm && intervalMs > 0)
-              ? lastDisplayLm.map((lm, i) => {
-                  const p = prevDisplayLm[i];
+              ? (() => {
                   const t = Math.min(1.0, (nowTs - prevInferenceTs) / intervalMs);
-                  return { x: p.x + t*(lm.x-p.x), y: p.y + t*(lm.y-p.y),
-                           z: p.z + t*(lm.z-p.z), visibility: p.visibility + t*(lm.visibility-p.visibility) };
-                })
+                  return lastDisplayLm.map((lm, i) => {
+                    const p = prevDisplayLm[i];
+                    // Low-visibility joints (occluded/guessed) get a smaller lerp factor
+                    // so they stay near last known position instead of drifting to bad estimates.
+                    const minVis = Math.min(lm.visibility ?? 1, p.visibility ?? 1);
+                    const tw = t * Math.pow(minVis, 0.5);
+                    return { x: p.x + tw*(lm.x-p.x), y: p.y + tw*(lm.y-p.y),
+                             z: p.z + tw*(lm.z-p.z), visibility: p.visibility + t*(lm.visibility-p.visibility) };
+                  });
+                })()
               : lastDisplayLm;
             const cachedOpts = {
               dtw: lastDtwScore, comboActive, frame: hudFrame, targetProgress,
@@ -9898,9 +9922,13 @@ export default function KineticLifeApp() {
   function handleHomeCardioDone() {
     const route = HOME_ROUTES[homeWorkoutCtx.routeId];
     const updated = { ...muscleStatus };
+    const now = Date.now();
+    const updatedAt = { ...(muscleStatus._updatedAt ?? {}) };
     Object.entries(route.muscles).forEach(([muscle, intensity]) => {
       updated[muscle] = Math.min(1, (updated[muscle] ?? 0) + intensity * 0.15);
+      updatedAt[muscle] = now;
     });
+    updated._updatedAt = updatedAt;
     setMuscleStatus(updated);
     saveMuscleStatus(updated, currentUser);
     setHomeWorkoutCtx(prev => ({ ...prev, hwSub:"reward", kiniLine:pickKiniLine("reward") }));
@@ -9985,14 +10013,18 @@ export default function KineticLifeApp() {
       ? repEntries2 : data.exerciseId ? [[data.exerciseId, Math.max(1, data.reps ?? 1)]] : [];
     if (trainedEntries2.length) {
       const ms2 = { ...muscleStatus };
+      const now2 = Date.now();
+      const updatedAt2 = { ...(muscleStatus._updatedAt ?? {}) };
       const tot2 = trainedEntries2.reduce((s,[,c]) => s + Math.max(0, Number(c)||0), 0);
       trainedEntries2.forEach(([eid, cnt]) => {
         const tgts = getExerciseTargets(eid);
         const share = tot2 > 0 ? Math.max(0.25, (Number(cnt)||0)/tot2) : 1;
         Object.entries(tgts).forEach(([m, iv]) => {
           ms2[m] = Math.min(1, (ms2[m] ?? 0) + (0.10 + iv * 0.18) * share);
+          updatedAt2[m] = now2;
         });
       });
+      ms2._updatedAt = updatedAt2;
       setMuscleStatus(ms2); saveMuscleStatus(ms2, currentUser);
     }
 
@@ -10142,7 +10174,7 @@ export default function KineticLifeApp() {
       if (lower.includes("generate") || lower.includes("plan") || lower.includes("workout") ||
           (lower.includes("today") && (lower.includes("train") || lower.includes("session") || lower.includes("exercise")))) {
         const coreProfile = loadAiCoreProfile(currentUser);
-        const decision = generateAiCorePlan({ profile: coreProfile, muscleStatus, focusTags: coreProfile.focusTags ?? [] });
+        const decision = generateAiCorePlan({ profile: coreProfile, muscleStatus: decayedMuscleStatus(muscleStatus), focusTags: coreProfile.focusTags ?? [] });
         appendAiMessage(makeAiMessage({ type: "daily_plan", content: decision.dialogue, payload: decision.payload }));
         return;
       }
