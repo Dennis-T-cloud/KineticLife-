@@ -6,6 +6,8 @@ bool camera_init_ble();
 bool camera_init_qr();
 void camera_deinit();
 bool camera_capture_self_test(uint8_t attempts, uint32_t retry_delay_ms);
+// Pre-apply stream settings and discard frames so AE/AWB converges before first client.
+void camera_warmup_stream(int frames, uint32_t delay_ms);
 bool camera_set_framesize(const char* size_str);
 bool camera_set_quality(int q);
 bool camera_set_sensor_param(const char* name, int val);

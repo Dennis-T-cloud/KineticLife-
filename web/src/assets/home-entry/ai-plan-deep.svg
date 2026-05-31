@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 450" fill="none">
+  <defs>
+    <filter id="apd-glow" x="-35%" y="-35%" width="170%" height="170%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.16 0 0 0 0 1 0 0 0 0 0.82 0 0 0 0.8 0"/>
+      <feBlend in="SourceGraphic"/>
+    </filter>
+  </defs>
+  <!-- Calendar -->
+  <g transform="translate(300 70)">
+    <rect width="300" height="212" rx="30" fill="#071423" fill-opacity="0.3" stroke="#64FFE6" stroke-opacity="0.45"/>
+    <path d="M0 58H300" stroke="#64FFE6" stroke-opacity="0.34"/>
+    <circle cx="50" cy="30" r="7" fill="#64FFE6"/>
+    <circle cx="78" cy="30" r="7" fill="#D8FF78"/>
+    <g stroke="#DFFFFA" stroke-width="8" stroke-linecap="round">
+      <path d="M48 98H150"/>
+      <path d="M48 138H204"/>
+      <path d="M48 178H128"/>
+    </g>
+    <g stroke="#7FFFC3" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M222 98H260"/>
+      <path d="M241 79V117"/>
+      <path d="M214 160H268"/>
+    </g>
+  </g>
+  <!-- Chip -->
+  <g transform="translate(616 70)" filter="url(#apd-glow)">
+    <rect width="122" height="122" rx="30" fill="#0A2635" fill-opacity="0.3" stroke="#6AFFE2" stroke-width="4"/>
+    <rect x="34" y="34" width="54" height="54" rx="12" fill="#2DFFE1" fill-opacity="0.16" stroke="#D8FF78" stroke-width="4"/>
+    <path d="M61 28V10M61 112V94M28 61H10M112 61H94M36 36L22 22M86 36L100 22M36 86L22 100M86 86L100 100" stroke="#CFFFF7" stroke-width="5" stroke-linecap="round"/>
+  </g>
+</svg>

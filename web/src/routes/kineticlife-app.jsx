@@ -1,7 +1,24 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createAvatar } from "@dicebear/core";
-import { create as thumbs } from "@dicebear/thumbs";
+import * as thumbs from "@dicebear/thumbs";
+import Lottie from "lottie-react";
+import lottieAiCore        from "../assets/ai-core.json";
+import lottieSetClear      from "../assets/Set_clear.json";
+import lottiePathClear     from "../assets/path_clear.json";
+import lottieCheeringRibbons from "../assets/cheering_ribbons.json";
+import lottieTrophy        from "../assets/Trophy.json";
+import lottieJumpingJack   from "../assets/home_Jumping_Jack.json";
+import lottieSquatKick     from "../assets/home_Squat_Kick.json";
+import lottieBlueJumping   from "../assets/blue_jumping.json";
+import lottieAvocadoWalking from "../assets/Avocado_walking.json";
+import lottieSqurtWalking  from "../assets/squrt_walking.json";
+import jumpInDeep from "../assets/home-entry/jump-in-deep.svg";
+import jumpInSunset from "../assets/home-entry/jump-in-sunset.svg";
+import aiPlanDeep from "../assets/home-entry/ai-plan-deep.svg";
+import aiPlanSunset from "../assets/home-entry/ai-plan-sunset.svg";
+import homeModeDeep from "../assets/home-entry/home-mode-deep.svg";
+import homeModeSunset from "../assets/home-entry/home-mode-sunset.svg";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -30,6 +47,7 @@ const MUSCLE_INTENSITY_BY_EXERCISE = {
   barbell_squat_side: { quads: 1, hamstrings: 0.78, core: 0.58, lower_back: 0.46, front_calves: 0.42, rear_calves: 0.42 },
   deadlift_side: { hamstrings: 1, lower_back: 0.9, core: 0.72, quads: 0.38, rear_calves: 0.28, upper_back: 0.46 },
   both_bicep_curl: { biceps: 1, shoulders: 0.28, core: 0.18 },
+  deadlift: { hamstrings: 1, lower_back: 0.9, core: 0.72, quads: 0.38, rear_calves: 0.28, upper_back: 0.46 },
 };
 
 const EXERCISES = [
@@ -163,6 +181,13 @@ const EXERCISE_MUSCLE_GROUP_KEY = {
   bicep_curl: "arms", right_bicep_curl: "arms", both_bicep_curl: "arms",
 };
 
+// Recovery window per muscle group (days until fully recovered).
+// Large muscles need 2 days; small/stabilizer muscles need 1 day.
+const MUSCLE_RECOVERY_DAYS = {
+  shoulders: 1, chest: 2, biceps: 1, triceps: 1, core: 1,
+  upper_back: 2, lower_back: 2, quads: 2, front_calves: 1, hamstrings: 2, rear_calves: 1,
+};
+
 const ISSUE_LABELS = {
   valgus: "Inward collapse",
   varus: "Outward bow",
@@ -172,6 +197,115 @@ const ISSUE_LABELS = {
   excessive_lean: "Leaning too far forward",
   asymmetric: "Left-right asymmetry",
 };
+
+const HOME_ENTRY_IMAGES = {
+  deep_space: {
+    jump: jumpInDeep,
+    plan: aiPlanDeep,
+    home: homeModeDeep,
+  },
+  sunset: {
+    jump: jumpInSunset,
+    plan: aiPlanSunset,
+    home: homeModeSunset,
+  },
+};
+
+// ─── Home Workout ─────────────────────────────────────────────────────────────
+
+const HOME_ROUTES = {
+  upper: {
+    varKey: "a",
+    name: "APEX PROTOCOL",
+    tagline: "Biceps · Shoulders",
+    accentColor: "#00DBE9",
+    steps: [
+      { type: "exercise", exerciseId: "both_bicep_curl", sets: 3, reps: 6 },
+      { type: "exercise", exerciseId: "lateral_raise",   sets: 3, reps: 6 },
+      { type: "cardio",   duration: 30, label: "Jumping Jacks", lottie: "jumping_jack" },
+    ],
+    muscles: { biceps: 1.0, shoulders: 0.85, triceps: 0.35, core: 0.22 },
+  },
+  lower: {
+    varKey: "b",
+    name: "FORGE PROTOCOL",
+    tagline: "Quads · Posterior Chain",
+    accentColor: "#A855F7",
+    steps: [
+      { type: "exercise", exerciseId: "squat",    sets: 3, reps: 6 },
+      { type: "exercise", exerciseId: "deadlift", sets: 3, reps: 6 },
+      { type: "cardio",   duration: 30, label: "Squat Kicks", lottie: "squat_kick" },
+    ],
+    muscles: { quads: 1.0, hamstrings: 0.9, lower_back: 0.75, core: 0.55, rear_calves: 0.3 },
+  },
+};
+
+// TODO: replace with AI API call → fetchKiniLine(screen, context): Promise<string>
+const KINI_LINES = {
+  selection: [
+    "Pick your protocol. Let's make it count.",
+    "No equipment. No excuses. Choose your mission.",
+    "Ready to level up? I'll guide you through.",
+    "Your body is the gym today. Let's go.",
+  ],
+  between: [
+    "Not bad! For a human, anyway. 😄 Take a breath.",
+    "You're actually doing it! I'm almost impressed. Rest up.",
+    "That looked suspiciously good. One more challenge — don't blow it.",
+    "Every rep is logged. Yes, even the wobbly ones. Keep going!",
+    "I saw that little grunt. Totally normal. Next one's ready.",
+    "Rest time! You've earned approximately 15 seconds of feeling great.",
+  ],
+  cardio: [
+    "Just wiggle SOMETHING. I won't tell anyone what it looks like.",
+    "This is the part where you prove you're not a statue. Move!",
+    "Any joint. Any direction. Interpretive dance totally counts.",
+    "30 seconds of freedom! Just... keep something moving. Please.",
+    "I'm watching the timer. You're watching me. Let's make it weird.",
+  ],
+  reward: [
+    "Mission complete! I knew you had it in you. Well, mostly knew.",
+    "Protocol finished! Go eat something. You've definitely earned it.",
+    "That was very real work. I'm logging this as 'impressive.' Officially.",
+    "You showed up, you pushed, you survived. That's the whole job!",
+    "Done! You are now 3×6 reps cooler than you were this morning.",
+  ],
+  set_rest: [
+    "Set done! Shake out those arms. Or legs. Whichever one is complaining.",
+    "Rest time. I'd high-five you but I'm a robot. Imagine it.",
+    "Good set! Now breathe. Dramatically if needed.",
+    "That was a solid set. Your muscles are having a little meeting. Let them.",
+    "Rest mode activated. Refueling in progress. Next set incoming!",
+  ],
+  exercise_done: [
+    "All sets done! Your muscles filed a complaint. I ignored it.",
+    "Exercise complete! The next challenge is already waiting. How exciting!",
+    "Finished! Your form was... let's say 'character-building.' On to the next.",
+    "Solid work. You came, you squatted (or curled), you conquered.",
+    "That's a wrap on this one. Momentum is a beautiful thing — keep it.",
+  ],
+};
+
+// Encouraging words: color intensity tracks positivity (cool→hot)
+const HOME_LIVE_WORDS = [
+  { text: "KEEP GOING!",   color: "#00DBE9" },
+  { text: "GREAT FORM!",   color: "#AAFF5A" },
+  { text: "NICE REP!",     color: "#FFE44D" },
+  { text: "KEEP PUSHING!", color: "#FFA040" },
+  { text: "AMAZING!",      color: "#FF6030" },
+  { text: "PERFECT!",      color: "#FF3020" },
+  { text: "ON FIRE!",      color: "#FF1000" },
+  { text: "BEAST MODE!",   color: "#FF0050" },
+];
+
+const CARDIO_MILESTONES = [
+  { pct: 0.85, text: "JUST GETTING STARTED!", color: "#00DBE9" },
+  { pct: 0.65, text: "WARMING UP!",            color: "#AAFF5A" },
+  { pct: 0.50, text: "HALFWAY THERE!",         color: "#FFE44D" },
+  { pct: 0.30, text: "FINAL PUSH!",            color: "#FFA040" },
+  { pct: 0.15, text: "ALMOST THERE!",          color: "#FF3020" },
+  { pct: 0.05, text: "FINISH STRONG!",         color: "#FF0050" },
+];
 
 const MOCK_DTW = {
   correct: false,
@@ -283,6 +417,25 @@ function saveMuscleStatus(s, name = getActiveUserName()) {
     const userName = String(name ?? "").trim();
     if (userName) localStorage.setItem(userStorageKey(MUSCLE_STATUS_KEY, userName), JSON.stringify(s));
   } catch {}
+}
+
+// Returns a copy of muscleStatus with each load decayed by elapsed time since last workout.
+// Large muscles (2-day recovery): load halves each day, reaches 0 at day 2.
+// Small muscles (1-day recovery): load halves each day, reaches 0 at day 1.
+// The raw muscleStatus (for the heatmap display) is unchanged — only AI plan generation uses this.
+function decayedMuscleStatus(muscleStatus) {
+  const updatedAt = muscleStatus._updatedAt ?? {};
+  const now = Date.now();
+  return Object.fromEntries(
+    MUSCLE_GROUPS.map(({ id }) => {
+      const raw = muscleStatus[id] ?? 0;
+      const ts = updatedAt[id];
+      if (!ts || raw <= 0) return [id, raw];
+      const recoveryDays = MUSCLE_RECOVERY_DAYS[id] ?? 1;
+      const daysSince = (now - ts) / 86400000;
+      return [id, raw * Math.max(0, 1 - daysSince / recoveryDays)];
+    })
+  );
 }
 
 function makeDefaultAiCoreProfile() {
@@ -398,12 +551,18 @@ function loadDeviceUrl(name = getActiveUserName()) {
   return loadUserValue(DEVICE_URL_KEY, "http://fitcam-d37d7c.local", name);
 }
 
+function normalizeDeviceHttpUrl(value) {
+  const trimmed = String(value || "").trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+}
+
 function saveDeviceUrl(value, name = getActiveUserName()) {
   saveUserValue(DEVICE_URL_KEY, value || "http://fitcam-d37d7c.local", name);
 }
 
 function loadConnMode(name = getActiveUserName()) {
-  const mode = loadUserValue(CONN_MODE_KEY, "ble", name);
+  const mode = loadUserValue(CONN_MODE_KEY, "wifi", name);
   return mode === "wifi" ? "wifi" : "ble";
 }
 
@@ -473,6 +632,136 @@ function groupLabelForMuscle(muscleId) {
   return MUSCLE_BY_ID[muscleId]?.group ?? "Training";
 }
 
+// ─── Kinetic Core dialogue pools ─────────────────────────────────────────────
+const _coreReplyHistory = {};
+
+function pickReply(pool, key) {
+  if (!_coreReplyHistory[key]) _coreReplyHistory[key] = [];
+  const history = _coreReplyHistory[key];
+  const window  = Math.ceil(pool.length / 2);
+  let available = pool.map((_, i) => i).filter(i => !history.includes(i));
+  if (available.length === 0) { _coreReplyHistory[key] = []; available = pool.map((_, i) => i); }
+  const chosen = available[Math.floor(Math.random() * available.length)];
+  history.push(chosen);
+  if (history.length > window) history.shift();
+  return pool[chosen];
+}
+
+const CORE_REPLIES = {
+  default: [
+    "Training note recorded in your local intelligence stream.",
+    "Logged. Your input is now part of the recovery context.",
+    "Received. If there's a specific question — form, fatigue, planning — ask directly and I'll route it.",
+    "Captured. Patterns only emerge with consistent data points. Keep logging.",
+    "On record. Anything you want analyzed or planned, just ask.",
+    "Stored to your local stream. Context updated.",
+    "Entry added. Your stream builds over time.",
+    "Got it. I'll factor this into context for your next plan request.",
+    "Noted. The system is aware.",
+    "Logged. Ask me to generate a plan, check your stats, or flag a constraint anytime.",
+  ],
+  injury: [
+    (labels) => `Constraint noted: ${labels}. Load around that zone will be moderated in future plans.`,
+    (labels) => `${labels} logged as a sensitivity. Plans will route around it where possible.`,
+    (labels) => `Logged. ${labels} is now flagged as a load-sensitive zone.`,
+    (labels) => `Understood — ${labels} added to your constraint profile. Training load will be redistributed.`,
+    (labels) => `${labels} flagged. Expect reduced risk exposure in that region going forward.`,
+    (labels) => `Constraint active: ${labels}. Your next plan accounts for this automatically.`,
+    (labels) => `${labels} noted. I'll keep intensity in that zone below threshold until you clear it.`,
+  ],
+  tired_with: [
+    (lines) => `Fatigue after output is a normal adaptive signal. Today's log:\n${lines}\nRecovery now is where the gains lock in. Prioritize sleep and protein tonight.`,
+    (lines) => `Output recorded. Your body is responding to load — that's the point. Today:\n${lines}\nHydrate, sleep, and let the process run.`,
+    (lines) => `Feeling it is proof the stimulus was real. Today's sessions:\n${lines}\nMuscle load updated. Recovery window starts now.`,
+    (lines) => `That kind of tired is earned. Log for today:\n${lines}\nSystems logged — let the adaptation happen.`,
+    (lines) => `Fatigue is information. Here's what produced it:\n${lines}\nThe work is in the books. Eat, sleep, trust the cycle.`,
+    (lines) => `Normal post-training response. Today's output:\n${lines}\nRecovery is the second half of training. Don't skip it.`,
+  ],
+  tired_none: [
+    "Rest is a valid session. Nothing logged today — it carries forward without penalty.",
+    "Skipping isn't failure — it's data. Rest days have their own adaptation value.",
+    "No sessions today. If you need rest, take it without guilt. The schedule adapts.",
+    "Fatigue without a session usually signals systemic recovery need. Honor it.",
+    "Sometimes the right move is to not train. Your system will recalibrate.",
+    "No output logged yet today. Low-intensity movement — a walk, some mobility — is fine if you want to stay active without adding load.",
+    "Rest days are programmed into any serious training cycle. This counts.",
+  ],
+  progress: [
+    (s, f) => `${s} session${s !== 1 ? "s" : ""} logged. Average DTW alignment: ${f > 0 ? `${f}%` : "no data yet"}. Muscle recovery status is updated after each completed set.`,
+    (s, f) => `Sessions on record: ${s}. Form consistency avg: ${f > 0 ? `${f}%` : "pending data"}. The trend matters more than any single number.`,
+    (s, f) => `${s} data point${s !== 1 ? "s" : ""} in your stream. Avg form: ${f > 0 ? `${f}%` : "not yet recorded"}. Muscle load map is current.`,
+    (s, f) => `Training record: ${s} session${s !== 1 ? "s" : ""}, ${f > 0 ? `${f}% avg alignment` : "alignment data pending"}. Each session sharpens the baseline.`,
+    (s, f) => `Logged output: ${s} session${s !== 1 ? "s" : ""}. ${f > 0 ? `Form average ${f}% — ${f >= 80 ? "above threshold" : f >= 65 ? "solid range" : "tracking upward"}` : "Form data builds after your first set"}. Recovery map is live.`,
+    (s, f) => `You've put in ${s} session${s !== 1 ? "s" : ""} so far. ${f > 0 ? `Average precision: ${f}%. Keep the reps clean and the number climbs.` : "Complete a set to start tracking form alignment."}`,
+    (s, f) => `${s} session${s !== 1 ? "s" : ""} in the system. ${f > 0 ? `${f}% avg DTW — ${f >= 75 ? "you're moving well" : "room to tighten form"}` : "Alignment data will appear after your first completed set"}.`,
+  ],
+  motivation: [
+    "The hardest sessions build the most. Show up, move, log it.",
+    "Consistency isn't glamorous. It's just the only thing that works.",
+    "You don't need motivation. You need a target and a start. Go.",
+    "The gap between where you are and where you want to be is sessions logged, not sessions missed.",
+    "Hard is relative. What you can do today is enough.",
+    "Systems beat motivation every time. You built one. Use it.",
+    "Every session in the record is one your future self benefits from.",
+    "The data doesn't care how you felt going in — only what you did. Let's log something.",
+  ],
+  technique: [
+    "Form is tracked in real time via DTW alignment. Watch the DTW bar during your set — deviations show as red joints.",
+    "Technique issues surface as live hints during sessions. If a joint is flagging, adjust it and watch the DTW score respond.",
+    "The DTW alignment score is your form proxy. Sustained scores above 80% indicate consistent movement patterns.",
+    "Each exercise has joint-specific checks. They activate in real time and tell you exactly where the breakdown is.",
+    "Good technique shows up as green bones in the skeleton overlay. Red bones flag deviation.",
+    "Form degrades under fatigue — that's expected. DTW is measured against your own movement template, not a generic model.",
+    "Run a set and check the per-joint angle display. That's the most direct form feedback available.",
+  ],
+  recovery: [
+    "Recovery is when adaptation happens. Sleep quality is the primary driver — prioritize 7-9 hours when training load is high.",
+    "DOMS typically peaks at 24-72 hours post-session. Light movement accelerates clearance better than complete rest.",
+    "Active recovery is usually more effective than passive rest. Low-intensity movement on off days keeps the system primed.",
+    "The heatmap shows which groups are loaded. Focus mobility and stretch work on those zones specifically.",
+    "Sleep is the highest-leverage recovery tool available. No protocol replaces it.",
+    "If you're consistently sore, your recovery window is shorter than your training frequency. Add a rest day or reduce volume.",
+    "Muscle load is tracked in your heatmap. High-load zones benefit most from sleep, hydration, and light mobility — in that order.",
+  ],
+  nutrition: [
+    "Protein synthesis peaks post-session. 20-40g of quality protein within two hours of training is the baseline target.",
+    "Hydration directly affects joint efficiency and muscle contraction. 0.5L per 30 minutes of training is a useful reference.",
+    "Pre-session carbohydrates fuel intensity. Post-session protein supports repair. The order matters.",
+    "For training support: adequate protein (1.6-2.2g/kg bodyweight) and consistent hydration covers most of the nutritional requirement.",
+    "Post-workout: protein prioritized. Pre-workout: carbohydrates and hydration. During: water only unless session exceeds 90 minutes.",
+    "Caloric intake matters less than timing and protein distribution across the day.",
+    "Nutrition is outside my direct instrumentation — I track mechanical output. That said: protein and sleep are the highest-leverage post-session inputs.",
+  ],
+};
+
+const PLAN_DIALOGUE = {
+  fatigue: [
+    (names) => `${names} above 75% load — plan redirected to rested groups.`,
+    (names) => `High load on ${names}. Today's plan reduces exposure to those zones.`,
+    (names) => `${names} need recovery time. Routing today's session around them.`,
+    (names) => `${names} registering above threshold. Plan shifts to complement recovery.`,
+  ],
+  injury: [
+    (labels) => `Constraints factored in: ${labels}. Load has been redistributed.`,
+    (labels) => `${labels} flagged — exercises adjusted to keep you moving safely.`,
+    (labels) => `Working around ${labels}. The plan avoids risk exposure in those zones.`,
+    (labels) => `Injury profile active: ${labels}. Selections avoid high-risk movements.`,
+  ],
+  focus: [
+    (labels) => `${labels} prioritized in today's selection.`,
+    (labels) => `Plan biased toward ${labels} based on your focus profile.`,
+    (labels) => `Focus on ${labels} — exercises selected to hit those groups directly.`,
+    (labels) => `Focus tags active: ${labels}. Plan weighted accordingly.`,
+  ],
+  balanced: [
+    "Full readiness detected. Balanced plan generated.",
+    "Recovery metrics look clean. Standard plan ready.",
+    "No fatigue flags — you're in a good window to train at full intensity.",
+    "Heatmap is clear. Plan optimized for current readiness.",
+    "No elevated fatigue detected; balanced readiness plan selected.",
+  ],
+};
+
 function generateAiCorePlan({ profile, muscleStatus, focusTags }) {
   const injuries = normalizeTags(profile?.injuryTags);
   const focus = normalizeTags(focusTags?.length ? focusTags : profile?.focusTags);
@@ -514,7 +803,7 @@ function generateAiCorePlan({ profile, muscleStatus, focusTags }) {
         fatiguePenalty,
       };
     })
-    .filter((item) => item.injuryPenalty < 100)
+    .filter((item) => item.injuryPenalty < 70)
     .sort((a, b) => b.score - a.score);
 
   const selected = [];
@@ -537,16 +826,25 @@ function generateAiCorePlan({ profile, muscleStatus, focusTags }) {
     ? groupLabelForMuscle(primaryFocus)
     : (selected[0]?.group ?? "Training");
   const fatigueNames = highFatigue.map((id) => MUSCLE_BY_ID[id]?.label ?? id);
+  const injuryLabels = injuries.map((id) => AI_CORE_INJURY_OPTIONS.find((item) => item.id === id)?.label ?? id).join(", ");
+  const focusLabels  = focus.map((id) => MUSCLE_BY_ID[id]?.label ?? id).join(", ");
   const reason = highFatigue.length
     ? `${fatigueNames.join(", ")} above 75% load; plan shifts away from overloaded tissue.`
     : injuries.length
-    ? `Injury constraints active: ${injuries.map((id) => AI_CORE_INJURY_OPTIONS.find((item) => item.id === id)?.label ?? id).join(", ")}.`
+    ? `Injury constraints active: ${injuryLabels}.`
     : focus.length
-    ? `Focus tags prioritized: ${focus.map((id) => MUSCLE_BY_ID[id]?.label ?? id).join(", ")}.`
+    ? `Focus tags prioritized: ${focusLabels}.`
     : "No elevated fatigue detected; balanced readiness plan selected.";
+  const dialogue = highFatigue.length
+    ? pickReply(PLAN_DIALOGUE.fatigue, "plan_fatigue")(fatigueNames.join(", "))
+    : injuries.length
+    ? pickReply(PLAN_DIALOGUE.injury, "plan_injury")(injuryLabels)
+    : focus.length
+    ? pickReply(PLAN_DIALOGUE.focus, "plan_focus")(focusLabels)
+    : pickReply(PLAN_DIALOGUE.balanced, "plan_balanced");
 
   return {
-    dialogue: reason,
+    dialogue,
     action_keyword: "DAILY_WORKOUT_INIT",
     payload: {
       target_muscle_group: targetGroup,
@@ -588,7 +886,7 @@ function buildWeekSchedule(trainingDaysPerWeek, muscleStatus, focusTags, injuryT
   const scoredPool = EXERCISES.map((ex) => {
     const rule = AI_CORE_EXERCISE_RULES[ex.id] ?? { baseSets: 3, reps: 10, risk: {} };
     const injuryPenalty = injuries.reduce((s, tag) => s + (rule.risk?.[tag] ?? 0), 0);
-    if (injuryPenalty >= 100) return null;
+    if (injuryPenalty >= 70) return null;
     const targets = Object.keys(getExerciseTargets(ex.id));
     const avgLoad = targets.length
       ? targets.reduce((s, m) => s + (muscleStatus?.[m] ?? 0), 0) / targets.length : 0;
@@ -718,16 +1016,19 @@ const AUTO_CLASSIFIER_SPECS = {
     ],
   },
   lateral_raise: {
-    minAmp: 24,
-    strongAmp: 62,
+    minAmp: 26,
+    strongAmp: 65,
     rest: 34,
-    work: 64,
+    work: 66,
     direction: "up",
     features: [
-      { id: "left_shoulder", type: "active", weight: 0.30, minAmp: 18, strongAmp: 58, rest: 36, work: 64, direction: "up", fn: (lm) => classifierAngle(lm[23], lm[11], lm[13]) },
-      { id: "right_shoulder", type: "active", weight: 0.30, minAmp: 18, strongAmp: 58, rest: 36, work: 64, direction: "up", fn: (lm) => classifierAngle(lm[24], lm[12], lm[14]) },
-      { id: "right_elbow_quiet", type: "quiet", weight: 0.14, maxAmp: 44, minAvg: 105, fn: (lm) => classifierAngle(lm[12], lm[14], lm[16]) },
-      { id: "left_elbow_quiet", type: "quiet", weight: 0.10, maxAmp: 44, minAvg: 105, fn: (lm) => classifierAngle(lm[11], lm[13], lm[15]) },
+      { id: "left_shoulder",  type: "active", weight: 0.30, minAmp: 22, strongAmp: 62, rest: 36, work: 66, direction: "up", fn: (lm) => classifierAngle(lm[23], lm[11], lm[13]) },
+      { id: "right_shoulder", type: "active", weight: 0.30, minAmp: 22, strongAmp: 62, rest: 36, work: 66, direction: "up", fn: (lm) => classifierAngle(lm[24], lm[12], lm[14]) },
+      // Elbows must stay extended during lateral raise — key separator from bicep_curl.
+      // Bicep curl produces elbow amp ~70°; lateral raise elbow amp typically < 25°.
+      // minAvg:125 also confirms elbows are mostly straight (not curled).
+      { id: "right_elbow_quiet", type: "quiet", weight: 0.16, maxAmp: 28, minAvg: 125, fn: (lm) => classifierAngle(lm[12], lm[14], lm[16]) },
+      { id: "left_elbow_quiet",  type: "quiet", weight: 0.14, maxAmp: 28, minAvg: 125, fn: (lm) => classifierAngle(lm[11], lm[13], lm[15]) },
       { id: "knees_quiet", type: "quiet", weight: 0.08, maxAmp: 28, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[25], lm[27]), classifierAngle(lm[24], lm[26], lm[28])) },
     ],
   },
@@ -762,10 +1063,14 @@ const AUTO_CLASSIFIER_SPECS = {
     work: 82,
     direction: "down",
     features: [
-      { id: "left_elbow", type: "active", weight: 0.34, minAmp: 30, strongAmp: 85, rest: 143, work: 82, direction: "down", fn: (lm) => classifierAngle(lm[11], lm[13], lm[15]) },
-      { id: "right_elbow", type: "active", weight: 0.34, minAmp: 30, strongAmp: 85, rest: 143, work: 82, direction: "down", fn: (lm) => classifierAngle(lm[12], lm[14], lm[16]) },
+      // Elbow flexion — primary signal (reduced weight to make room for shoulder discriminator)
+      { id: "left_elbow",  type: "active", weight: 0.27, minAmp: 30, strongAmp: 85, rest: 143, work: 82, direction: "down", fn: (lm) => classifierAngle(lm[11], lm[13], lm[15]) },
+      { id: "right_elbow", type: "active", weight: 0.27, minAmp: 30, strongAmp: 85, rest: 143, work: 82, direction: "down", fn: (lm) => classifierAngle(lm[12], lm[14], lm[16]) },
+      // Shoulder abduction must stay quiet — key separator from lateral_raise.
+      // Lateral raise produces ~60-70° shoulder amp; bicep curl only ~10-20°.
+      // maxAmp:18 → score=0 if shoulder amp > 36°, score=1 if amp <= 18°.
+      { id: "shoulder_abduction_quiet", type: "quiet", weight: 0.24, maxAmp: 18, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[11], lm[13]), classifierAngle(lm[24], lm[12], lm[14])) },
       { id: "knees_quiet", type: "quiet", weight: 0.14, maxAmp: 24, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[25], lm[27]), classifierAngle(lm[24], lm[26], lm[28])) },
-      { id: "shoulder_quiet", type: "quiet", weight: 0.10, maxAmp: 30, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[11], lm[13]), classifierAngle(lm[24], lm[12], lm[14])) },
     ],
   },
   deadlift_side: {
@@ -1034,7 +1339,7 @@ const THEME_COLORS = {
   sunset: {
     particle: { live_good: [232,40,94], connected: [232,40,94], live_warning: [180,0,30], signal_lost: [180,140,120], analysis: [232,82,10], idle: [255,95,31] },
     sphere: { near: [232,40,94], far: [255,95,31] },
-    skeleton: { bg: "#06060E", bgCombo: "rgba(6,6,18,0.30)" },
+    skeleton: { bg: "#F2E8D5", bgCombo: "#F2E8D5" },
     chart: { ref: "#E06200", user: "#E8285E", glow: "#FF5F1F", grid: "rgba(0,0,0,0.06)" },
     muscle: {
       levels: [
@@ -1048,7 +1353,18 @@ const THEME_COLORS = {
         "#BD1F29",
       ],
     },
-    renderer: { ok_a: "#1C2AD2", ok_b: "#5D6EF0", white: "rgba(200,210,255,0.96)", dim: "rgba(100,120,220,0.32)", warn: "#FF9500", err: "#E8285E", labelBg: "rgba(6,6,24,0.62)", warningTxt: "rgba(220,230,255,0.92)", blendMode: "lighter" },
+    // Da Vinci manuscript style: warm parchment bg, sepia-brown lines, pink-purple errors
+    renderer: {
+      ok_a:       "#4A1C0C",   // dark sepia — primary bone colour
+      ok_b:       "#7A3018",   // deep red-brown — secondary / head ring
+      white:      "#6B1A0A",   // dark red — joint dots
+      dim:        "rgba(74,28,12,0.22)", // barely-visible low-confidence joints
+      warn:       "#1A0804",   // near-black — angle arcs & sketch guides
+      err:        "#CC0E6A",   // high-saturation red-purple — form error highlight
+      labelBg:    "rgba(242,232,213,0.90)", // parchment label background
+      warningTxt: "#1A0804",   // near-black text
+      blendMode:  "multiply",  // ink-on-paper: dark strokes darken the parchment ✓
+    },
   },
 };
 
@@ -1078,6 +1394,8 @@ const css = `
   --font: 'Sora', ui-rounded, system-ui, sans-serif;
   --mono: 'Space Mono', 'SF Mono', 'Courier New', monospace;
   --max-w: 430px;
+  --app-height: 100vh;
+  --bottom-nav-h: 76px;
   --spring-heavy: cubic-bezier(0.2, 0, 0, 1);
   --spring-micro: cubic-bezier(0.34, 1.56, 0.64, 1);
   /* RGB channels for rgba() usage — override these in theme blocks */
@@ -1232,14 +1550,14 @@ const css = `
 }
 
 /* ── Sunset: Nexus Social ── */
-/* Stage: warm milky-white glass — same feel as other panels */
+/* Stage: warmer, more opaque for better node contrast */
 [data-theme="sunset"] .nexus-stage {
   background:
-    radial-gradient(circle at 50% 52%, rgba(232,40,94,0.09), transparent 38%),
-    radial-gradient(circle at 18% 24%, rgba(255,95,31,0.07), transparent 30%),
-    radial-gradient(circle at 80% 70%, rgba(255,149,0,0.06), transparent 26%),
-    rgba(255,228,200,0.72);
-  border-color: rgba(160,64,16,0.18);
+    radial-gradient(circle at 50% 52%, rgba(232,40,94,0.11), transparent 38%),
+    radial-gradient(circle at 18% 24%, rgba(255,95,31,0.09), transparent 30%),
+    radial-gradient(circle at 80% 70%, rgba(255,149,0,0.08), transparent 26%),
+    rgba(245,205,165,0.88);
+  border-color: rgba(160,64,16,0.28);
 }
 /* Orbit ring */
 [data-theme="sunset"] .nexus-stage::after {
@@ -1322,12 +1640,16 @@ const css = `
          box-shadow: 0 0 10px 3px color-mix(in srgb, var(--mood) 25%, transparent); }
 }
 
-/* ── Text ── */
+/* ── Text: dark shadow lifts text off warm stage ── */
 [data-theme="sunset"] .nexus-node-name {
-  color: var(--text);
-  text-shadow: 0 1px 5px rgba(255,228,200,0.85);
+  color: rgba(24,8,2,0.96);
+  font-weight: 800;
+  text-shadow: 0 1px 4px rgba(255,235,210,0.95), 0 -1px 2px rgba(255,235,210,0.7);
 }
-[data-theme="sunset"] .nexus-node-meta { color: var(--text-m); }
+[data-theme="sunset"] .nexus-node-meta {
+  color: rgba(60,24,6,0.82);
+  text-shadow: 0 1px 3px rgba(255,235,210,0.8);
+}
 
 /* ── Header & back button ── */
 [data-theme="sunset"] .nexus-back {
@@ -1336,9 +1658,13 @@ const css = `
   background: rgba(255,225,200,0.40);
 }
 /* ── Detail panel ── */
-[data-theme="sunset"] .nexus-detail-name { color: rgba(32,14,6,0.92); }
-[data-theme="sunset"] .nexus-detail-sub  { color: rgba(80,38,14,0.72); }
-[data-theme="sunset"] .nexus-mood-line   { color: rgba(80,38,14,0.65); }
+[data-theme="sunset"] .nexus-detail-name { color: rgba(22,6,0,0.96); font-weight: 800; }
+[data-theme="sunset"] .nexus-detail-sub  { color: rgba(60,24,6,0.85); }
+[data-theme="sunset"] .nexus-mood-line   { color: rgba(60,24,6,0.78); }
+/* ── Avatar dot border ── */
+[data-theme="sunset"] .nexus-avatar-dot {
+  border-color: rgba(255,220,185,0.95);
+}
 /* ── Resonate button ── */
 [data-theme="sunset"] .nexus-resonate {
   border-color: color-mix(in srgb, var(--mood) 52%, rgba(120,40,10,0.25));
@@ -1361,19 +1687,33 @@ const css = `
 }
 [data-theme="sunset"] .nexus-boost-tag { color: #B04800; }
 
-html, body { background: var(--base); overflow: hidden; height: 100svh; }
+html, body, #root {
+  background: var(--base);
+  overflow: hidden;
+  height: var(--app-height, 100vh);
+  /* Prevent horizontal scroll / visual-viewport drift on iOS Safari */
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overscroll-behavior-x: none;
+  touch-action: pan-y;
+}
 
 body {
   font-family: var(--font);
   color: var(--text);
-  height: 100svh;
+  min-height: var(--app-height, 100vh);
+  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 /* ── World Layer ── */
 .ath-root {
-  height: 100svh;
+  height: var(--app-height, 100vh);
+  min-height: var(--app-height, 100vh);
+  width: 100%;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -1698,15 +2038,34 @@ body {
   position: relative; z-index: 2;
   flex: 1; min-height: 0; display: flex; flex-direction: column;
   will-change: transform, opacity, filter;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.ath-screen-host {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .screen-pad {
   flex: 1; display: flex; flex-direction: column;
-  padding: 0 1.25rem;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+  padding-bottom: 0;
   max-width: var(--max-w);
   margin: 0 auto;
   width: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* ── Glass Panels ── */
@@ -1853,6 +2212,8 @@ h2.ath-title {
   padding: 3.5rem 0 2.5rem;
   gap: 2rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .auth-wrap > * { flex-shrink: 0; }
 
@@ -1985,9 +2346,11 @@ h2.ath-title {
 /* ── Dashboard / Bento ── */
 .dash-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 1.25rem 0 6.5rem;
+  padding: 1.25rem 0 calc(var(--bottom-nav-h, 76px) + 1.25rem);
   gap: 1rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .dash-wrap > * { flex-shrink: 0; }
 
@@ -2042,48 +2405,79 @@ h2.ath-title {
 
 .bento-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto auto auto;
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
 .bento-hero {
-  grid-column: 1 / -1;
-  padding: 1.25rem;
+  background: rgba(15,16,20,0.24);
+  grid-column: 1;
+  aspect-ratio: 2 / 1;
   cursor: pointer;
-  transition: transform 0.2s var(--spring-heavy);
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  min-height: 112px;
   position: relative;
   overflow: hidden;
+  transition: transform 0.2s var(--spring-heavy);
+  min-height: 140px;
 }
-
-.bento-hero::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(var(--em-a-rgb),0.08) 0%, rgba(var(--em-b-rgb),0.04) 100%);
-  pointer-events: none;
-}
-
-.bento-hero:hover { transform: scale(1.015); }
 .bento-hero:active { transform: scale(0.99); }
 
 .bento-card {
-  padding: 1.1rem;
+  background: rgba(15,16,20,0.24);
+  aspect-ratio: 2 / 1;
   cursor: pointer;
+  position: relative;
+  overflow: hidden;
   transition: transform 0.2s var(--spring-heavy), border-color 0.2s;
-  display: flex;
-  flex-direction: column;
-  gap: 0.38rem;
-  min-height: 96px;
+  min-height: 140px;
 }
-
-.bento-card:hover { transform: scale(1.03); border-color: var(--gb-hi); }
+.bento-card:hover { transform: scale(1.015); border-color: var(--gb-hi); }
 .bento-card:active { transform: scale(0.98); }
 
+[data-theme="sunset"] .bento-hero,
+[data-theme="sunset"] .bento-card {
+  background: rgba(255,232,208,0.24);
+}
+
+/* Full-bleed illustration fills the card */
+.bento-illus {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block; pointer-events: none;
+  opacity: 1;
+}
+
+.bento-illus-img {
+  object-fit: cover;
+  object-position: center;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.bento-illus-plan,
+.bento-illus-home {
+  transform: scale(1.02);
+}
+
+/* Text overlay at bottom of card */
+.bento-overlay {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  padding: 0.7rem 0.9rem;
+  background: linear-gradient(transparent, rgba(0,0,0,0.32) 90%);
+  z-index: 2;
+  display: flex; flex-direction: column; gap: 0.18rem;
+}
+[data-theme="sunset"] .bento-overlay {
+  background:
+    linear-gradient(180deg, rgba(255,248,238,0) 0%, rgba(255,235,214,0.16) 38%, rgba(255,176,128,0.34) 100%);
+  box-shadow: inset 0 -1px 0 rgba(255,244,230,0.18);
+}
+.bento-overlay-top {
+  position: absolute; top: 0; left: 0; right: 0;
+  padding: 0.6rem 0.9rem;
+  z-index: 2;
+}
+
+/* Keep .bento-icon for Edge Node row */
 .bento-icon {
   align-self: flex-start;
   width: 34px; height: 34px;
@@ -2098,10 +2492,15 @@ h2.ath-title {
   letter-spacing: 0.08em;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 16px rgba(var(--em-a-rgb),0.08);
 }
+.bento-icon-svg { width: 18px; height: 18px; display: block; }
 
-.bento-icon-svg {
-  width: 18px; height: 18px;
-  display: block;
+@keyframes bento-dot-pulse {
+  0%,100% { opacity: 0.35; r: 2.5; }
+  50%      { opacity: 0.9;  r: 3.8; }
+}
+@keyframes bento-dot-pulse-slow {
+  0%,100% { opacity: 0.25; }
+  50%      { opacity: 0.65; }
 }
 
 .action-badge-svg {
@@ -2110,25 +2509,26 @@ h2.ath-title {
 }
 
 .bento-tag {
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: 0.13em;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--text-d);
+  color: rgba(255,255,255,0.55);
+}
+[data-theme="sunset"] .bento-tag {
+  color: var(--em-a);
+  text-shadow: 0 1px 8px rgba(60,14,0,0.35);
 }
 
 .bento-label {
-  font-size: 1.05rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--text);
-  margin-top: auto;
+  color: rgba(255,255,255,0.92);
+  line-height: 1.1;
 }
-
-.bento-hero .bento-label {
-  font-size: 1.45rem;
-}
+[data-theme="sunset"] .bento-label { color: rgba(255,235,210,0.96); }
 
 .stats-strip {
   display: flex;
@@ -2295,13 +2695,20 @@ h2.ath-title {
 /* ── Bottom Nav ── */
 .bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0;
+  /* Anchor to physical screen edges including side safe areas */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
   z-index: 10;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   background: var(--nav-bg, rgba(5,6,10,0.85));
   backdrop-filter: blur(20px) saturate(150%);
   -webkit-backdrop-filter: blur(20px) saturate(150%);
   border-top: 1px solid var(--gb);
   display: flex;
-  padding: 0.5rem 0 calc(0.5rem + env(safe-area-inset-bottom, 0px));
+  padding-top: 0.5rem;
+  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
 }
 
 .nav-item {
@@ -2367,9 +2774,12 @@ h2.ath-title {
 .connect-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
   align-items: center;
-  padding: 2rem 0 4rem;
+  padding: 2rem 0 calc(var(--bottom-nav-h, 76px) + 1rem);
   gap: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 .connect-wrap > * { flex-shrink: 0; }
 
@@ -2554,6 +2964,8 @@ h2.ath-title {
   max-width: var(--max-w);
   margin: 0 auto;
   width: 100%;
+  min-width: 0;
+  padding-top: env(safe-area-inset-top, 0px);
   position: relative;
   z-index: 5;
   overflow-y: auto;
@@ -2589,6 +3001,17 @@ h2.ath-title {
     radial-gradient(ellipse 80% 50% at 50% 100%, rgba(255,45,85,0.18) 0%, transparent 60%),
     radial-gradient(ellipse 60% 40% at 90% 50%, rgba(255,59,48,0.12) 0%, transparent 50%);
   animation: aurora-shake 0.15s ease-in-out infinite;
+}
+
+/* Both themes: suppress all aurora overlays and shake on LiveScreen */
+[data-theme="sunset"] .cam-aurora,
+[data-theme="sunset"] .cam-aurora.good,
+[data-theme="sunset"] .cam-aurora.warn,
+[data-theme="deep_space"] .cam-aurora,
+[data-theme="deep_space"] .cam-aurora.good,
+[data-theme="deep_space"] .cam-aurora.warn {
+  background: none;
+  animation: none;
 }
 
 @keyframes aurora-shake {
@@ -2659,8 +3082,8 @@ h2.ath-title {
   background: rgba(3,5,8,0.72);
   border: 1px solid rgba(0,122,255,0.35);
   border-radius: 6px;
-  padding: 3px 9px;
-  font-size: 0.65rem;
+  padding: 5px 12px;
+  font-size: 1.3rem;
   font-weight: 700;
   letter-spacing: 0.16em;
   color: #007AFF;
@@ -2928,8 +3351,8 @@ h2.ath-title {
 .dtw-badge {
   position: absolute; top: 12px; right: 12px;
   font-family: var(--mono);
-  font-size: 0.7rem;
-  padding: 3px 8px;
+  font-size: 1.4rem;
+  padding: 5px 12px;
   background: rgba(3,5,8,0.7);
   border: 1px solid var(--gb);
   border-radius: 6px;
@@ -2938,18 +3361,18 @@ h2.ath-title {
 
 .classify-badge {
   position: absolute;
-  top: 42px;
+  top: 62px;
   right: 12px;
-  max-width: min(58%, 210px);
+  max-width: min(68%, 260px);
   display: flex;
   align-items: center;
   gap: 0.42rem;
-  padding: 5px 8px;
+  padding: 5px 10px;
   background: rgba(3,5,8,0.72);
   border: 1px solid rgba(var(--em-a-rgb),0.24);
   border-radius: 7px;
   color: rgba(240,245,255,0.82);
-  font-size: 0.62rem;
+  font-size: 1.24rem;
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -2984,20 +3407,27 @@ h2.ath-title {
 }
 
 .form-hint {
-  position: absolute; top: 58px; left: 0; right: 0;
+  position: absolute; top: 118px; left: 0; right: 0;
   display: flex; justify-content: center;
   pointer-events: none;
 }
 
 .hint-pill {
-  background: rgba(255,45,85,0.12);
-  border: 1px solid rgba(255,45,85,0.35);
+  background: rgba(255,45,85,0.14);
+  border: 1px solid rgba(255,45,85,0.45);
   border-radius: 20px;
-  padding: 5px 14px;
-  font-size: 0.78rem;
-  color: rgba(255,120,130,0.9);
+  padding: 8px 20px;
+  font-size: 1.18rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: rgba(255,140,150,0.95);
   text-align: center;
   animation: hint-in 0.25s ease;
+}
+[data-theme="sunset"] .hint-pill {
+  background: rgba(204,14,106,0.10);
+  border-color: rgba(204,14,106,0.40);
+  color: #1A0804;
 }
 
 @keyframes hint-in {
@@ -3191,6 +3621,8 @@ h2.ath-title {
   padding: 1.5rem 0 2rem;
   gap: 0.85rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .analysis-wrap > * { flex-shrink: 0; }
 
@@ -3415,9 +3847,12 @@ h2.ath-title {
 /* ── Nexus Check-ins ── */
 .nexus-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 1.5rem 0 calc(4.5rem + env(safe-area-inset-bottom, 0px));
+  padding: 1.5rem 0 calc(var(--bottom-nav-h, 76px) + 1rem);
   gap: 0.85rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 .nexus-wrap > * { flex-shrink: 0; }
 
@@ -3785,9 +4220,11 @@ h2.ath-title {
 /* ── Profile Screen ── */
 .profile-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 1.5rem 0 6.5rem;
+  padding: 1.5rem 0 calc(var(--bottom-nav-h, 76px) + 1.25rem);
   gap: 0.85rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .profile-wrap > * { flex-shrink: 0; }
 
@@ -4116,9 +4553,11 @@ h2.ath-title {
 /* ── Settings Screen ── */
 .settings-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 1.5rem 0 6.5rem;
+  padding: 1.5rem 0 calc(var(--bottom-nav-h, 76px) + 1.25rem);
   gap: 0.85rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .settings-wrap > * { flex-shrink: 0; }
 
@@ -4183,6 +4622,8 @@ h2.ath-title {
   padding: 1rem 0 2rem;
   gap: 1rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .plan-wrap > * { flex-shrink: 0; }
 
@@ -4197,16 +4638,8 @@ h2.ath-title {
 }
 
 .plan-ai-icon {
-  width: 28px; height: 28px;
-  border-radius: 9px;
-  border: 1px solid rgba(var(--em-a-rgb),0.25);
-  background: rgba(var(--em-a-rgb),0.06);
-  color: var(--em-a);
+  width: 100px; height: 100px;
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--mono);
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
 }
 
 .plan-ai-icon-svg {
@@ -4578,6 +5011,7 @@ h2.ath-title {
   padding: 1.5rem 0 0;
   min-height: 0;
   overflow: hidden;
+  min-width: 0;
 }
 
 .core-header {
@@ -4795,6 +5229,8 @@ h2.ath-title {
   gap: 1.5rem;
   padding: 2rem 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .classify-wrap > * { flex-shrink: 0; }
 
@@ -4860,6 +5296,161 @@ h2.ath-title {
   background: var(--gb);
   margin: 0.5rem 0;
 }
+
+/* ── Home Workout ──────────────────────────────────────────────────────────── */
+
+.hw-wrap { flex:1; min-height:0; display:flex; flex-direction:column; padding:1.5rem 0 calc(var(--bottom-nav-h,76px) + 1rem); gap:1.1rem; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; }
+.hw-wrap > * { flex-shrink:0; }
+
+.hw-header { display:flex; align-items:center; gap:0.85rem; padding-top:0.5rem; }
+.hw-back-btn { flex:0 0 auto; border:1px solid var(--gb); color:var(--text-m); background:rgba(255,255,255,0.04); border-radius:999px; padding:0.5rem 0.85rem; font-family:var(--font); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; cursor:pointer; }
+
+.hw-select-title { font-size:1.05rem; font-weight:900; letter-spacing:0.18em; text-transform:uppercase; }
+.hw-route-cards  { display:flex; flex-direction:column; gap:1rem; }
+.hw-route-card   { padding:1.5rem 1.25rem; border-radius:20px; cursor:pointer; position:relative; overflow:hidden; background:rgba(255,255,255,0.03); border:1.5px solid rgba(255,255,255,0.1); display:flex; flex-direction:column; gap:0.45rem; -webkit-tap-highlight-color:transparent; transition:transform 0.15s; }
+.hw-route-card:active { transform:scale(0.98); }
+.hw-route-glow   { position:absolute; inset:-40%; border-radius:50%; opacity:0.13; pointer-events:none; }
+.hw-route-badge  { font-size:0.6rem; font-weight:700; letter-spacing:0.2em; text-transform:uppercase; opacity:0.65; }
+.hw-route-name   { font-size:1.55rem; font-weight:900; letter-spacing:0.1em; text-transform:uppercase; line-height:1.05; }
+.hw-route-tag    { font-size:0.78rem; opacity:0.6; }
+.hw-step-chips   { display:flex; gap:0.4rem; flex-wrap:wrap; margin-top:0.35rem; }
+.hw-step-chip    { font-size:0.6rem; font-family:var(--mono); letter-spacing:0.05em; padding:0.22rem 0.55rem; border-radius:999px; background:rgba(255,255,255,0.06); color:var(--text-m); border:1px solid rgba(255,255,255,0.1); }
+
+.hw-map-route-name { font-size:1.4rem; font-weight:900; letter-spacing:0.12em; text-transform:uppercase; }
+.hw-map-route-tag  { font-size:0.78rem; opacity:0.58; margin-top:0.1rem; }
+.hw-node-list { display:flex; flex-direction:column; padding:0 6px; margin:0 auto; max-width:380px; width:100%; }
+.hw-node-row  { display:flex; align-items:flex-start; gap:1rem; -webkit-tap-highlight-color:transparent; }
+.hw-node-row.active { cursor:pointer; }
+.hw-node-row.active:active { opacity:0.72; }
+.hw-node-spine { display:flex; flex-direction:column; align-items:center; flex-shrink:0; width:44px; }
+.hw-node-circle { width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.1rem; font-weight:900; border:2px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); flex-shrink:0; position:relative; z-index:1; }
+.hw-node-circle.done   { background:rgba(0,219,233,0.18); border-color:rgba(0,219,233,0.6); color:#00DBE9; }
+.hw-node-circle.active { animation:hw-pulse 2.2s ease-in-out infinite; }
+.hw-node-circle.locked { opacity:0.3; cursor:not-allowed; }
+@keyframes hw-pulse { 0%,100%{transform:scale(1);box-shadow:0 0 0 0 currentColor} 50%{transform:scale(1.07);box-shadow:0 0 16px 4px currentColor} }
+.hw-node-line   { width:2px; flex:1; min-height:28px; margin:2px 0; background:rgba(255,255,255,0.1); }
+.hw-node-line.done-line { background:rgba(0,219,233,0.4); }
+.hw-node-info   { flex:1; padding:0.7rem 0; }
+.hw-node-label  { font-size:1rem; font-weight:800; letter-spacing:0.03em; }
+.hw-node-label.locked { opacity:0.3; }
+.hw-node-meta   { font-size:0.7rem; font-family:var(--mono); color:var(--text-m); margin-top:0.18rem; letter-spacing:0.04em; }
+.hw-node-tap    { font-size:0.6rem; text-transform:uppercase; letter-spacing:0.14em; margin-top:0.28rem; opacity:0.7; animation:hw-blink 1.8s ease-in-out infinite; }
+@keyframes hw-blink { 0%,100%{opacity:0.7} 50%{opacity:1} }
+
+.hw-kini-section { display:flex; flex-direction:column; align-items:center; gap:0.65rem; padding:0.25rem 0; }
+.hw-kini-bubble  { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:18px; border-bottom-left-radius:4px; padding:0.8rem 1rem; font-size:0.88rem; line-height:1.5; max-width:290px; width:100%; position:relative; }
+.hw-kini-bubble::after { content:""; position:absolute; bottom:-8px; left:18px; border:8px solid transparent; border-top-color:rgba(255,255,255,0.12); border-bottom:none; border-left:none; }
+.hw-kini-name   { font-size:0.6rem; font-weight:700; letter-spacing:0.16em; text-transform:uppercase; color:#00DBE9; margin-bottom:0.28rem; }
+
+.hw-between-big  { font-size:2rem; font-weight:900; letter-spacing:0.07em; text-transform:uppercase; line-height:1.05; }
+.hw-between-sub  { font-size:0.82rem; opacity:0.6; margin-top:0.15rem; }
+.hw-next-card    { background:rgba(255,255,255,0.04); border:1.5px solid rgba(255,255,255,0.1); border-radius:16px; padding:1rem 1.2rem; display:flex; flex-direction:column; gap:0.22rem; }
+.hw-next-lbl     { font-size:0.62rem; letter-spacing:0.16em; text-transform:uppercase; opacity:0.5; }
+.hw-next-name    { font-size:1.05rem; font-weight:800; }
+.hw-next-meta    { font-size:0.7rem; font-family:var(--mono); opacity:0.55; margin-top:0.08rem; }
+
+.hw-reward-hero  { text-align:center; padding:0.75rem 0 0.25rem; }
+.hw-reward-title { font-size:2rem; font-weight:900; letter-spacing:0.1em; text-transform:uppercase; line-height:1.1; background:linear-gradient(135deg,#00DBE9,#A855F7 55%,#FF4FF0); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+.hw-reward-sub   { font-size:0.82rem; opacity:0.58; margin-top:0.35rem; }
+.hw-stats-row    { display:flex; gap:0.7rem; }
+.hw-stat-block   { flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:0.8rem 0.6rem; text-align:center; }
+.hw-stat-val     { font-size:1.55rem; font-weight:900; font-family:var(--mono); }
+.hw-stat-lbl     { font-size:0.6rem; letter-spacing:0.14em; text-transform:uppercase; opacity:0.5; margin-top:0.18rem; }
+.hw-muscle-panel { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:1rem 1.1rem; display:flex; flex-direction:column; gap:0.6rem; }
+.hw-muscle-ptitle{ font-size:0.62rem; letter-spacing:0.16em; text-transform:uppercase; opacity:0.5; }
+.hw-muscle-row   { display:flex; align-items:center; gap:0.6rem; }
+.hw-muscle-mname { font-size:0.7rem; font-family:var(--mono); width:88px; flex-shrink:0; opacity:0.78; text-transform:capitalize; }
+.hw-muscle-track { flex:1; height:6px; border-radius:3px; background:rgba(255,255,255,0.08); overflow:hidden; }
+.hw-muscle-fill  { height:100%; border-radius:3px; background:linear-gradient(90deg,#00DBE9,#A855F7); box-shadow:0 0 8px rgba(0,219,233,0.45); transition:width 1.1s cubic-bezier(0.22,1,0.36,1); }
+.hw-collect-btn  { width:100%; padding:1.05rem; font-size:0.82rem; font-weight:900; letter-spacing:0.18em; text-transform:uppercase; font-family:var(--font); background:linear-gradient(135deg,#00DBE9,#A855F7); color:#030508; border:none; border-radius:16px; cursor:pointer; box-shadow:0 0 28px rgba(0,219,233,0.3); transition:transform 0.15s; }
+.hw-collect-btn:active { transform:scale(0.97); }
+
+.cardio-wrap  { flex:1; min-height:0; display:flex; flex-direction:column; padding:1.5rem 0 calc(var(--bottom-nav-h,76px) + 1rem); gap:1rem; align-items:center; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; }
+.cardio-wrap > * { flex-shrink:0; }
+.cardio-cam-embed { width:72%; aspect-ratio:3/4; border-radius:16px; overflow:hidden; position:relative; background:#050c14; flex-shrink:0; }
+.cardio-cam-ph { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#050c14; }
+.cardio-header { align-self:stretch; }
+.cardio-fig    { flex:1; width:100%; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.02); border-radius:20px; border:1px solid rgba(255,255,255,0.06); min-height:160px; max-height:280px; overflow:hidden; }
+.cardio-sway   { animation:cardio-sway 1.8s ease-in-out infinite; }
+.cardio-sway.paused { animation-play-state:paused; opacity:0.4; }
+@keyframes cardio-sway { 0%,100%{transform:rotate(-3deg) translateY(0)} 50%{transform:rotate(3deg) translateY(-5px)} }
+.cardio-timer-block { text-align:center; }
+.cardio-timer  { font-size:4.5rem; font-weight:900; font-family:var(--mono); letter-spacing:0.04em; line-height:1; transition:color 0.5s; }
+.cardio-timer.warn   { color:#FFA040; }
+.cardio-timer.urgent { color:#FF3020; }
+.cardio-phrase { font-size:1.2rem; font-weight:900; letter-spacing:0.13em; text-transform:uppercase; min-height:1.7rem; text-align:center; margin-top:0.3rem; animation:phrase-pop 0.35s cubic-bezier(0.22,1,0.36,1); }
+@keyframes phrase-pop { from{transform:scale(0.6);opacity:0} to{transform:scale(1);opacity:1} }
+.cardio-status { display:flex; align-items:center; justify-content:center; gap:0.45rem; font-size:0.7rem; letter-spacing:0.12em; text-transform:uppercase; opacity:0.65; }
+.cardio-dot    { width:7px; height:7px; border-radius:50%; background:#00DBE9; animation:dot-blink 1.2s ease-in-out infinite; }
+.cardio-dot.paused { background:#FFA040; animation:none; }
+@keyframes dot-blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
+.hw-live-overlay { position:absolute; inset:0; pointer-events:none; z-index:20; display:flex; align-items:flex-end; justify-content:center; padding-bottom:5.5rem; }
+.hw-live-word    { font-size:2.6rem; font-weight:900; letter-spacing:0.1em; text-transform:uppercase; text-shadow:0 0 32px currentColor; animation:hw-word-pop 1.4s cubic-bezier(0.22,1,0.36,1) forwards; line-height:1; text-align:center; }
+@keyframes hw-word-pop { 0%{transform:scale(0.5);opacity:0} 20%{transform:scale(1.12);opacity:1} 45%{transform:scale(1);opacity:1} 78%{opacity:1} 100%{transform:scale(0.88);opacity:0} }
+.hw-rep-big      { font-size:5rem; font-weight:900; font-family:var(--mono); letter-spacing:-0.02em; line-height:1; text-align:center; }
+.hw-rep-lbl      { font-size:0.7rem; letter-spacing:0.22em; text-transform:uppercase; opacity:0.5; text-align:center; margin-top:0.12rem; }
+
+/* ── Home Workout colour tokens ── */
+:root {
+  --hw-a: #00DBE9; --hw-b: #A855F7;
+  --hw-a-dim: rgba(0,219,233,0.27); --hw-b-dim: rgba(168,85,247,0.27);
+  --hw-card: rgba(255,255,255,0.04); --hw-border: rgba(255,255,255,0.1);
+  --hw-em: #00DBE9; --hw-text: var(--text);
+}
+[data-theme="sunset"] {
+  --hw-a: #FF7A35; --hw-b: #FF3D6E;
+  --hw-a-dim: rgba(255,122,53,0.3); --hw-b-dim: rgba(255,61,110,0.3);
+  --hw-card: rgba(120,40,5,0.14); --hw-border: rgba(200,80,20,0.28);
+  --hw-em: #FF7A35; --hw-text: rgba(32,14,6,0.92);
+}
+[data-theme="sunset"] .hw-route-card     { background:var(--hw-card); border-color:var(--hw-border); }
+[data-theme="sunset"] .hw-next-card      { background:var(--hw-card); border-color:var(--hw-border); }
+[data-theme="sunset"] .hw-stat-block     { background:var(--hw-card); border-color:var(--hw-border); }
+[data-theme="sunset"] .hw-muscle-panel   { background:var(--hw-card); border-color:var(--hw-border); }
+[data-theme="sunset"] .hw-kini-bubble    { background:rgba(120,40,5,0.12); border-color:rgba(200,80,20,0.25); color:var(--hw-text); }
+[data-theme="sunset"] .hw-kini-name      { color:var(--hw-em); }
+[data-theme="sunset"] .hw-collect-btn    { background:linear-gradient(135deg,var(--hw-a),var(--hw-b)); color:rgba(32,14,6,0.95); }
+[data-theme="sunset"] .hw-between-big   { color:var(--hw-text); }
+[data-theme="sunset"] .hw-reward-title  { background:linear-gradient(135deg,var(--hw-a),var(--hw-b)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+[data-theme="sunset"] .cardio-fig       { background:rgba(120,40,5,0.1); border-color:rgba(200,80,20,0.18); }
+[data-theme="sunset"] .hw-node-line       { background:rgba(200,80,20,0.18); }
+[data-theme="sunset"] .hw-node-line.done-line { background:rgba(255,122,53,0.45); }
+[data-theme="sunset"] .hw-node-circle.done    { background:rgba(255,122,53,0.18); border-color:rgba(255,122,53,0.65); color:var(--hw-a); }
+[data-theme="sunset"] .hw-node-label   { color:var(--hw-text); }
+[data-theme="sunset"] .hw-node-meta    { color:rgba(60,24,6,0.55); }
+[data-theme="sunset"] .hw-node-tap     { opacity:0.85; }
+[data-theme="sunset"] .hw-select-title { color:var(--hw-text); }
+[data-theme="sunset"] .hw-map-route-tag { color:rgba(60,24,6,0.58); }
+[data-theme="sunset"] .hw-back-btn     { color:var(--hw-text); border-color:rgba(120,50,10,0.35); background:rgba(120,40,5,0.1); }
+[data-theme="sunset"] .hw-step-chip    { background:rgba(120,40,5,0.12); border-color:rgba(200,80,20,0.22); color:rgba(60,24,6,0.72); }
+[data-theme="sunset"] .cardio-wrap     { color:var(--hw-text); }
+
+/* ── Lottie containers ── */
+.hw-lottie-demo  { display:flex; justify-content:center; align-items:center; }
+.hw-lottie-rest  { display:flex; justify-content:center; align-items:center; }
+.hw-lottie-top   { display:flex; justify-content:center; pointer-events:none; }
+.core-thinking-row { display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0 0.1rem 0.5rem; opacity:0.65; }
+.core-thinking-label { font-size:0.7rem; font-family:var(--mono); letter-spacing:0.1em; color:var(--text-m); }
+
+/* ── Inter-set rest + exercise-done screens ── */
+.hw-set-header   { text-align:center; padding:0.5rem 0; }
+.hw-set-badge    { font-size:0.62rem; font-weight:700; letter-spacing:0.2em; text-transform:uppercase; opacity:0.55; }
+.hw-set-big      { font-size:2.2rem; font-weight:900; letter-spacing:0.07em; text-transform:uppercase; margin-top:0.2rem; line-height:1.05; }
+.hw-dtw-card     { background:var(--hw-card); border:1px solid var(--hw-border); border-radius:18px; padding:1.2rem; text-align:center; }
+.hw-dtw-score    { font-size:3.8rem; font-weight:900; font-family:var(--mono); line-height:1; }
+.hw-dtw-label    { font-size:0.78rem; opacity:0.6; margin-top:0.2rem; }
+.hw-dtw-bar      { height:6px; border-radius:3px; background:rgba(255,255,255,0.1); margin-top:0.75rem; overflow:hidden; }
+.hw-dtw-fill     { height:100%; border-radius:3px; background:linear-gradient(90deg,var(--hw-a),var(--hw-b)); box-shadow:0 0 8px rgba(0,219,233,0.4); }
+.hw-set-dots     { display:flex; gap:0.45rem; justify-content:center; }
+.hw-set-dot      { height:6px; border-radius:3px; transition:background 0.3s; }
+.hw-rest-block   { text-align:center; }
+.hw-rest-label   { font-size:0.62rem; letter-spacing:0.18em; text-transform:uppercase; opacity:0.5; margin-bottom:0.25rem; }
+.hw-rest-timer   { font-size:4.2rem; font-weight:900; font-family:var(--mono); line-height:1; }
+.hw-per-set-row  { display:flex; gap:0.5rem; }
+.hw-per-set-item { flex:1; text-align:center; background:var(--hw-card); border:1px solid var(--hw-border); border-radius:12px; padding:0.65rem 0.4rem; }
+.hw-per-set-val  { font-size:1.2rem; font-weight:800; font-family:var(--mono); }
+.hw-per-set-lbl  { font-size:0.58rem; letter-spacing:0.12em; text-transform:uppercase; opacity:0.5; margin-top:0.12rem; }
 `;
 
 // ─── Screen Transition Variants ──────────────────────────────────────────────
@@ -5633,9 +6224,26 @@ function AuthScreen({ onEnter, profile }) {
   );
 }
 
+// ─── Bento Artwork ───────────────────────────────────────────────────────────
+
+function BentoArtwork({ type, theme }) {
+  const themeKey = theme === "sunset" ? "sunset" : "deep_space";
+  const src = HOME_ENTRY_IMAGES[themeKey][type];
+  return (
+    <img
+      className={`bento-illus bento-illus-img bento-illus-${type}`}
+      src={src}
+      alt=""
+      aria-hidden="true"
+      decoding="async"
+      draggable="false"
+    />
+  );
+}
+
 // ─── DashboardScreen ─────────────────────────────────────────────────────────
 
-function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice }) {
+function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice, theme }) {
   const readiness = Math.min(100, (profile?.sessionsCount ?? 0) * 4 + 60);
 
   return (
@@ -5675,9 +6283,11 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice 
             whileHover={{ scale: 1.015 }}
             whileTap={{ scale: 0.99 }}
           >
-            <div className="bento-tag">Jump-In · Extreme Speed</div>
-            <div className="bento-icon"><IconJumpIn className="bento-icon-svg" /></div>
-            <div className="bento-label">Start Instantly</div>
+            <BentoArtwork type="jump" theme={theme} />
+            <div className="bento-overlay">
+              <div className="bento-tag">Jump-In · Auto Detect</div>
+              <div className="bento-label">Start Instantly</div>
+            </div>
           </motion.div>
 
           <motion.div
@@ -5687,9 +6297,11 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice 
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
           >
-            <div className="bento-tag">AI Plan</div>
-            <div className="bento-icon"><IconAIPlan className="bento-icon-svg" /></div>
-            <div className="bento-label">Training Plan</div>
+            <BentoArtwork type="plan" theme={theme} />
+            <div className="bento-overlay">
+              <div className="bento-tag">AI Plan</div>
+              <div className="bento-label">Training Plan</div>
+            </div>
           </motion.div>
 
           <motion.div
@@ -5699,9 +6311,11 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice 
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
           >
-            <div className="bento-tag">Home Mode</div>
-            <div className="bento-icon"><IconHomeMode className="bento-icon-svg" /></div>
-            <div className="bento-label">Home Workout</div>
+            <BentoArtwork type="home" theme={theme} />
+            <div className="bento-overlay">
+              <div className="bento-tag">Home Mode</div>
+              <div className="bento-label">Home Workout</div>
+            </div>
           </motion.div>
         </div>
 
@@ -5766,10 +6380,17 @@ function ConnectScreen({ onConnected, onBack, exercise, connMode, deviceUrl, the
         setConnState("idle");
       }
     } else {
-      const base = (deviceUrl || "").replace(/\/+$/, "");
+      const base = normalizeDeviceHttpUrl(deviceUrl);
+      if (!base) {
+        setError("Enter a camera address first.");
+        setConnState("idle");
+        return;
+      }
       try {
-        const res = await fetch(`${base}/hello`, { signal: AbortSignal.timeout(4000) });
+        const res = await fetch(`${base}/hello`, { cache: "no-store", signal: AbortSignal.timeout(4000) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json().catch(() => ({}));
+        if (d.ws_token) localStorage.setItem("kl-ws-token", d.ws_token);
         const info = { mode: "wifi", name: base.replace(/^https?:\/\//, ""), url: base };
         saveLastDevice({ mode: "wifi", name: info.name, url: info.url });
         setConnState("connected");
@@ -5931,7 +6552,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
   const [selectedEx, setSelectedEx] = useState(EXERCISES[0]);
   const aiReady = isAiCoreProfileReady(aiProfile);
   const focusTags = [...focus];
-  const aiDecision = generateAiCorePlan({ profile: aiProfile, muscleStatus, focusTags });
+  const aiDecision = generateAiCorePlan({ profile: aiProfile, muscleStatus: decayedMuscleStatus(muscleStatus), focusTags });
   const recommendedPlan = aiReady ? aiDecision.payload.exercises : AI_PLAN.map((item) => ({ ...item, reason: "Baseline demo plan" }));
   const targetMap = getExerciseTargets(selectedEx?.id);
   const selectedMuscles = [...new Set([...Object.keys(targetMap), ...focus])];
@@ -5983,7 +6604,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
     setFocus(new Set(updated.focusTags));
     setEditingCore(false);
     saveAiCoreProfile(updated, userName);
-    const decision = generateAiCorePlan({ profile: updated, muscleStatus, focusTags: updated.focusTags });
+    const decision = generateAiCorePlan({ profile: updated, muscleStatus: decayedMuscleStatus(muscleStatus), focusTags: updated.focusTags });
     onPlanGenerated?.(decision);
   }
 
@@ -5997,7 +6618,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
 
         <motion.div className="glass plan-ai-card" custom={0} variants={panelVariants} initial="hidden" animate="visible">
           <div className="plan-ai-header">
-            <span className="plan-ai-icon"><IconKineticCore className="plan-ai-icon-svg" /></span>
+            <span className="plan-ai-icon"><Lottie animationData={lottieAiCore} loop={true} style={{ width:100, height:100 }} /></span>
             <div>
               <span className="plan-ai-title">Kinetic Core</span>
               <div className="ai-core-status">{aiReady ? aiDecision.action_keyword : "ONBOARDING_REQUIRED"}</div>
@@ -6093,7 +6714,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
               <span className="plan-ai-title">AI Recommended Plan</span>
             </div>
           <div className="plan-list">
-            {buildWeekSchedule(aiProfile.trainingDaysPerWeek, muscleStatus, focusTags, aiProfile.injuryTags).map(({ dow, label, isTraining, isToday, isPast, exercise }) => {
+            {buildWeekSchedule(aiProfile.trainingDaysPerWeek, decayedMuscleStatus(muscleStatus), focusTags, aiProfile.injuryTags).map(({ dow, label, isTraining, isToday, isPast, exercise }) => {
               if (!isTraining) {
                 return (
                   <div key={dow} className={`plan-item plan-item-rest ${isToday ? "today" : ""} ${isPast ? "past" : ""}`}>
@@ -6235,19 +6856,804 @@ function HomeCoachScreen({ onBegin, onBack }) {
   );
 }
 
+// ─── Home Workout ─────────────────────────────────────────────────────────────
+
+function pickKiniLine(screen) {
+  const arr = KINI_LINES[screen] ?? KINI_LINES.selection;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+const MUSCLE_LABEL = {
+  biceps: "Biceps", shoulders: "Shoulders", triceps: "Triceps", core: "Core",
+  quads: "Quads", hamstrings: "Hamstrings", lower_back: "Lower back",
+  rear_calves: "Calves", upper_back: "Upper back", chest: "Chest",
+  front_calves: "Calves",
+};
+
+function pickKiniLineForSelection(muscleStatus) {
+  const ms = muscleStatus ?? {};
+  const avg = (keys) => keys.reduce((s, k) => s + (ms[k] ?? 0), 0) / keys.length;
+  const cap = (s) => (MUSCLE_LABEL[s] ?? (s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ")));
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  const upperKeys = ["biceps", "shoulders", "triceps"];
+  const lowerKeys = ["quads", "hamstrings", "lower_back"];
+  const upperLoad = avg(upperKeys);
+  const lowerLoad = avg(lowerKeys);
+  const allVals = Object.values(ms);
+
+  if (allVals.length === 0 || allVals.every((v) => v < 0.08)) {
+    return pick([
+      "Fresh body, zero excuses. Which flavour of suffering today? 😄",
+      "No soreness detected. I'm almost suspicious. Pick a protocol!",
+      "You're fully recovered. Both options are wide open — dangerous situation.",
+    ]);
+  }
+
+  const sorted = Object.entries(ms).sort(([, a], [, b]) => b - a);
+  const sore  = sorted.filter(([, v]) => v > 0.65).map(([k]) => k);
+  const fresh = sorted.filter(([, v]) => v < 0.22).reverse().map(([k]) => k);
+
+  if (sore.length && fresh.length) {
+    return pick([
+      `${cap(sore[0])} is still grumpy from last time. ${cap(fresh[0])} is fully rested and ready to suffer again.`,
+      `Your ${cap(sore[0])} filed a complaint. Your ${cap(fresh[0])} filed zero complaints. I know which one to trust.`,
+    ]);
+  }
+
+  if (sore.length) {
+    return pick([
+      `${cap(sore[0])} is at ${Math.round((ms[sore[0]] ?? 0) * 100)}% load. It's whispering "please be gentle." I'd listen.`,
+      `Heads up — ${cap(sore[0])} is still recovering. Control the reps. Quality > ego today.`,
+    ]);
+  }
+
+  if (upperLoad < lowerLoad - 0.18) {
+    return pick([
+      `Legs are at ${Math.round(lowerLoad * 100)}% load. Arms are just chilling at ${Math.round(upperLoad * 100)}%. APEX is calling.`,
+      `Your lower body needs rest more than your arms do. APEX protocol is the smart pick here.`,
+    ]);
+  }
+  if (lowerLoad < upperLoad - 0.18) {
+    return pick([
+      `Arms at ${Math.round(upperLoad * 100)}% load, legs at ${Math.round(lowerLoad * 100)}%. Your quads are literally begging to be used.`,
+      `Upper body says "not today." Lower body is suspiciously fresh. FORGE it is.`,
+    ]);
+  }
+
+  const overall = allVals.reduce((s, v) => s + v, 0) / allVals.length;
+  if (overall > 0.55) {
+    return pick([
+      `Overall load is at ${Math.round(overall * 100)}%. You're not fragile, but maybe don't go feral today.`,
+      `High systemic load detected. Still doing it? Respect. Just keep the quality up.`,
+    ]);
+  }
+
+  return pick([
+    "Everything looks balanced. Suspicious. Pick a protocol before I do.",
+    "Recovery data is green across the board. You've run out of excuses!",
+    "Both groups are recovered. The real question is: which do YOU want to work?",
+  ]);
+}
+
+function pickKiniLineForMap(routeId, muscleStatus) {
+  const ms = muscleStatus ?? {};
+  const avg = (keys) => keys.reduce((s, k) => s + (ms[k] ?? 0), 0) / keys.length;
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  const isUpper = routeId === "upper";
+  const routeKeys   = isUpper ? ["biceps", "shoulders", "triceps"] : ["quads", "hamstrings", "lower_back"];
+  const routeName   = isUpper ? "APEX" : "FORGE";
+  const muscleGroup = isUpper ? "arms" : "legs";
+  const routeLoad   = avg(routeKeys);
+
+  if (routeLoad > 0.7) {
+    return pick([
+      `Bold choice. Your ${muscleGroup} are at ${Math.round(routeLoad * 100)}% load. ${routeName} Protocol doesn't care. Let's go.`,
+      `Your ${muscleGroup} are tired and you picked ${routeName}. That's either brave or chaotic. I respect both.`,
+      `${Math.round(routeLoad * 100)}% load on your ${muscleGroup} and you still chose this. I admire the audacity.`,
+    ]);
+  }
+
+  if (routeLoad < 0.2) {
+    return pick([
+      `${routeName} Protocol — great call. Your ${muscleGroup} are basically screaming "we're ready!" 💪`,
+      `Your ${muscleGroup} are fully recovered at ${Math.round(routeLoad * 100)}% load. They signed up for this. Let's deliver.`,
+      `Data agrees: ${muscleGroup} are fresh, ${routeName} is the right call. I like when humans make smart choices.`,
+    ]);
+  }
+
+  return pick([
+    isUpper
+      ? "APEX Protocol locked in. Biceps, shoulders, triceps — the whole upper party is invited."
+      : "FORGE Protocol locked in. Quads, hamstrings, posterior chain — nobody gets the day off.",
+    `${routeName} Protocol. ${Math.round(routeLoad * 100)}% load on your ${muscleGroup}. Manageable. Let's make it count.`,
+    isUpper
+      ? "Arms selected. This is going to be a good kind of sore tomorrow."
+      : "Leg day selected. Future you is already not happy. Present you doesn't care. Perfect.",
+  ]);
+}
+
+function KiniAvatar({ pose = "wave", size = 110 }) {
+  const poses = {
+    wave:      { lArm:"M28,58 L14,42 L9,32", lHand:"M9,32 L5,26 M9,32 L4,30", rArm:"M52,58 L62,72", mouth:"M33,33 Q40,39 47,33", er:3.8 },
+    proud:     { lArm:"M28,58 L18,52 L14,62", lHand:"", rArm:"M52,58 L62,64 L58,74", mouth:"M33,33 Q40,41 47,33", er:3.8 },
+    celebrate: { lArm:"M28,58 L14,38 L8,24", lHand:"M8,24 L4,18 M8,24 L12,18", rArm:"M52,58 L66,38 L72,24", mouth:"M31,32 Q40,43 49,32", er:4.2 },
+    cheer:     { lArm:"M28,58 L16,48 L12,36", lHand:"", rArm:"M52,58 L64,72", mouth:"M32,33 Q40,40 48,33", er:3.8 },
+  };
+  const p = poses[pose] ?? poses.wave;
+  return (
+    <svg viewBox="0 0 80 104" width={size} height={Math.round(size * 104 / 80)}
+      aria-hidden="true" style={{ display:"block", filter:"drop-shadow(0 0 14px rgba(0,219,233,0.45))" }}>
+      <ellipse cx="40" cy="30" rx="28" ry="28" fill="rgba(0,219,233,0.06)" />
+      <line x1="40" y1="8" x2="40" y2="2" stroke="#00DBE9" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="40" cy="1.2" r="2.2" fill="#00DBE9" />
+      <circle cx="40" cy="30" r="22" fill="#060C18" stroke="#00DBE9" strokeWidth="2" />
+      <circle cx="33" cy="27" r={p.er} fill="#00DBE9" />
+      <circle cx="47" cy="27" r={p.er} fill="#00DBE9" />
+      <circle cx="34" cy="26" r="1.2" fill="white" opacity="0.7" />
+      <circle cx="48" cy="26" r="1.2" fill="white" opacity="0.7" />
+      <path d={p.mouth} stroke="#00DBE9" strokeWidth="2" fill="none" strokeLinecap="round" />
+      <rect x="28" y="54" width="24" height="22" rx="8" fill="#060C18" stroke="#00DBE9" strokeWidth="2" />
+      <rect x="33" y="59" width="14" height="8" rx="3" fill="rgba(0,219,233,0.14)" stroke="rgba(0,219,233,0.38)" strokeWidth="1" />
+      <path d={p.lArm} stroke="#00DBE9" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      {p.lHand && <path d={p.lHand} stroke="#00DBE9" strokeWidth="2" fill="none" strokeLinecap="round" />}
+      <path d={p.rArm} stroke="#00DBE9" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M35,76 L31,96" stroke="#00DBE9" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M45,76 L49,96" stroke="#00DBE9" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M31,96 L22,96" stroke="#00DBE9" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M49,96 L58,96" stroke="#00DBE9" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function HomeCardioPreviewScreen({ step, lottieData, route, onReady }) {
+  const [played, setPlayed] = useState(false);
+  const accentVar = `var(--hw-${route?.varKey || "b"})`;
+  return (
+    <div className="screen-pad">
+      <div className="hw-wrap" style={{ alignItems:"center", justifyContent:"center", gap:"1.5rem" }}>
+        <div style={{ textAlign:"center" }}>
+          <div className="hw-set-badge">Up Next</div>
+          <div className="hw-set-big" style={{ color: accentVar }}>{step.label}</div>
+          <div style={{ fontSize:"0.78rem", opacity:0.55, marginTop:"0.25rem" }}>
+            {step.duration}s — no form check, just move
+          </div>
+        </div>
+
+        <div className="hw-lottie-demo" style={{ height:220, width:"100%", maxWidth:280 }}>
+          <Lottie
+            animationData={lottieData}
+            loop={false}
+            onComplete={() => setPlayed(true)}
+            style={{ width:"100%", height:"100%" }}
+          />
+        </div>
+
+        <div className="hw-kini-bubble" style={{ textAlign:"center", maxWidth:280 }}>
+          <div className="hw-kini-name">Kini</div>
+          Watch the movement, then give it your all!
+        </div>
+
+        <button
+          className="hw-collect-btn"
+          style={{ background: `linear-gradient(135deg, var(--hw-a), var(--hw-b))`, opacity: played ? 1 : 0.45, pointerEvents: played ? "auto" : "none" }}
+          onClick={onReady}
+        >
+          {played ? "Let's Go →" : "Watch first..."}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CardioCountdownScreen({ duration = 30, iotConnRef, onComplete, label = "Active Burn", lottieData = null, demoFirst = false }) {
+  // Intro phase: 5-second preview so user can see the movement before timer starts
+  const [intro, setIntro]         = useState(lottieData ? 5 : 0); // counts 5→0
+  const [remaining, setRemaining] = useState(duration);
+  const [isMoving, setIsMoving]   = useState(true);
+  const [phrase, setPhrase]       = useState(null);
+  const shownRef = useRef(new Set());
+  const inIntro = intro > 0;
+  const pct = remaining / duration;
+
+  // Intro countdown 5→0
+  useEffect(() => {
+    if (!inIntro) return;
+    const t = setTimeout(() => setIntro(i => i - 1), 1000);
+    return () => clearTimeout(t);
+  }, [intro, inIntro]);
+
+  // Active countdown
+  useEffect(() => {
+    if (inIntro) return;
+    if (remaining <= 0) { onComplete(); return; }
+    if (!isMoving) return;
+    const t = setTimeout(() => setRemaining(r => r - 1), 1000);
+    return () => clearTimeout(t);
+  }, [remaining, isMoving, onComplete, inIntro]);
+
+  useEffect(() => {
+    if (inIntro) return;
+    for (const m of CARDIO_MILESTONES) {
+      if (pct <= m.pct && !shownRef.current.has(m.pct)) {
+        shownRef.current.add(m.pct);
+        setPhrase(m);
+        break;
+      }
+    }
+  }, [pct, inIntro]);
+
+  const mins = String(Math.floor(remaining / 60)).padStart(1, "0");
+  const secs = String(remaining % 60).padStart(2, "0");
+  const timerCls = remaining <= 5 ? "urgent" : remaining <= 10 ? "warn" : "";
+
+  // ── Intro phase: large Lottie + exercise hint + 5s countdown ──
+  if (inIntro && lottieData) {
+    return (
+      <div className="screen-pad">
+        <div className="cardio-wrap" style={{ justifyContent:"center", gap:"1.2rem" }}>
+          <div style={{ textAlign:"center" }}>
+            <div className="sys-label-em" style={{ fontSize:"1.1rem" }}>{label}</div>
+            <div style={{ fontSize:"0.82rem", opacity:0.58, marginTop:"0.3rem" }}>
+              Watch the movement — starting in
+            </div>
+          </div>
+
+          <div style={{ display:"flex", justifyContent:"center" }}>
+            <Lottie animationData={lottieData} loop={true} style={{ height:240, width:"auto" }} />
+          </div>
+
+          <div style={{ textAlign:"center" }}>
+            <div style={{
+              fontSize:"4.5rem", fontWeight:900, fontFamily:"var(--mono)",
+              lineHeight:1, color:"var(--em-a)",
+              textShadow:"0 0 28px color-mix(in srgb, var(--em-a) 60%, transparent)",
+            }}>
+              {intro}
+            </div>
+            <div style={{ fontSize:"0.7rem", letterSpacing:"0.22em", textTransform:"uppercase", opacity:0.42, marginTop:"0.4rem" }}>
+              seconds
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Active phase: LiveScreen skeleton + Lottie + timer ──
+  return (
+    <div className="screen-pad">
+      <div className="cardio-wrap">
+        <div className="cardio-header">
+          <div className="sys-label-em">{label}</div>
+          <div style={{ fontSize:"0.78rem", opacity:0.58, marginTop:"0.15rem" }}>
+            Keep any joint moving
+          </div>
+        </div>
+
+        {lottieData && (
+          <div style={{ display:"flex", justifyContent:"center" }}>
+            <Lottie animationData={lottieData} loop={true} style={{ height:120, width:"auto" }} />
+          </div>
+        )}
+
+        <LiveScreen
+          exercise={null}
+          onFinish={() => {}}
+          onVisualState={() => {}}
+          iotConnRef={iotConnRef}
+          cardioMode={true}
+          onMotionChange={setIsMoving}
+        />
+
+        <div className="cardio-timer-block">
+          <div className={`cardio-timer ${timerCls}`}>{mins}:{secs}</div>
+          {phrase && (
+            <div key={phrase.pct} className="cardio-phrase" style={{ color:phrase.color }}>
+              {phrase.text}
+            </div>
+          )}
+        </div>
+
+        <div className="cardio-status">
+          <div className={`cardio-dot${isMoving ? "" : " paused"}`} />
+          <span>{isMoving ? "Movement detected" : "KEEP MOVING ↓"}</span>
+        </div>
+
+        <button className="hw-collect-btn" style={{ opacity:0.72 }} onClick={onComplete}>
+          End Cardio →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HomeSetRestScreen({ ctx, route, onStartNext }) {
+  const [countdown, setCountdown] = useState(15);
+  const [setClearDone, setSetClearDone] = useState(false);
+  const step = route.steps[ctx.stepIdx - 1] ?? route.steps[0];
+  const completedSet = ctx.currentSet - 1;
+  const totalSets = ctx.totalSets;
+  const dtw = ctx.lastSetDtw ?? 0.5;
+  const dtwPct = Math.round(dtw * 100);
+  const dtwLabel = dtw >= 0.85 ? "Excellent" : dtw >= 0.70 ? "Good" : dtw >= 0.55 ? "Fair" : "Needs Work";
+
+  useEffect(() => {
+    if (countdown <= 0) { onStartNext(); return; }
+    const t = setTimeout(() => setCountdown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [countdown, onStartNext]);
+
+  return (
+    <div className="screen-pad">
+      <div className="hw-wrap">
+        <div className="hw-set-header">
+          <div className="hw-set-badge">Set Complete</div>
+          <div className="hw-set-big">
+            {completedSet} <span style={{ opacity:0.45, fontSize:"1.1rem" }}>of</span> {totalSets}
+          </div>
+        </div>
+
+        <div className="hw-dtw-card">
+          <div className="hw-dtw-score" style={{ color:`var(--hw-a)` }}>{dtwPct}%</div>
+          <div className="hw-dtw-label">{dtwLabel} Form — {step.reps} reps</div>
+          <div className="hw-dtw-bar">
+            <motion.div className="hw-dtw-fill" initial={{ width:"0%" }}
+              animate={{ width:`${dtwPct}%` }} transition={{ duration:0.9, ease:[0.22,1,0.36,1] }} />
+          </div>
+        </div>
+
+        <div className="hw-set-dots">
+          {Array.from({ length: totalSets }, (_, i) => (
+            <div key={i} className="hw-set-dot" style={{
+              width: `${Math.min(60, 160 / totalSets)}px`,
+              background: i < completedSet ? "var(--hw-a)" : "rgba(255,255,255,0.12)",
+            }} />
+          ))}
+        </div>
+
+        <div className="hw-kini-section">
+          {!setClearDone ? (
+            <Lottie animationData={lottieSetClear} loop={false}
+              onComplete={() => setSetClearDone(true)} style={{ height:120 }} />
+          ) : (
+            <Lottie animationData={lottieSqurtWalking} loop={true} style={{ height:120 }} />
+          )}
+          <div className="hw-kini-bubble">
+            <div className="hw-kini-name">Kini</div>
+            {ctx.kiniLine}
+          </div>
+        </div>
+
+        <div className="hw-rest-block">
+          <div className="hw-rest-label">Next set in</div>
+          <div className="hw-rest-timer" style={{ color: countdown <= 5 ? "var(--hw-a)" : undefined }}>
+            {countdown}
+          </div>
+        </div>
+
+        <button className="hw-collect-btn" onClick={onStartNext}>Start Now →</button>
+      </div>
+    </div>
+  );
+}
+
+function HomeExerciseDoneScreen({ ctx, route, onContinue }) {
+  const [pathClearDone, setPathClearDone] = useState(false);
+  const results = ctx.setResults ?? [];
+  const avgDtw = results.length ? results.reduce((s, r) => s + r.dtw, 0) / results.length : 0;
+  const avgPct = Math.round(avgDtw * 100);
+  const stepIdx = ctx.stepIdx - 1;
+  const step = route.steps[stepIdx] ?? route.steps[0];
+  const ex = step.type === "exercise" ? exerciseById(step.exerciseId) : null;
+  const nextStep = route.steps[ctx.stepIdx];
+  const nextLabel = nextStep?.type === "cardio" ? (nextStep.label ?? "Active Burn") : (nextStep ? exerciseById(nextStep.exerciseId).label : null);
+  const adviceText = avgDtw >= 0.85
+    ? "Excellent consistency. Keep that controlled pattern."
+    : avgDtw >= 0.70
+    ? "Good technique. Focus on keeping every rep identical."
+    : "Room to improve. Slow the movement down next time.";
+
+  return (
+    <div className="screen-pad">
+      <div className="hw-wrap">
+        <div className="hw-set-header">
+          <div className="hw-set-badge">Exercise Complete</div>
+          <motion.div className="hw-set-big" initial={{ opacity:0, y:18 }}
+            animate={{ opacity:1, y:0 }} transition={{ duration:0.5, ease:[0.22,1,0.36,1] }}>
+            {ex?.label ?? "Done"}
+          </motion.div>
+        </div>
+
+        <div className="hw-dtw-card">
+          <div style={{ fontSize:"0.6rem", letterSpacing:"0.18em", textTransform:"uppercase", opacity:0.5, marginBottom:"0.4rem" }}>
+            Avg Form Score — {results.length} sets
+          </div>
+          <div className="hw-dtw-score" style={{ color:`var(--hw-a)` }}>{avgPct}%</div>
+          <div className="hw-dtw-bar">
+            <motion.div className="hw-dtw-fill" initial={{ width:"0%" }}
+              animate={{ width:`${avgPct}%` }} transition={{ delay:0.2, duration:1, ease:[0.22,1,0.36,1] }} />
+          </div>
+          <div className="hw-per-set-row" style={{ marginTop:"0.85rem" }}>
+            {results.map((r, i) => (
+              <div key={i} className="hw-per-set-item">
+                <div className="hw-per-set-val">{Math.round(r.dtw * 100)}%</div>
+                <div className="hw-per-set-lbl">Set {i + 1}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="hw-kini-section">
+          {!pathClearDone ? (
+            <Lottie animationData={lottiePathClear} loop={false}
+              onComplete={() => setPathClearDone(true)} style={{ height:110 }} />
+          ) : (
+            <Lottie animationData={lottieSqurtWalking} loop={true} style={{ height:110 }} />
+          )}
+          <div className="hw-kini-bubble">
+            <div className="hw-kini-name">Kini</div>
+            {adviceText}
+          </div>
+        </div>
+
+        {nextStep && (
+          <div className="hw-next-card" style={{ borderColor:`color-mix(in srgb,var(--hw-a) 30%,transparent)` }}>
+            <div className="hw-next-lbl">Up Next</div>
+            <div className="hw-next-name" style={{ color:"var(--hw-a)" }}>{nextLabel}</div>
+            <div className="hw-next-meta">
+              {nextStep.type === "cardio" ? `${nextStep.duration}s countdown` : `${nextStep.sets} sets × ${nextStep.reps} reps`}
+            </div>
+          </div>
+        )}
+
+        <button className="hw-collect-btn" onClick={onContinue}>
+          {nextStep ? "Next Exercise →" : "Finish Workout →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HomeRewardScreen({ ctx, route, onCollectReward }) {
+  const [showTrophy, setShowTrophy] = useState(false);
+
+  // Start trophy at the halfway point of cheering_ribbons
+  useEffect(() => {
+    const fr  = lottieCheeringRibbons.fr ?? 30;
+    const op  = lottieCheeringRibbons.op ?? 90;
+    const ip  = lottieCheeringRibbons.ip ?? 0;
+    const halfMs = ((op - ip) / fr) * 500; // half duration in ms
+    const t = setTimeout(() => setShowTrophy(true), halfMs);
+    return () => clearTimeout(t);
+  }, []);
+
+  const elapsed = ctx.startTime ? Math.round((Date.now() - ctx.startTime) / 1000) : 0;
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  const totalReps = ctx.totalReps ?? 0;
+  const topMuscles = Object.entries(route.muscles).sort(([, a], [, b]) => b - a).slice(0, 5);
+
+  return (
+    <div className="screen-pad">
+      <div className="hw-wrap">
+        <div className="hw-reward-hero">
+          <motion.div className="hw-reward-title"
+            initial={{ opacity:0, y:30 }} animate={{ opacity:1, y:0 }}
+            transition={{ duration:0.6, ease:[0.22,1,0.36,1] }}>
+            QUEST<br />COMPLETE
+          </motion.div>
+          <div className="hw-reward-sub">{route.name} · {route.tagline}</div>
+        </div>
+
+        <div className="hw-kini-section">
+          {/* Cheering + Trophy overlay: trophy starts at halfway point of cheering */}
+          <div style={{ position:"relative", height:160, width:"100%", display:"flex", justifyContent:"center" }}>
+            <Lottie animationData={lottieCheeringRibbons} loop={false} style={{ height:160 }} />
+            {showTrophy && (
+              <div style={{ position:"absolute", inset:0, zIndex:2, display:"flex", justifyContent:"center", alignItems:"center" }}>
+                <Lottie animationData={lottieTrophy} loop={false} style={{ height:160 }} />
+              </div>
+            )}
+          </div>
+          <div className="hw-kini-bubble">
+            <div className="hw-kini-name">Kini</div>
+            {ctx.kiniLine}
+          </div>
+        </div>
+
+        <div className="hw-stats-row">
+          <div className="hw-stat-block">
+            <div className="hw-stat-val">{totalReps}</div>
+            <div className="hw-stat-lbl">Total Reps</div>
+          </div>
+          <div className="hw-stat-block">
+            <div className="hw-stat-val">{mins}:{String(secs).padStart(2,"0")}</div>
+            <div className="hw-stat-lbl">Duration</div>
+          </div>
+          <div className="hw-stat-block">
+            <div className="hw-stat-val">{Math.round(totalReps * 0.4 + elapsed * 0.05)}</div>
+            <div className="hw-stat-lbl">Cal (est.)</div>
+          </div>
+        </div>
+
+        <div className="hw-muscle-panel">
+          <div className="hw-muscle-ptitle">Muscles Trained — System Updated</div>
+          <div>
+            {topMuscles.map(([muscle, intensity]) => (
+              <div key={muscle} className="hw-muscle-row">
+                <div className="hw-muscle-mname">{muscle.replace(/_/g," ")}</div>
+                <div className="hw-muscle-track">
+                  <motion.div className="hw-muscle-fill"
+                    initial={{ width:"0%" }}
+                    animate={{ width:`${Math.round(intensity * 100)}%` }}
+                    transition={{ delay:0.3, duration:1.1, ease:[0.22,1,0.36,1] }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <button className="hw-collect-btn" onClick={onCollectReward}>
+          COLLECT REWARD & RETURN
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HomeWorkoutContainer({ ctx, onSelectRoute, onNodeTap, onContinueBetween, onCardioDone, onCollectReward, onExit, onStartNextSet, onExerciseContinue, onCardioPreviewReady, iotConnRef }) {
+  const sub = ctx?.hwSub ?? "select";
+  const route = ctx?.routeId ? HOME_ROUTES[ctx.routeId] : null;
+
+  // helper: resolve lottie data from step.lottie key
+  const cardioLottie = (step) => {
+    if (!step?.lottie) return null;
+    if (step.lottie === "jumping_jack") return lottieJumpingJack;
+    if (step.lottie === "squat_kick")  return lottieSquatKick;
+    return null;
+  };
+
+  // ── Inter-set rest ──
+  if (sub === "set_rest" && route) {
+    return <HomeSetRestScreen ctx={ctx} route={route} onStartNext={onStartNextSet} />;
+  }
+
+  // ── Exercise done (all sets) ──
+  if (sub === "exercise_done" && route) {
+    return <HomeExerciseDoneScreen ctx={ctx} route={route} onContinue={onExerciseContinue} />;
+  }
+
+  // ── Cardio exercise preview (play once before countdown) ──
+  if (sub === "cardio_preview" && route) {
+    const step = route.steps[ctx.stepIdx];
+    return <HomeCardioPreviewScreen step={step} lottieData={cardioLottie(step)} route={route} onReady={onCardioPreviewReady} />;
+  }
+
+  // ── Route selection ──
+  if (sub === "select") {
+    return (
+      <div className="screen-pad">
+        <div className="hw-wrap">
+          <div className="hw-header">
+            <button className="hw-back-btn" onClick={onExit}>← Back</button>
+            <div>
+              <div className="sys-label-em">Home Workout</div>
+              <div style={{ fontSize:"0.78rem", opacity:0.55, marginTop:"0.1rem" }}>No equipment required</div>
+            </div>
+          </div>
+
+          <div className="hw-kini-section">
+            <div className="hw-kini-bubble">
+              <div className="hw-kini-name">Kini</div>
+              {ctx?.kiniLine ?? pickKiniLine("selection")}
+            </div>
+            <Lottie animationData={lottieAvocadoWalking} loop={true} style={{ height:180, width:180 }} />
+          </div>
+
+          <div className="hw-select-title">Choose Protocol</div>
+
+          <div className="hw-route-cards">
+            {Object.values(HOME_ROUTES).map((r) => (
+              <motion.div
+                key={r.name}
+                className="hw-route-card"
+                style={{ borderColor: `var(--hw-${r.varKey}-dim)` }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => onSelectRoute(r.name === "APEX PROTOCOL" ? "upper" : "lower")}
+              >
+                <div className="hw-route-glow" style={{ background: `radial-gradient(circle, var(--hw-${r.varKey}), transparent 70%)` }} />
+                <div className="hw-route-badge" style={{ color: `var(--hw-${r.varKey})` }}>Home Protocol</div>
+                <div className="hw-route-name" style={{ color: `var(--hw-${r.varKey})` }}>{r.name}</div>
+                <div className="hw-route-tag">{r.tagline}</div>
+                <div className="hw-step-chips">
+                  {r.steps.map((s, i) => (
+                    <span key={i} className="hw-step-chip">
+                      {s.type === "cardio" ? `⏱ ${s.label ?? "Cardio"}` : `${exerciseById(s.exerciseId).short} ${s.sets}×${s.reps}`}
+                    </span>
+                  ))}
+                </div>
+              </motion.div>
+            ))}
+          </div>
+
+        </div>
+      </div>
+    );
+  }
+
+  // ── Quest node map ──
+  if (sub === "map" && route) {
+    const stepIdx = ctx.stepIdx;
+    const accentVar = `var(--hw-${route.varKey || "a"})`;
+    return (
+      <div className="screen-pad">
+        <div className="hw-wrap">
+          <div className="hw-header">
+            <button className="hw-back-btn" onClick={onExit}>← Exit</button>
+            <div>
+              <div className="hw-map-route-name" style={{ color: accentVar }}>{route.name}</div>
+              <div className="hw-map-route-tag">{route.tagline}</div>
+            </div>
+          </div>
+
+          <div className="hw-kini-section">
+            <div className="hw-kini-bubble">
+              <div className="hw-kini-name">Kini</div>
+              {ctx.mapKiniLine ?? pickKiniLineForMap(ctx.routeId, {})}
+            </div>
+            <Lottie animationData={lottieAvocadoWalking} loop={true} style={{ height:180, width:180 }} />
+          </div>
+
+          <div className="hw-node-list">
+            {route.steps.map((step, i) => {
+              const isDone   = i < stepIdx;
+              const isActive = i === stepIdx;
+              const isLocked = i > stepIdx;
+              const ex = step.type === "exercise" ? exerciseById(step.exerciseId) : null;
+              const label = step.type === "cardio" ? "Active Burn" : ex.label;
+              const meta  = step.type === "cardio"
+                ? `${step.duration}s countdown`
+                : `${step.sets} sets × ${step.reps} reps`;
+              const icon = isDone ? "✓" : step.type === "cardio" ? "⏱" : String(i + 1);
+              return (
+                <div key={i}
+                  className={`hw-node-row${isActive ? " active" : ""}`}
+                  onClick={() => isActive && onNodeTap(i)}
+                >
+                  <div className="hw-node-spine">
+                    <div
+                      className={`hw-node-circle ${isDone ? "done" : isActive ? "active" : "locked"}`}
+                      style={{ color: isActive ? accentVar : isDone ? accentVar : "var(--text-d)" }}
+                    >
+                      {icon}
+                    </div>
+                    {i < route.steps.length - 1 && (
+                      <div className={`hw-node-line ${isDone ? "done-line" : ""}`} />
+                    )}
+                  </div>
+                  <div className="hw-node-info">
+                    <div className={`hw-node-label ${isLocked ? "locked" : ""}`}
+                      style={{ color: isActive ? accentVar : undefined }}>
+                      {label}
+                    </div>
+                    <div className="hw-node-meta">{meta}</div>
+                    {isActive && (
+                      <div className="hw-node-tap" style={{ color: accentVar }}>
+                        Tap to begin →
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Between exercises ──
+  if (sub === "between" && route) {
+    const nextStep = route.steps[ctx.stepIdx];
+    const nextEx = nextStep?.type === "exercise" ? exerciseById(nextStep.exerciseId) : null;
+    const nextLabel = nextStep?.type === "cardio" ? "Active Burn" : (nextEx?.label ?? "");
+    const nextMeta  = nextStep?.type === "cardio"
+      ? `${nextStep.duration}s cardio countdown`
+      : `${nextStep.sets} sets × ${nextStep.reps} reps`;
+    return (
+      <div className="screen-pad">
+        <div className="hw-wrap">
+          <div className="hw-header">
+            <button className="hw-back-btn" onClick={onExit}>← Exit</button>
+            <div style={{ fontSize:"0.78rem", opacity:0.55 }}>Step {ctx.stepIdx} complete</div>
+          </div>
+
+          <div className="hw-kini-section">
+            <KiniAvatar pose="proud" size={100} />
+            <div className="hw-kini-bubble">
+              <div className="hw-kini-name">Kini</div>
+              {ctx.kiniLine}
+            </div>
+          </div>
+
+          {/* blue_jumping: celebration animation between exercises */}
+          <div style={{ display:"flex", justifyContent:"center" }}>
+            <Lottie animationData={lottieBlueJumping} loop={true} style={{ height:110, width:110 }} />
+          </div>
+
+          <div>
+            <div className="hw-between-big">
+              {ctx.stepIdx === route.steps.length ? "All Done!" : "Rest Up"}
+            </div>
+            <div className="hw-between-sub">Take a breath — next challenge is ready</div>
+          </div>
+
+          {nextStep && (
+            <div className="hw-next-card" style={{ borderColor: `var(--hw-${route.varKey || "a"}-dim)` }}>
+              <div className="hw-next-lbl">Up Next</div>
+              <div className="hw-next-name" style={{ color: `var(--hw-${route.varKey || "a"})` }}>{nextLabel}</div>
+              <div className="hw-next-meta">{nextMeta}</div>
+            </div>
+          )}
+
+          <button className="hw-collect-btn" style={{ background: `linear-gradient(135deg, var(--hw-a), var(--hw-b))` }}
+            onClick={onContinueBetween}>
+            {nextStep?.type === "cardio" ? `Start ${nextLabel} →` : "Start Next Exercise →"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Cardio countdown ──
+  if (sub === "cardio" && route) {
+    const step = route.steps[ctx.stepIdx];
+    const ld = cardioLottie(step);
+    return (
+      <CardioCountdownScreen
+        duration={step?.duration ?? 30}
+        label={step?.label ?? "Active Burn"}
+        lottieData={ld}
+        demoFirst={false}
+        iotConnRef={iotConnRef}
+        onComplete={onCardioDone}
+      />
+    );
+  }
+
+  // ── Reward ──
+  if (sub === "reward" && route) {
+    return <HomeRewardScreen ctx={ctx} route={route} onCollectReward={onCollectReward} />;
+  }
+
+  return null;
+}
+
 // ─── LiveScreen ───────────────────────────────────────────────────────────────
 
 // Module-level MediaPipe singleton — survives StrictMode double-mount and screen transitions.
 // Never closed so re-entry is instant; only one PoseLandmarker instance ever exists per page.
 let _mpLandmarkerPromise = null;
 
-function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
+function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, homeMode = false, targetReps = null, cardioMode = false, onMotionChange = null }) {
   const [reps, setReps] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [hint, setHint] = useState(null);
   const [dtw, setDtw] = useState(0.5);
   const [repCharge, setRepCharge] = useState({ value: 0, resetting: false });
   const [isReady, setIsReady] = useState(false);
+  const [hwWord, setHwWord] = useState(null); // { text, color, key }
+  const autoFinishedRef = useRef(false);
+  const onMotionChangeRef = useRef(onMotionChange);
+  useEffect(() => { onMotionChangeRef.current = onMotionChange; }, [onMotionChange]);
+  const repsRef = useRef(0);
+  const dtwRef = useRef(0.5);
+  const elapsedRef = useRef(0);
+  useEffect(() => { repsRef.current = reps; }, [reps]);
+  useEffect(() => { dtwRef.current = dtw; }, [dtw]);
+  useEffect(() => { elapsedRef.current = elapsed; }, [elapsed]);
   // "loading" = MP WASM not yet ready; "ready" = MP loaded, waiting for first frame
   const [mpStatus, setMpStatus] = useState(() => _mpLandmarkerPromise ? "ready" : "loading");
   const autoMode = !exercise?.id;
@@ -6286,9 +7692,45 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
   }, [classification]);
 
   useEffect(() => {
+    if (!homeMode || reps === 0) return;
+    const w = HOME_LIVE_WORDS[Math.floor(Math.random() * HOME_LIVE_WORDS.length)];
+    setHwWord({ ...w, key: Date.now() });
+    const t = setTimeout(() => setHwWord(null), 1450);
+    return () => clearTimeout(t);
+  }, [reps, homeMode]);
+
+  // Auto-finish set when targetReps reached in homeMode
+  useEffect(() => {
+    if (!homeMode || !targetReps || reps < targetReps || autoFinishedRef.current) return;
+    const t = setTimeout(() => {
+      if (autoFinishedRef.current) return; // guard against double-fire
+      autoFinishedRef.current = true;
+      onFinish({
+        reps: repsRef.current, elapsed: elapsedRef.current, dtw: dtwRef.current,
+        keyAngles: keyAnglesRef.current.slice(),
+        exerciseId: classificationRef.current.id,
+        classification: {
+          mode: autoMode ? "auto" : "manual",
+          exerciseId: classificationRef.current.id,
+          confidence: classificationRef.current.confidence,
+          status: classificationRef.current.id ? "assigned" : "unassigned",
+          repsByExercise: { ...repsByExerciseRef.current },
+          actionRows: autoActionRowsRef.current.map(r => ({
+            exerciseId: r.exerciseId, reps: r.reps, confirmed: r.confirmed, required: r.required,
+          })),
+          stats: { totalFrames: classifierStatsRef.current.totalFrames, classifiedFrames: classifierStatsRef.current.classifiedFrames },
+        },
+      });
+    }, 900);
+    return () => clearTimeout(t);
+  }, [reps, homeMode, targetReps, onFinish, autoMode]);
+
+  const _vsRef = useRef(null);
+  useEffect(() => {
     const good = dtw > 0.85;
     const warn = dtw < 0.65;
-    onVisualState?.(good ? "live_good" : warn ? "live_warning" : "idle");
+    const vs = good ? "live_good" : warn ? "live_warning" : "idle";
+    if (vs !== _vsRef.current) { _vsRef.current = vs; onVisualState?.(vs); }
   }, [dtw, onVisualState]);
 
   useEffect(() => {
@@ -6320,6 +7762,12 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
     let repPhase     = "rest";
     let consecErrFrames = 0;
     let processing   = false; // one frame at a time
+    let lastDisplayLm = null;      // landmarks from most recent inference
+    let prevDisplayLm = null;      // landmarks from inference before last (for lerp)
+    let lastErrorBoneSet = new Set();
+    let lastInferenceTs = 0;       // timestamp of most recent inference
+    let prevInferenceTs = 0;       // timestamp of inference before last (for lerp)
+    const INFERENCE_INTERVAL_MS = 80; // ~7 fps inference
     let hintTimer    = null;
     let hudFrame     = 0;
     let highDtwStreak = 0;
@@ -6330,6 +7778,8 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
     let targetProgress = 0;
     let lastProgressUiAt = 0;
     let lastProgressUiValue = 0;
+    let prevCardioLm = null;
+    let cardioStaleTimer = null;
     let chargeProgress = 0;
     let chargeLocked = false;
     let chargeResetTimer = null;
@@ -6464,9 +7914,62 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
         const lsc = (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).skeleton;
 
         // ── MediaPipe inference (skips silently until landmarker ready) ──────
+        // Time-gated: run inference at most every INFERENCE_INTERVAL_MS (≤4 fps).
+        // On skipped frames re-draw skeleton from cached landmarks — no GPU work needed.
+        const nowTs = performance.now();
+        const runInference = landmarker && smoother && drawSkeleton && exMap &&
+                             (nowTs - lastInferenceTs >= INFERENCE_INTERVAL_MS);
         if (landmarker && smoother && drawSkeleton && exMap) {
-          // Rotate source into portrait inferCanvas — raw BLE frame is landscape (person sideways)
-          // vflip=1 corrects up/down on device; software +90° here corrects the 90° axis for MP
+          // Pre-compute vidTransform here so both inference and cached-skeleton paths can use it
+          const effW = 120, effH = 160;
+          const skScale = Math.max(W / effW, H / effH);
+          const sdw = effW * skScale, sdh = effH * skScale;
+          const vt = { dx: (W - sdw) / 2, dy: (H - sdh) / 2, dw: sdw, dh: sdh };
+          const activeRulesForRender = activeExerciseId ? exMap[activeExerciseId] : exRules;
+
+          // Draw background + cached skeleton BEFORE starting inference.
+          // Fills the ~200ms async gap so the user sees skeleton instead of blank screen.
+          ctx.clearRect(0, 0, W, H);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.fillStyle = lsc.bg;
+          ctx.fillRect(0, 0, W, H);
+          if (lastDisplayLm) {
+            // Lerp between the two most recent inference results to smooth across the inference gap.
+            // t animates prev→last within the elapsed interval; clamps to 1.0 (hold-last) after.
+            const intervalMs = lastInferenceTs - prevInferenceTs;
+            const interpLm = (prevDisplayLm && intervalMs > 0)
+              ? (() => {
+                  const t = Math.min(1.0, (nowTs - prevInferenceTs) / intervalMs);
+                  return lastDisplayLm.map((lm, i) => {
+                    const p = prevDisplayLm[i];
+                    // Low-visibility joints (occluded/guessed) get a smaller lerp factor
+                    // so they stay near last known position instead of drifting to bad estimates.
+                    const minVis = Math.min(lm.visibility ?? 1, p.visibility ?? 1);
+                    const tw = t * Math.pow(minVis, 0.5);
+                    return { x: p.x + tw*(lm.x-p.x), y: p.y + tw*(lm.y-p.y),
+                             z: p.z + tw*(lm.z-p.z), visibility: p.visibility + t*(lm.visibility-p.visibility) };
+                  });
+                })()
+              : lastDisplayLm;
+            const cachedOpts = {
+              dtw: lastDtwScore, comboActive, frame: hudFrame, targetProgress,
+              errorBoneSet: lastErrorBoneSet,
+              keyJoints: (activeRulesForRender?.displayAngles ?? []).map((a) => a.joint).filter(Boolean),
+              colors: (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).renderer,
+            };
+            drawSkeleton(ctx, vt, interpLm, lastErrorBoneSet, cachedOpts);
+            if (!cardioMode && drawAngle && activeRulesForRender?.displayAngles?.length) {
+              drawAngle(ctx, vt, interpLm, activeRulesForRender, cachedOpts);
+            }
+          }
+
+          if (!runInference) {
+            bmp.close();
+            return;
+          }
+
+          // Canvas already shows cached skeleton — async inference gap is now covered.
+          // Rotate source into portrait inferCanvas and undistort (inference frames only)
           inferCtx.clearRect(0, 0, 120, 160);
           inferCtx.save();
           inferCtx.translate(120, 0);
@@ -6477,12 +7980,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
           await _applyDistLUTAsync();
           if (cancelled) { bmp.close(); return; }
 
-          // Clear AFTER the async worker roundtrip so the previous skeleton frame
-          // remains visible during the await — prevents blank-background flicker.
-          if (!comboActive) ctx.clearRect(0, 0, W, H);
-          ctx.globalCompositeOperation = "source-over";
-          ctx.fillStyle = comboActive ? lsc.bgCombo : lsc.bg;
-          ctx.fillRect(0, 0, W, H);
+          lastInferenceTs = performance.now();
           const result = landmarker.detectForVideo(_undistCanvas, nextMpTs());
           if (result.landmarks?.length) {
             const rawLm    = result.landmarks[0];
@@ -6494,7 +7992,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
             const displayLm = flipped ? smoothLm.map(p => ({ ...p, y: 1 - p.y })) : smoothLm;
             const now = performance.now();
 
-            if (autoMode) {
+            if (autoMode && !cardioMode) {
               const nextClass = classifyMotionWindow(classifierStatsRef.current, rawLm, exMap, now);
               if (nextClass.id !== activeExerciseId) {
                 activeExerciseId = nextClass.id;
@@ -6520,7 +8018,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
               }
             }
 
-            const activeRules = activeExerciseId ? exMap[activeExerciseId] : exRules;
+            const activeRules = activeRulesForRender;
             const errorBoneSet = new Set();
             if (activeRules) {
               // Rep state machine
@@ -6618,9 +8116,13 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
               if (hintTimer) clearTimeout(hintTimer);
                 hintTimer = setTimeout(() => setHint(null), 3000);
             }
-            lastDtwScore = frameErr ? 0.35 + Math.random() * 0.2 : 0.75 + Math.random() * 0.2;
+            // Live DTW proxy: form-check pass/fail smoothed with EMA (α=0.15).
+            // Raw random jitter removed — was causing comboActive/aurora to oscillate
+            // every few frames even when form was stable.
+            const rawDtw = frameErr ? 0.42 : 0.82;
+            lastDtwScore = lastDtwScore * 0.85 + rawDtw * 0.15;
             highDtwStreak = lastDtwScore > 0.88 ? Math.min(6, highDtwStreak + 1) : Math.max(0, highDtwStreak - 1);
-            comboActive = highDtwStreak >= 3;
+            comboActive = highDtwStreak >= 5;
             if (now - lastDtwUiAt > 180 || Math.abs(lastDtwScore - lastDtwUiValue) > 0.08) {
               lastDtwUiAt = now;
               lastDtwUiValue = lastDtwScore;
@@ -6636,12 +8138,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
               }
             }
 
-            // vidTransform: map inferCanvas (120×160) to the display region
-            const effW = 120;
-            const effH = 160;
-            const skScale = Math.max(W / effW, H / effH);
-            const sdw = effW * skScale, sdh = effH * skScale;
-            const vt = { dx: (W-sdw)/2, dy: (H-sdh)/2, dw: sdw, dh: sdh };
+            // vt is computed above (shared with cached-skeleton path)
             const hudOpts = {
               dtw: lastDtwScore,
               comboActive,
@@ -6651,8 +8148,38 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
               keyJoints: (activeRules?.displayAngles ?? []).map((angle) => angle.joint).filter((joint) => joint != null),
               colors: (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).renderer,
             };
+            prevDisplayLm = lastDisplayLm;
+            prevInferenceTs = lastInferenceTs;
+            lastDisplayLm = displayLm;
+            lastErrorBoneSet = errorBoneSet;
+            // Redraw background to replace the pre-inference cached skeleton with fresh result
+            ctx.clearRect(0, 0, W, H);
+            ctx.fillStyle = lsc.bg;
+            ctx.fillRect(0, 0, W, H);
             drawSkeleton(ctx, vt, displayLm, errorBoneSet, hudOpts);
-            if (drawAngle && activeRules?.displayAngles?.length) drawAngle(ctx, vt, displayLm, activeRules, hudOpts);
+            if (!cardioMode && drawAngle && activeRules?.displayAngles?.length) drawAngle(ctx, vt, displayLm, activeRules, hudOpts);
+
+            // Cardio mode: motion detection via key-landmark displacement
+            // Only check wrists(15,16), ankles(27,28), hips(23,24) — 6 landmarks that
+            // move most during cardio. Stationary jitter on these is ~0.01-0.02/frame;
+            // actual cardio movement is > 0.04/frame on average for these points.
+            if (cardioMode && onMotionChangeRef.current) {
+              if (prevCardioLm) {
+                const KEY_LM = [15, 16, 23, 24, 27, 28];
+                let disp = 0;
+                for (const i of KEY_LM) {
+                  if (rawLm[i] && prevCardioLm[i]) {
+                    disp += Math.abs(rawLm[i].x - prevCardioLm[i].x) + Math.abs(rawLm[i].y - prevCardioLm[i].y);
+                  }
+                }
+                if (disp / KEY_LM.length > 0.028) {
+                  onMotionChangeRef.current(true);
+                  clearTimeout(cardioStaleTimer);
+                  cardioStaleTimer = setTimeout(() => onMotionChangeRef.current?.(false), 2500);
+                }
+              }
+              prevCardioLm = rawLm;
+            }
           }
         } else {
           // MP not loaded yet — ensure a dark background is always shown
@@ -6704,15 +8231,33 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
         "ae_level=0", "vflip=1", "hmirror=0",
         "cam=0",
       ];
-      BLE_CAM.reduce((p, cmd) => p.then(() => bleWrite(cmd)), tx.startNotifications().then(() => {
-        tx.addEventListener("characteristicvaluechanged", onPacket);
-      })).catch((e) => console.error("[LiveScreen] BLE start:", e));
+      if (cardioMode) {
+        // Cardio mode: previous exercise LiveScreen already started notifications.
+        // Wait 300ms for its bleWrite("stop") cleanup to complete, then just
+        // add the event listener and restart the camera (no startNotifications needed).
+        const startTimer = setTimeout(() => {
+          if (cancelled) return;
+          tx.addEventListener("characteristicvaluechanged", onPacket);
+          BLE_CAM.reduce((p, cmd) => p.then(() => bleWrite(cmd)), Promise.resolve())
+            .catch(() => {});
+        }, 300);
+        streamCleanup = () => {
+          clearTimeout(startTimer);
+          tx.removeEventListener("characteristicvaluechanged", onPacket);
+          bleWrite("stop").catch(() => {});
+        };
+      } else {
+        // Normal mode: full BLE setup from scratch
+        BLE_CAM.reduce((p, cmd) => p.then(() => bleWrite(cmd)), tx.startNotifications().then(() => {
+          tx.addEventListener("characteristicvaluechanged", onPacket);
+        })).catch((e) => console.error("[LiveScreen] BLE start:", e));
 
-      streamCleanup = () => {
-        tx.removeEventListener("characteristicvaluechanged", onPacket);
-        bleWrite("stop").catch(() => {});
-        if (hintTimer) clearTimeout(hintTimer);
-      };
+        streamCleanup = () => {
+          tx.removeEventListener("characteristicvaluechanged", onPacket);
+          bleWrite("stop").catch(() => {});
+          if (hintTimer) clearTimeout(hintTimer);
+        };
+      }
 
     } else if (conn.mode === "wifi" && conn.url) {
       // 50 ms delay avoids React StrictMode double-mount closing a CONNECTING socket.
@@ -6723,24 +8268,57 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
       // Latest-frame ref: onmessage just stores the newest blob; rAF drain loop consumes it.
       const latestBlobRef = { current: null };
       let sock = null;
+      let frameTimeoutId = null;
+      let retryCount = 0;
 
-      const wsTimer = setTimeout(() => {
+      function openSock() {
         if (cancelled) return;
-        fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
-        // Safari on HTTPS blocks ws:// as mixed content — surface a clear hint.
+        // HTTPS → ws:// is blocked as mixed content on both Safari and Firefox iOS.
         if (window.location.protocol === "https:" && wsUrl.startsWith("ws://")) {
-          setHint("Safari HTTPS blocks camera (ws://). Use BLE or open the app over HTTP.");
+          setHint("HTTPS blocks camera stream (ws://). Use BLE or open the app over HTTP.");
           return;
         }
         try {
           sock = new WebSocket(wsUrl);
-        } catch (e) {
+        } catch {
           setHint("WebSocket blocked (mixed content). Try BLE or serve app over HTTP.");
           return;
         }
         sock.binaryType = "arraybuffer";
-        sock.onmessage = ({ data }) => { latestBlobRef.current = new Blob([data], { type: "image/jpeg" }); };
-        sock.onerror   = () => { if (!cancelled) console.warn("[LiveScreen] WS error"); };
+
+        let lastFrameAt = 0; // tracks actual frame receipt time (latestBlobRef is cleared by drainLoop)
+
+        sock.onopen = () => {
+          // Re-send cam config — the /cam fetch before WS open may arrive before camera is ready.
+          fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+          // If no frame arrives within 10 s, retry the WebSocket.
+          clearTimeout(frameTimeoutId);
+          frameTimeoutId = setTimeout(() => {
+            if (cancelled || lastFrameAt > 0) return;
+            retryCount++;
+            sock.onmessage = sock.onerror = sock.onclose = null;
+            sock.close();
+            if (retryCount <= 2) {
+              setHint(retryCount === 1 ? "Camera starting… retrying stream" : "Stream slow — reconnecting…");
+              setTimeout(openSock, 800);
+            } else {
+              setHint("No video from camera. Check device WiFi, then go Back and retry.");
+            }
+          }, 10000);
+        };
+
+        sock.onmessage = ({ data }) => {
+          lastFrameAt = performance.now(); // first frame — stream is healthy
+          clearTimeout(frameTimeoutId);
+          latestBlobRef.current = new Blob([data], { type: "image/jpeg" });
+        };
+        sock.onerror = () => { if (!cancelled) console.warn("[LiveScreen] WS error"); };
+      }
+
+      const wsTimer = setTimeout(() => {
+        if (cancelled) return;
+        fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+        openSock();
       }, 50);
 
       // rAF drain — picks up only the newest frame when main thread is free
@@ -6755,6 +8333,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
 
       streamCleanup = () => {
         clearTimeout(wsTimer);
+        clearTimeout(frameTimeoutId);
         latestBlobRef.current = null;
         if (sock) {
           sock.onmessage = sock.onerror = sock.onclose = null;
@@ -6794,12 +8373,16 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
       setMpStatus("ready");
     }
 
-    loadMP().catch((e) => console.error("[LiveScreen] MP load:", e));
+    loadMP().catch((e) => {
+      console.error("[LiveScreen] MP load:", e);
+      _mpLandmarkerPromise = null; // reset so next mount can retry
+    });
 
     return () => {
       cancelled = true;
       streamCleanup();
       if (chargeResetTimer) clearTimeout(chargeResetTimer);
+      if (cardioStaleTimer) clearTimeout(cardioStaleTimer);
       _undistWorker.terminate();
       landmarkerRef.current = null; // singleton lives at module level — never close
     };
@@ -6808,6 +8391,20 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
 
   const visibleAutoActionRows = autoActionRows.slice(0, AUTO_ACTION_ROW_LIMIT);
   const hiddenAutoActionRows = Math.max(0, autoActionRows.length - visibleAutoActionRows.length);
+
+  // Cardio mode: render only the camera+skeleton canvas, no rep HUD or session bar
+  if (cardioMode) {
+    return (
+      <div className="cardio-cam-embed">
+        {!isReady && (
+          <div className="cardio-cam-ph">
+            <div className={`cam-init-spinner ${mpStatus === "loading" ? "active" : "dim"}`} />
+          </div>
+        )}
+        <canvas ref={canvasRef} style={{ width:"100%", height:"100%", display:"block" }} />
+      </div>
+    );
+  }
 
   return (
     <div className="live-root">
@@ -6823,10 +8420,20 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
               {mpStatus === "loading" && (
                 <div className="cam-init-sub">AI vision model loading · first launch only</div>
               )}
+              {mpStatus !== "loading" && (
+                <div className="cam-init-sub">Waiting for camera feed · ensure same WiFi</div>
+              )}
             </div>
           </div>
         )}
         <canvas ref={canvasRef} className="cam-canvas" />
+        {homeMode && hwWord && (
+          <div className="hw-live-overlay">
+            <div key={hwWord.key} className="hw-live-word" style={{ color: hwWord.color }}>
+              {hwWord.text}
+            </div>
+          </div>
+        )}
         <div className="cam-overlay">
           <div className="cam-corner tl" />
           <div className="cam-corner tr" />
@@ -6906,6 +8513,17 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme }) {
           {hiddenAutoActionRows > 0 && (
             <div className="action-hidden-count">+{hiddenAutoActionRows} buffered actions</div>
           )}
+        </div>
+      ) : homeMode ? (
+        <div className={`rep-hud ${repNearComplete ? "near" : ""} ${repLocked ? "locked" : ""} ${repCharge.resetting ? "resetting" : ""}`}
+          style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:"0.25rem", padding:"0.75rem 1rem" }}>
+          <div className="hw-rep-big" style={{ color: repLocked ? "var(--em-b)" : repNearComplete ? "var(--em-a)" : "var(--text)" }}>
+            {reps}
+          </div>
+          <div className="hw-rep-lbl">Reps</div>
+          <div className="rep-progress-track" style={{ width:"100%", marginTop:"0.4rem" }} aria-label="Movement progress">
+            <div className="rep-progress-fill" style={{ width: `${repProgressPct}%` }} />
+          </div>
         </div>
       ) : (
         <div className={`rep-hud ${repNearComplete ? "near" : ""} ${repLocked ? "locked" : ""} ${repCharge.resetting ? "resetting" : ""}`}>
@@ -7398,27 +9016,37 @@ function SettingsScreen({ profile, deviceUrl, setDeviceUrl, connMode, setConnMod
   const [probeState, setProbeState] = useState("idle"); // "idle" | "checking" | "ok" | "err"
   const [probeInfo, setProbeInfo]   = useState(null);
 
+  function describeProbeError(error) {
+    const message = error?.message || String(error || "request failed");
+    if (error?.name === "AbortError" || error?.name === "TimeoutError") return "request timed out";
+    if (/failed to fetch|networkerror|load failed/i.test(message)) {
+      return "browser blocked the request or the device is unreachable";
+    }
+    return message;
+  }
+
   async function probeDevice(url) {
-    const base = (url || "").replace(/\/+$/, "");
+    const base = normalizeDeviceHttpUrl(url);
     if (!base) return;
     setProbeState("checking");
     setProbeInfo(null);
     try {
-      const r = await fetch(`${base}/hello`, { signal: AbortSignal.timeout(4000) });
+      const r = await fetch(`${base}/hello`, { cache: "no-store", signal: AbortSignal.timeout(4000) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       if (d.ws_token) localStorage.setItem("kl-ws-token", d.ws_token);
+      setDeviceUrl(base);
       setProbeState("ok");
       setProbeInfo(`${d.device_id || base} · ${d.cam_model || "camera"} · fw ${d.fw_version || "?"}`);
-    } catch {
+    } catch (error) {
       setProbeState("err");
-      setProbeInfo(null);
+      setProbeInfo(describeProbeError(error));
     }
   }
 
   // Auto-probe saved address on mount
   useEffect(() => {
-    if (deviceUrl && deviceUrl.startsWith("http")) probeDevice(deviceUrl);
+    if (deviceUrl) probeDevice(deviceUrl);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -7488,7 +9116,7 @@ function SettingsScreen({ profile, deviceUrl, setDeviceUrl, connMode, setConnMod
                 {probeState === "idle"     && "Device not checked"}
                 {probeState === "checking" && "Reaching device…"}
                 {probeState === "ok"       && (probeInfo || "Device online")}
-                {probeState === "err"      && `No response — check address and WiFi`}
+                {probeState === "err"      && `No response — ${probeInfo || "check address and WiFi"}`}
               </span>
             </div>
           </div>
@@ -7594,7 +9222,7 @@ function CoreMessageCard({ message, onExecutePlan }) {
   );
 }
 
-function CoreScreen({ messages, onSend, onExecutePlan, onQuickPlan }) {
+function CoreScreen({ messages, onSend, onExecutePlan, onQuickPlan, isThinking = false }) {
   const [draft, setDraft] = useState("");
   const timelineRef = useRef(null);
   const visibleMessages = messages.length ? messages : [
@@ -7632,6 +9260,12 @@ function CoreScreen({ messages, onSend, onExecutePlan, onQuickPlan }) {
               onExecutePlan={onExecutePlan}
             />
           ))}
+          {isThinking && (
+            <div className="core-thinking-row">
+              <Lottie animationData={lottieAiCore} loop={true} style={{ width:120, height:120 }} />
+              <span className="core-thinking-label">Kinetic Core thinking...</span>
+            </div>
+          )}
         </div>
 
         <div className="core-input-zone">
@@ -7669,7 +9303,7 @@ function NexusNodeAvatar({ id, mood = "satisfied", size = 58, isMine = false }) 
     .replace(/^me_\d+$/, isMine ? "you" : "athlete");
   const moodColor = NEXUS_MOOD_BY_ID[mood]?.tone ?? "#00FF9D";
   const avatarUri = useMemo(
-    () => createAvatar(thumbs, { seed, backgroundType: ["transparent"] }).toDataUri(),
+    () => createAvatar(thumbs, { seed }).toDataUri(),
     [seed],
   );
   return (
@@ -7730,11 +9364,12 @@ function NexusCheckInScreen({ checkins, onBack }) {
   const [burstIds, setBurstIds] = useState({});
   const [btnFiring, setBtnFiring] = useState(false);
 
-  const owned = checkins.map((item, index) => ({
+  // Only the most recent check-in is shown as "You" — older ones are history
+  const owned = checkins.slice(0, 1).map((item) => ({
     ...item,
     isMine: true,
-    x: index === 0 ? 50 : 40 + index * 8,
-    y: index === 0 ? 52 : 58 + index * 4,
+    x: 50,
+    y: 52,
   }));
   const nodes = [...owned, ...NEXUS_MOCK_CHECKINS];
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
@@ -8054,6 +9689,9 @@ export default function KineticLifeApp() {
   const [sessionResult, setSessionResult] = useState(null);
   const [visualState, setVisualState] = useState("auth");
   const [flowMode, setFlowMode] = useState(null);
+  const [homeWorkoutCtx, setHomeWorkoutCtx] = useState(null);
+  const [coreThinking, setCoreThinking] = useState(false);
+  // homeWorkoutCtx shape: { routeId, stepIdx, lastDoneIdx, hwSub, totalReps, startTime, kiniLine }
   const [deviceUrl, setDeviceUrl] = useState(() => loadDeviceUrl());
   const [connMode, setConnMode] = useState(() => loadConnMode());
   const [lastDevice, setLastDevice] = useState(() => loadLastDevice());
@@ -8062,6 +9700,7 @@ export default function KineticLifeApp() {
   const [aiUnread, setAiUnread] = useState(() => loadAiUnread());
   const [nexusCheckins, setNexusCheckins] = useState(() => loadNexusCheckins());
   const iotConnRef = useRef(null);
+  const screenLayerRef = useRef(null);
 
   useEffect(() => { saveDeviceUrl(deviceUrl, currentUser); }, [deviceUrl, currentUser]);
   useEffect(() => { saveConnMode(connMode, currentUser); }, [connMode, currentUser]);
@@ -8069,6 +9708,45 @@ export default function KineticLifeApp() {
 
   const NAV_SCREENS = ["dashboard", "core", "nexus", "profile", "settings"];
   const showNav = NAV_SCREENS.includes(screen);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const updateViewportMetrics = () => {
+      const visualViewport = window.visualViewport;
+      const height = visualViewport?.height || window.innerHeight;
+      const nav = document.querySelector(".bottom-nav");
+      root.style.setProperty("--app-height", `${Math.round(height)}px`);
+      if (nav) root.style.setProperty("--bottom-nav-h", `${Math.ceil(nav.getBoundingClientRect().height)}px`);
+      else root.style.setProperty("--bottom-nav-h", "76px");
+    };
+
+    updateViewportMetrics();
+    window.addEventListener("resize", updateViewportMetrics);
+    window.addEventListener("orientationchange", updateViewportMetrics);
+    window.visualViewport?.addEventListener("resize", updateViewportMetrics);
+    window.visualViewport?.addEventListener("scroll", updateViewportMetrics);
+    return () => {
+      window.removeEventListener("resize", updateViewportMetrics);
+      window.removeEventListener("orientationchange", updateViewportMetrics);
+      window.visualViewport?.removeEventListener("resize", updateViewportMetrics);
+      window.visualViewport?.removeEventListener("scroll", updateViewportMetrics);
+    };
+  }, [showNav]);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const layer = screenLayerRef.current;
+      if (!layer) return;
+      const scrollables = layer.querySelectorAll(
+        ".auth-wrap,.dash-wrap,.connect-wrap,.classify-wrap,.live-root,.analysis-wrap,.nexus-wrap,.profile-wrap,.settings-wrap,.plan-wrap,.core-timeline,.hw-wrap,.cardio-wrap"
+      );
+      scrollables.forEach((el) => {
+        el.scrollTop = 0;
+        el.scrollLeft = 0;
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [screen]);
 
   function appendAiMessage(message, { unread = true } = {}) {
     setAiMessages((prev) => {
@@ -8173,7 +9851,126 @@ export default function KineticLifeApp() {
 
   function handleHomeWorkout() {
     setFlowMode("home_workout");
-    setScreen("home_coach");
+    setHomeWorkoutCtx({
+      routeId:null, stepIdx:0, lastDoneIdx:-1, hwSub:"select",
+      totalReps:0, startTime:null, kiniLine:pickKiniLineForSelection(muscleStatus),
+      currentSet:1, totalSets:0, targetReps:0, setResults:[],
+    });
+    setScreen("home_workout");
+    setVisualState("idle");
+  }
+
+  function handleHomeSelectRoute(routeId) {
+    setHomeWorkoutCtx(prev => ({
+      ...prev, routeId, hwSub:"map", startTime: Date.now(),
+      mapKiniLine: pickKiniLineForMap(routeId, muscleStatus),
+    }));
+  }
+
+  function handleHomeNodeTap(stepIdx) {
+    const route = HOME_ROUTES[homeWorkoutCtx.routeId];
+    const step = route.steps[stepIdx];
+    if (step.type === "cardio") {
+      setHomeWorkoutCtx(prev => ({ ...prev, stepIdx, hwSub: "cardio", kiniLine: pickKiniLine("cardio") }));
+    } else {
+      setHomeWorkoutCtx(prev => ({
+        ...prev, stepIdx,
+        currentSet:1, totalSets:step.sets, targetReps:step.reps, setResults:[],
+      }));
+      goLive(exerciseById(step.exerciseId));
+    }
+  }
+
+  function handleHomeStartNextSet() {
+    const route = HOME_ROUTES[homeWorkoutCtx.routeId];
+    const step = route.steps[homeWorkoutCtx.stepIdx];
+    goLive(exerciseById(step.exerciseId));
+  }
+
+  function handleHomeExerciseContinue() {
+    const route = HOME_ROUTES[homeWorkoutCtx.routeId];
+    const nextIdx = homeWorkoutCtx.stepIdx;
+    if (nextIdx >= route.steps.length) {
+      setHomeWorkoutCtx(prev => ({ ...prev, hwSub:"reward", kiniLine:pickKiniLine("reward") }));
+    } else {
+      const nextStep = route.steps[nextIdx];
+      if (nextStep.type === "cardio") {
+        setHomeWorkoutCtx(prev => ({ ...prev, hwSub: "cardio", kiniLine: pickKiniLine("cardio") }));
+      } else {
+        setHomeWorkoutCtx(prev => ({
+          ...prev, hwSub:"map",
+          currentSet:1, totalSets:nextStep.sets, targetReps:nextStep.reps, setResults:[],
+        }));
+      }
+    }
+  }
+
+  function handleHomeCardioPreviewReady() {
+    setHomeWorkoutCtx(prev => ({ ...prev, hwSub: "cardio" }));
+  }
+
+  function handleHomeBetweenContinue() {
+    const route = HOME_ROUTES[homeWorkoutCtx.routeId];
+    const step = route.steps[homeWorkoutCtx.stepIdx];
+    if (step?.type === "cardio") {
+      setHomeWorkoutCtx(prev => ({ ...prev, hwSub: "cardio", kiniLine: pickKiniLine("cardio") }));
+    } else {
+      setHomeWorkoutCtx(prev => ({ ...prev, hwSub:"map" }));
+    }
+  }
+
+  function handleHomeCardioDone() {
+    const route = HOME_ROUTES[homeWorkoutCtx.routeId];
+    const updated = { ...muscleStatus };
+    const now = Date.now();
+    const updatedAt = { ...(muscleStatus._updatedAt ?? {}) };
+    Object.entries(route.muscles).forEach(([muscle, intensity]) => {
+      updated[muscle] = Math.min(1, (updated[muscle] ?? 0) + intensity * 0.15);
+      updatedAt[muscle] = now;
+    });
+    updated._updatedAt = updatedAt;
+    setMuscleStatus(updated);
+    saveMuscleStatus(updated, currentUser);
+    setHomeWorkoutCtx(prev => ({ ...prev, hwSub:"reward", kiniLine:pickKiniLine("reward") }));
+  }
+
+  function handleHomeCollectReward() {
+    // Post AI Core summary before clearing ctx
+    if (homeWorkoutCtx) {
+      const route = HOME_ROUTES[homeWorkoutCtx.routeId];
+      const totalReps = homeWorkoutCtx.totalReps ?? 0;
+      const elapsed   = homeWorkoutCtx.startTime ? Math.round((Date.now() - homeWorkoutCtx.startTime) / 1000) : 0;
+      const mins = Math.floor(elapsed / 60);
+      const secs = elapsed % 60;
+      const results  = homeWorkoutCtx.setResults ?? [];
+      const avgDtw   = results.length ? results.reduce((s, r) => s + (r.dtw ?? 0), 0) / results.length : 0.5;
+      const accuracy = Math.round(avgDtw * 100);
+      const isUpper  = homeWorkoutCtx.routeId === "upper";
+      const topMuscles = Object.entries(route.muscles)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3)
+        .map(([m]) => m.replace(/_/g, " "))
+        .join(", ");
+      const dtwLabel = accuracy >= 85 ? "Excellent form consistency" : accuracy >= 70 ? "Good technique" : "Form had room to improve";
+
+      appendAiMessage(makeAiMessage({
+        type: "post_workout",
+        content: `${route.name} complete — ${totalReps} reps · ${mins}m ${String(secs).padStart(2,"0")}s · avg form ${accuracy}%. ${dtwLabel}. Primary load: ${topMuscles}. Recovery status updated.`,
+        payload: {
+          accuracy,
+          reps: totalReps,
+          elapsed,
+          exerciseId: homeWorkoutCtx.routeId === "upper" ? "both_bicep_curl" : "squat",
+          exerciseLabel: route.name,
+          exerciseShort: isUpper ? "APX" : "FRG",
+        },
+      }));
+    }
+
+    setHomeWorkoutCtx(null);
+    setFlowMode(null);
+    setScreen("dashboard");
+    setNavTab("home");
     setVisualState("idle");
   }
 
@@ -8202,36 +9999,69 @@ export default function KineticLifeApp() {
   }
 
   function handleLiveFinish(data) {
+    // ── Always update profile & muscle status ──────────────────────────────
     setSessionResult(data);
-    setScreen("analysis");
-    setVisualState("analysis");
-    const updated = {
+    const updProf = {
       ...profile,
       sessionsCount: (profile.sessionsCount ?? 0) + 1,
-      averageForm: Math.round(((profile.averageForm ?? 0) + data.dtw * 100) / 2),
+      averageForm: Math.round(((profile.averageForm ?? 0) + (data.dtw ?? 0.5) * 100) / 2),
     };
-    setProfile(updated);
-    saveProfile(updated);
-    const repEntries = Object.entries(data.classification?.repsByExercise ?? {})
-      .filter(([, count]) => Number(count) > 0);
-    const trainedEntries = repEntries.length
-      ? repEntries
-      : data.exerciseId
-      ? [[data.exerciseId, Math.max(1, data.reps ?? 1)]]
-      : [];
-    if (trainedEntries.length) {
-      const updated = { ...muscleStatus };
-      const totalActionReps = trainedEntries.reduce((sum, [, count]) => sum + Math.max(0, Number(count) || 0), 0);
-      trainedEntries.forEach(([exerciseId, count]) => {
-        const targets = getExerciseTargets(exerciseId);
-        const share = totalActionReps > 0 ? Math.max(0.25, (Number(count) || 0) / totalActionReps) : 1;
-        Object.entries(targets).forEach(([muscle, intensity]) => {
-          updated[muscle] = Math.min(1, (updated[muscle] ?? 0) + (0.10 + intensity * 0.18) * share);
+    setProfile(updProf); saveProfile(updProf);
+    const repEntries2 = Object.entries(data.classification?.repsByExercise ?? {})
+      .filter(([, c]) => Number(c) > 0);
+    const trainedEntries2 = repEntries2.length
+      ? repEntries2 : data.exerciseId ? [[data.exerciseId, Math.max(1, data.reps ?? 1)]] : [];
+    if (trainedEntries2.length) {
+      const ms2 = { ...muscleStatus };
+      const now2 = Date.now();
+      const updatedAt2 = { ...(muscleStatus._updatedAt ?? {}) };
+      const tot2 = trainedEntries2.reduce((s,[,c]) => s + Math.max(0, Number(c)||0), 0);
+      trainedEntries2.forEach(([eid, cnt]) => {
+        const tgts = getExerciseTargets(eid);
+        const share = tot2 > 0 ? Math.max(0.25, (Number(cnt)||0)/tot2) : 1;
+        Object.entries(tgts).forEach(([m, iv]) => {
+          ms2[m] = Math.min(1, (ms2[m] ?? 0) + (0.10 + iv * 0.18) * share);
+          updatedAt2[m] = now2;
         });
       });
-      setMuscleStatus(updated);
-      saveMuscleStatus(updated, currentUser);
+      ms2._updatedAt = updatedAt2;
+      setMuscleStatus(ms2); saveMuscleStatus(ms2, currentUser);
     }
+
+    // ── Home workout: skip analysis, route to set_rest / exercise_done ──────
+    if (homeWorkoutCtx) {
+      const dtw  = data.dtw  ?? 0.5;
+      const reps = data.reps ?? 0;
+      const newResults = [...(homeWorkoutCtx.setResults ?? []), { dtw, reps }];
+      const nextSet    = homeWorkoutCtx.currentSet + 1;
+      const allDone    = nextSet > homeWorkoutCtx.totalSets;
+      const nextStepIdx = homeWorkoutCtx.stepIdx + 1;
+
+      if (!allDone) {
+        setHomeWorkoutCtx(prev => ({
+          ...prev,
+          currentSet: nextSet, setResults: newResults,
+          totalReps: (prev.totalReps ?? 0) + reps,
+          hwSub: "set_rest", lastSetDtw: dtw,
+          kiniLine: pickKiniLine("set_rest"),
+        }));
+      } else {
+        const avgDtw = newResults.reduce((s, r) => s + r.dtw, 0) / newResults.length;
+        setHomeWorkoutCtx(prev => ({
+          ...prev,
+          setResults: newResults, stepIdx: nextStepIdx,
+          totalReps: (prev.totalReps ?? 0) + reps,
+          hwSub: "exercise_done", lastSetDtw: avgDtw,
+          kiniLine: pickKiniLine("exercise_done"),
+        }));
+      }
+      setScreen("home_workout");
+      setVisualState("idle");
+      return;
+    }
+
+    // ── Standard gym mode ──────────────────────────────────────────────────
+    // Gym mode: show analysis + AI message
     const finishedExercise = data.exerciseId ? exerciseById(data.exerciseId) : null;
     const accuracy = Math.round((data.dtw ?? 0) * 100);
     appendAiMessage(makeAiMessage({
@@ -8240,14 +10070,14 @@ export default function KineticLifeApp() {
         ? `Training complete. ${finishedExercise.label} finished at ${accuracy}% DTW alignment. Recovery load has been updated.`
         : `Training complete. No library movement was confidently assigned; Core stored this as an unassigned session note.`,
       payload: {
-        accuracy,
-        reps: data.reps ?? 0,
-        elapsed: data.elapsed ?? 0,
+        accuracy, reps: data.reps ?? 0, elapsed: data.elapsed ?? 0,
         exerciseId: data.exerciseId ?? null,
         exerciseLabel: finishedExercise?.label ?? "Unassigned Session",
         exerciseShort: finishedExercise?.short ?? "--",
       },
     }));
+    setScreen("analysis");
+    setVisualState("idle");
   }
 
   function handleShareCheckIn(mood) {
@@ -8282,6 +10112,18 @@ export default function KineticLifeApp() {
   }
 
   function handleDone() {
+    if (homeWorkoutCtx) {
+      const route = HOME_ROUTES[homeWorkoutCtx.routeId];
+      const nextStepIdx = homeWorkoutCtx.stepIdx + 1;
+      if (nextStepIdx >= route.steps.length) {
+        setHomeWorkoutCtx(prev => ({ ...prev, hwSub:"reward", kiniLine:pickKiniLine("reward") }));
+      } else {
+        setHomeWorkoutCtx(prev => ({ ...prev, stepIdx:nextStepIdx, lastDoneIdx:prev.stepIdx, hwSub:"between", kiniLine:pickKiniLine("between") }));
+      }
+      setScreen("home_workout");
+      setVisualState("idle");
+      return;
+    }
     setScreen("dashboard");
     setVisualState("idle");
     setNavTab("home");
@@ -8308,17 +10150,20 @@ export default function KineticLifeApp() {
 
   function handleCoreSend(text) {
     appendAiMessage(makeAiMessage({ role: "user", type: "text", content: text }), { unread: false });
+    setCoreThinking(true);
 
     const delay = 500 + Math.random() * 2500;
     setTimeout(() => {
+      try {
       const inferred = inferInjuryTagsFromText(text);
       if (inferred.length) {
         const current = loadAiCoreProfile(currentUser);
         const merged = normalizeTags([...(current.injuryTags ?? []), ...inferred]);
         saveAiCoreProfile({ ...current, injuryTags: merged, updatedAt: Date.now() }, currentUser);
+        const labels = inferred.map((id) => AI_CORE_INJURY_OPTIONS.find((item) => item.id === id)?.label ?? id).join(", ");
         appendAiMessage(makeAiMessage({
           type: "text",
-          content: `Constraint noted. Future plans will reduce load around ${inferred.map((id) => AI_CORE_INJURY_OPTIONS.find((item) => item.id === id)?.label ?? id).join(", ")}.`,
+          content: pickReply(CORE_REPLIES.injury, "injury")(labels),
           payload: { injuryTags: inferred },
         }), { unread: false });
         return;
@@ -8326,47 +10171,70 @@ export default function KineticLifeApp() {
 
       const lower = text.toLowerCase();
 
-      if (lower.includes("generate") || lower.includes("plan") || lower.includes("workout") || (lower.includes("today") && (lower.includes("train") || lower.includes("session") || lower.includes("exercise")))) {
+      if (lower.includes("generate") || lower.includes("plan") || lower.includes("workout") ||
+          (lower.includes("today") && (lower.includes("train") || lower.includes("session") || lower.includes("exercise")))) {
         const coreProfile = loadAiCoreProfile(currentUser);
-        const decision = generateAiCorePlan({ profile: coreProfile, muscleStatus, focusTags: coreProfile.focusTags ?? [] });
+        const decision = generateAiCorePlan({ profile: coreProfile, muscleStatus: decayedMuscleStatus(muscleStatus), focusTags: coreProfile.focusTags ?? [] });
         appendAiMessage(makeAiMessage({ type: "daily_plan", content: decision.dialogue, payload: decision.payload }));
         return;
       }
 
-      if (lower.includes("tired") || lower.includes("fatigue") || lower.includes("exhausted") || lower.includes("sore")) {
+      if (lower.includes("tired") || lower.includes("fatigue") || lower.includes("exhausted") ||
+          lower.includes("sore") || lower.includes("aching") || lower.includes("beat")) {
         const todayStart = new Date().setHours(0, 0, 0, 0);
         const todayWorkouts = aiMessages.filter((m) => m.type === "post_workout" && m.timestamp >= todayStart);
         if (todayWorkouts.length > 0) {
-          const lines = todayWorkouts.map((m) => {
-            const label = m.payload?.exerciseLabel ?? "Session";
-            const reps = m.payload?.reps ?? 0;
-            const acc = m.payload?.accuracy ?? 0;
-            return `${label} — ${reps} reps, ${acc}% alignment`;
-          });
-          appendAiMessage(makeAiMessage({
-            type: "text",
-            content: `Fatigue after output is a normal adaptive signal — not a problem. Today's log:\n${lines.join("\n")}\nThat work is recorded and muscle load has been updated. Prioritize protein intake and sleep quality tonight. Recovery is where adaptation occurs.`,
-          }));
+          const lineStr = todayWorkouts.map((m) =>
+            `${m.payload?.exerciseLabel ?? "Session"} — ${m.payload?.reps ?? 0} reps, ${m.payload?.accuracy ?? 0}% alignment`
+          ).join("\n");
+          appendAiMessage(makeAiMessage({ type: "text", content: pickReply(CORE_REPLIES.tired_with, "tired_with")(lineStr) }));
         } else {
-          const coreProfile = loadAiCoreProfile(currentUser);
-          const decision = generateAiCorePlan({ profile: coreProfile, muscleStatus, focusTags: coreProfile.focusTags ?? [] });
-          const target = decision.payload?.target_muscle_group ?? "today's session";
-          appendAiMessage(makeAiMessage({
-            type: "text",
-            content: `Rest is a valid training input. No session was logged today — ${target} was on the schedule. It will carry forward to your next available window without penalty. Consider low-intensity movement or mobility work if you want to stay active.`,
-          }));
+          appendAiMessage(makeAiMessage({ type: "text", content: pickReply(CORE_REPLIES.tired_none, "tired_none") }));
         }
         return;
       }
 
-      if (lower.includes("progress") || lower.includes("how am i") || lower.includes("stats") || lower.includes("status")) {
+      if (lower.includes("progress") || lower.includes("how am i") || lower.includes("stats") ||
+          lower.includes("status") || lower.includes("how many") || lower.includes("summary")) {
         const sessions = profile?.sessionsCount ?? 0;
         const form = profile?.averageForm ?? 0;
-        appendAiMessage(makeAiMessage({ type: "text", content: `${sessions} session${sessions !== 1 ? "s" : ""} logged. Average DTW alignment: ${form > 0 ? `${form}%` : "no data yet"}. Muscle recovery status is updated after each completed set.` }));
+        appendAiMessage(makeAiMessage({ type: "text", content: pickReply(CORE_REPLIES.progress, "progress")(sessions, form) }));
         return;
       }
 
-      appendAiMessage(makeAiMessage({ type: "text", content: "Training note recorded in your local intelligence stream." }));
+      if (lower.includes("motivat") || lower.includes("struggling") || lower.includes("give up") ||
+          lower.includes("hard") || lower.includes("can't") || lower.includes("ready") ||
+          lower.includes("let's go") || lower.includes("lets go") || lower.includes("pumped")) {
+        appendAiMessage(makeAiMessage({ type: "text", content: pickReply(CORE_REPLIES.motivation, "motivation") }));
+        return;
+      }
+
+      if (lower.includes("form") || lower.includes("technique") || lower.includes("how to") ||
+          lower.includes("correct") || lower.includes("posture") || lower.includes("align") ||
+          lower.includes("wrong") || lower.includes("angle")) {
+        appendAiMessage(makeAiMessage({ type: "text", content: pickReply(CORE_REPLIES.technique, "technique") }));
+        return;
+      }
+
+      if (lower.includes("sleep") || lower.includes("recover") || lower.includes("stretch") ||
+          lower.includes("rest day") || lower.includes("mobility") || lower.includes("doms") ||
+          lower.includes("massage") || lower.includes("off day")) {
+        appendAiMessage(makeAiMessage({ type: "text", content: pickReply(CORE_REPLIES.recovery, "recovery") }));
+        return;
+      }
+
+      if (lower.includes("eat") || lower.includes("protein") || lower.includes("diet") ||
+          lower.includes("food") || lower.includes("nutrition") || lower.includes("calor") ||
+          lower.includes("hydrat") || lower.includes("water") || lower.includes("pre-workout") ||
+          lower.includes("post-workout") || lower.includes("supplement")) {
+        appendAiMessage(makeAiMessage({ type: "text", content: pickReply(CORE_REPLIES.nutrition, "nutrition") }));
+        return;
+      }
+
+      appendAiMessage(makeAiMessage({ type: "text", content: pickReply(CORE_REPLIES.default, "default") }));
+      } finally {
+        setCoreThinking(false);
+      }
     }, delay);
   }
 
@@ -8394,6 +10262,7 @@ export default function KineticLifeApp() {
             onPlan={handlePlan}
             onHomeWorkout={handleHomeWorkout}
             lastDevice={lastDevice}
+            theme={theme}
           />
         );
       case "auto_classify":
@@ -8402,6 +10271,22 @@ export default function KineticLifeApp() {
         return <PlanConfigScreen onBegin={handlePlanBegin} onBack={handleBack} muscleStatus={muscleStatus} theme={theme} userName={currentUser} onPlanGenerated={handlePlanGenerated} />;
       case "home_coach":
         return <HomeCoachScreen onBegin={handleCoachBegin} onBack={handleBack} />;
+      case "home_workout":
+        return (
+          <HomeWorkoutContainer
+            ctx={homeWorkoutCtx}
+            onSelectRoute={handleHomeSelectRoute}
+            onNodeTap={handleHomeNodeTap}
+            onContinueBetween={handleHomeBetweenContinue}
+            onCardioDone={handleHomeCardioDone}
+            onCollectReward={handleHomeCollectReward}
+            onExit={handleHomeCollectReward}
+            onStartNextSet={handleHomeStartNextSet}
+            onExerciseContinue={handleHomeExerciseContinue}
+            onCardioPreviewReady={handleHomeCardioPreviewReady}
+            iotConnRef={iotConnRef}
+          />
+        );
       case "connect":
         return (
           <ConnectScreen
@@ -8421,6 +10306,8 @@ export default function KineticLifeApp() {
             onVisualState={handleLiveVisualState}
             iotConnRef={iotConnRef}
             theme={theme}
+            homeMode={!!homeWorkoutCtx}
+            targetReps={homeWorkoutCtx?.targetReps ?? null}
           />
         );
       case "analysis":
@@ -8447,6 +10334,7 @@ export default function KineticLifeApp() {
             onSend={handleCoreSend}
             onExecutePlan={handlePlan}
             onQuickPlan={handlePlan}
+            isThinking={coreThinking}
           />
         );
       case "profile":
@@ -8475,18 +10363,20 @@ export default function KineticLifeApp() {
       <div className="ath-root" data-theme={theme}>
         <AetherisWorld visualState={visualState} theme={theme} />
 
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={screen}
-            className="ath-screen-layer"
-            variants={pageVariants}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-          >
-            {renderScreen()}
-          </motion.div>
-        </AnimatePresence>
+        <div ref={screenLayerRef} className="ath-screen-host">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={screen}
+              className="ath-screen-layer"
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              {renderScreen()}
+            </motion.div>
+          </AnimatePresence>
+        </div>
 
         {showNav && <BottomNav tab={navTab} onChange={handleNavTab} aiUnread={aiUnread} />}
       </div>

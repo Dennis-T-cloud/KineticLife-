@@ -406,6 +406,10 @@ void setup() {
         ESP.restart();
     }
 
+    // Pre-warm camera: apply vflip=1 + q=40 (matches web default) and drain
+    // 20 frames (~1 s) so AE/AWB is converged before the first WS client arrives.
+    camera_warmup_stream(20, 50);
+
     const unsigned long http_start_ms = millis();
     http_server_start(KINETICLIFE_FW_VERSION, KINETICLIFE_BOARD_MODEL,
                       KINETICLIFE_CAMERA_MODEL);
