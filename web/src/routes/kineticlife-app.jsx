@@ -525,12 +525,18 @@ function loadDeviceUrl(name = getActiveUserName()) {
   return loadUserValue(DEVICE_URL_KEY, "http://fitcam-d37d7c.local", name);
 }
 
+function normalizeDeviceHttpUrl(value) {
+  const trimmed = String(value || "").trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+}
+
 function saveDeviceUrl(value, name = getActiveUserName()) {
   saveUserValue(DEVICE_URL_KEY, value || "http://fitcam-d37d7c.local", name);
 }
 
 function loadConnMode(name = getActiveUserName()) {
-  const mode = loadUserValue(CONN_MODE_KEY, "ble", name);
+  const mode = loadUserValue(CONN_MODE_KEY, "wifi", name);
   return mode === "wifi" ? "wifi" : "ble";
 }
 
@@ -1362,6 +1368,8 @@ const css = `
   --font: 'Sora', ui-rounded, system-ui, sans-serif;
   --mono: 'Space Mono', 'SF Mono', 'Courier New', monospace;
   --max-w: 430px;
+  --app-height: 100vh;
+  --bottom-nav-h: 76px;
   --spring-heavy: cubic-bezier(0.2, 0, 0, 1);
   --spring-micro: cubic-bezier(0.34, 1.56, 0.64, 1);
   /* RGB channels for rgba() usage — override these in theme blocks */
@@ -1653,19 +1661,33 @@ const css = `
 }
 [data-theme="sunset"] .nexus-boost-tag { color: #B04800; }
 
-html, body { background: var(--base); overflow: hidden; height: 100svh; }
+html, body, #root {
+  background: var(--base);
+  overflow: hidden;
+  height: var(--app-height, 100vh);
+  /* Prevent horizontal scroll / visual-viewport drift on iOS Safari */
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overscroll-behavior-x: none;
+  touch-action: pan-y;
+}
 
 body {
   font-family: var(--font);
   color: var(--text);
-  height: 100svh;
+  min-height: var(--app-height, 100vh);
+  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 /* ── World Layer ── */
 .ath-root {
-  height: 100svh;
+  height: var(--app-height, 100vh);
+  min-height: var(--app-height, 100vh);
+  width: 100%;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -1990,15 +2012,34 @@ body {
   position: relative; z-index: 2;
   flex: 1; min-height: 0; display: flex; flex-direction: column;
   will-change: transform, opacity, filter;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.ath-screen-host {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .screen-pad {
   flex: 1; display: flex; flex-direction: column;
-  padding: 0 1.25rem;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+  padding-bottom: 0;
   max-width: var(--max-w);
   margin: 0 auto;
   width: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* ── Glass Panels ── */
@@ -2145,6 +2186,8 @@ h2.ath-title {
   padding: 3.5rem 0 2.5rem;
   gap: 2rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .auth-wrap > * { flex-shrink: 0; }
 
@@ -2277,9 +2320,11 @@ h2.ath-title {
 /* ── Dashboard / Bento ── */
 .dash-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 1.25rem 0 6.5rem;
+  padding: 1.25rem 0 calc(var(--bottom-nav-h, 76px) + 1.25rem);
   gap: 1rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .dash-wrap > * { flex-shrink: 0; }
 
@@ -2372,7 +2417,7 @@ h2.ath-title {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
   display: block; pointer-events: none;
-  opacity: 0.7;
+  opacity: 1;
 }
 
 .bento-illus-img {
@@ -2624,13 +2669,20 @@ h2.ath-title {
 /* ── Bottom Nav ── */
 .bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0;
+  /* Anchor to physical screen edges including side safe areas */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
   z-index: 10;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   background: var(--nav-bg, rgba(5,6,10,0.85));
   backdrop-filter: blur(20px) saturate(150%);
   -webkit-backdrop-filter: blur(20px) saturate(150%);
   border-top: 1px solid var(--gb);
   display: flex;
-  padding: 0.5rem 0 calc(0.5rem + env(safe-area-inset-bottom, 0px));
+  padding-top: 0.5rem;
+  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
 }
 
 .nav-item {
@@ -2696,9 +2748,12 @@ h2.ath-title {
 .connect-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
   align-items: center;
-  padding: 2rem 0 4rem;
+  padding: 2rem 0 calc(var(--bottom-nav-h, 76px) + 1rem);
   gap: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 .connect-wrap > * { flex-shrink: 0; }
 
@@ -2883,6 +2938,8 @@ h2.ath-title {
   max-width: var(--max-w);
   margin: 0 auto;
   width: 100%;
+  min-width: 0;
+  padding-top: env(safe-area-inset-top, 0px);
   position: relative;
   z-index: 5;
   overflow-y: auto;
@@ -3538,6 +3595,8 @@ h2.ath-title {
   padding: 1.5rem 0 2rem;
   gap: 0.85rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .analysis-wrap > * { flex-shrink: 0; }
 
@@ -3762,9 +3821,12 @@ h2.ath-title {
 /* ── Nexus Check-ins ── */
 .nexus-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 1.5rem 0 calc(4.5rem + env(safe-area-inset-bottom, 0px));
+  padding: 1.5rem 0 calc(var(--bottom-nav-h, 76px) + 1rem);
   gap: 0.85rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 .nexus-wrap > * { flex-shrink: 0; }
 
@@ -4132,9 +4194,11 @@ h2.ath-title {
 /* ── Profile Screen ── */
 .profile-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 1.5rem 0 6.5rem;
+  padding: 1.5rem 0 calc(var(--bottom-nav-h, 76px) + 1.25rem);
   gap: 0.85rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .profile-wrap > * { flex-shrink: 0; }
 
@@ -4463,9 +4527,11 @@ h2.ath-title {
 /* ── Settings Screen ── */
 .settings-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 1.5rem 0 6.5rem;
+  padding: 1.5rem 0 calc(var(--bottom-nav-h, 76px) + 1.25rem);
   gap: 0.85rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .settings-wrap > * { flex-shrink: 0; }
 
@@ -4530,6 +4596,8 @@ h2.ath-title {
   padding: 1rem 0 2rem;
   gap: 1rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .plan-wrap > * { flex-shrink: 0; }
 
@@ -4925,6 +4993,7 @@ h2.ath-title {
   padding: 1.5rem 0 0;
   min-height: 0;
   overflow: hidden;
+  min-width: 0;
 }
 
 .core-header {
@@ -5142,6 +5211,8 @@ h2.ath-title {
   gap: 1.5rem;
   padding: 2rem 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .classify-wrap > * { flex-shrink: 0; }
 
@@ -5210,7 +5281,7 @@ h2.ath-title {
 
 /* ── Home Workout ──────────────────────────────────────────────────────────── */
 
-.hw-wrap { flex:1; min-height:0; display:flex; flex-direction:column; padding:1.5rem 0 calc(4.5rem + env(safe-area-inset-bottom,0px)); gap:1.1rem; overflow-y:auto; }
+.hw-wrap { flex:1; min-height:0; display:flex; flex-direction:column; padding:1.5rem 0 calc(var(--bottom-nav-h,76px) + 1rem); gap:1.1rem; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; }
 .hw-wrap > * { flex-shrink:0; }
 
 .hw-header { display:flex; align-items:center; gap:0.85rem; padding-top:0.5rem; }
@@ -5276,7 +5347,7 @@ h2.ath-title {
 .hw-collect-btn  { width:100%; padding:1.05rem; font-size:0.82rem; font-weight:900; letter-spacing:0.18em; text-transform:uppercase; font-family:var(--font); background:linear-gradient(135deg,#00DBE9,#A855F7); color:#030508; border:none; border-radius:16px; cursor:pointer; box-shadow:0 0 28px rgba(0,219,233,0.3); transition:transform 0.15s; }
 .hw-collect-btn:active { transform:scale(0.97); }
 
-.cardio-wrap  { flex:1; min-height:0; display:flex; flex-direction:column; padding:1.5rem 0 calc(4.5rem + env(safe-area-inset-bottom,0px)); gap:1rem; align-items:center; overflow-y:auto; }
+.cardio-wrap  { flex:1; min-height:0; display:flex; flex-direction:column; padding:1.5rem 0 calc(var(--bottom-nav-h,76px) + 1rem); gap:1rem; align-items:center; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; }
 .cardio-wrap > * { flex-shrink:0; }
 .cardio-cam-embed { width:72%; aspect-ratio:3/4; border-radius:16px; overflow:hidden; position:relative; background:#050c14; flex-shrink:0; }
 .cardio-cam-ph { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#050c14; }
@@ -6291,10 +6362,17 @@ function ConnectScreen({ onConnected, onBack, exercise, connMode, deviceUrl, the
         setConnState("idle");
       }
     } else {
-      const base = (deviceUrl || "").replace(/\/+$/, "");
+      const base = normalizeDeviceHttpUrl(deviceUrl);
+      if (!base) {
+        setError("Enter a camera address first.");
+        setConnState("idle");
+        return;
+      }
       try {
-        const res = await fetch(`${base}/hello`, { signal: AbortSignal.timeout(4000) });
+        const res = await fetch(`${base}/hello`, { cache: "no-store", signal: AbortSignal.timeout(4000) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json().catch(() => ({}));
+        if (d.ws_token) localStorage.setItem("kl-ws-token", d.ws_token);
         const info = { mode: "wifi", name: base.replace(/^https?:\/\//, ""), url: base };
         saveLastDevice({ mode: "wifi", name: info.name, url: info.url });
         setConnState("connected");
@@ -7666,6 +7744,12 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
     let repPhase     = "rest";
     let consecErrFrames = 0;
     let processing   = false; // one frame at a time
+    let lastDisplayLm = null;      // landmarks from most recent inference
+    let prevDisplayLm = null;      // landmarks from inference before last (for lerp)
+    let lastErrorBoneSet = new Set();
+    let lastInferenceTs = 0;       // timestamp of most recent inference
+    let prevInferenceTs = 0;       // timestamp of inference before last (for lerp)
+    const INFERENCE_INTERVAL_MS = 80; // ~7 fps inference
     let hintTimer    = null;
     let hudFrame     = 0;
     let highDtwStreak = 0;
@@ -7812,9 +7896,56 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
         const lsc = (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).skeleton;
 
         // ── MediaPipe inference (skips silently until landmarker ready) ──────
+        // Time-gated: run inference at most every INFERENCE_INTERVAL_MS (≤4 fps).
+        // On skipped frames re-draw skeleton from cached landmarks — no GPU work needed.
+        const nowTs = performance.now();
+        const runInference = landmarker && smoother && drawSkeleton && exMap &&
+                             (nowTs - lastInferenceTs >= INFERENCE_INTERVAL_MS);
         if (landmarker && smoother && drawSkeleton && exMap) {
-          // Rotate source into portrait inferCanvas — raw BLE frame is landscape (person sideways)
-          // vflip=1 corrects up/down on device; software +90° here corrects the 90° axis for MP
+          // Pre-compute vidTransform here so both inference and cached-skeleton paths can use it
+          const effW = 120, effH = 160;
+          const skScale = Math.max(W / effW, H / effH);
+          const sdw = effW * skScale, sdh = effH * skScale;
+          const vt = { dx: (W - sdw) / 2, dy: (H - sdh) / 2, dw: sdw, dh: sdh };
+          const activeRulesForRender = activeExerciseId ? exMap[activeExerciseId] : exRules;
+
+          // Draw background + cached skeleton BEFORE starting inference.
+          // Fills the ~200ms async gap so the user sees skeleton instead of blank screen.
+          ctx.clearRect(0, 0, W, H);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.fillStyle = lsc.bg;
+          ctx.fillRect(0, 0, W, H);
+          if (lastDisplayLm) {
+            // Lerp between the two most recent inference results to smooth across the inference gap.
+            // t animates prev→last within the elapsed interval; clamps to 1.0 (hold-last) after.
+            const intervalMs = lastInferenceTs - prevInferenceTs;
+            const interpLm = (prevDisplayLm && intervalMs > 0)
+              ? lastDisplayLm.map((lm, i) => {
+                  const p = prevDisplayLm[i];
+                  const t = Math.min(1.0, (nowTs - prevInferenceTs) / intervalMs);
+                  return { x: p.x + t*(lm.x-p.x), y: p.y + t*(lm.y-p.y),
+                           z: p.z + t*(lm.z-p.z), visibility: p.visibility + t*(lm.visibility-p.visibility) };
+                })
+              : lastDisplayLm;
+            const cachedOpts = {
+              dtw: lastDtwScore, comboActive, frame: hudFrame, targetProgress,
+              errorBoneSet: lastErrorBoneSet,
+              keyJoints: (activeRulesForRender?.displayAngles ?? []).map((a) => a.joint).filter(Boolean),
+              colors: (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).renderer,
+            };
+            drawSkeleton(ctx, vt, interpLm, lastErrorBoneSet, cachedOpts);
+            if (!cardioMode && drawAngle && activeRulesForRender?.displayAngles?.length) {
+              drawAngle(ctx, vt, interpLm, activeRulesForRender, cachedOpts);
+            }
+          }
+
+          if (!runInference) {
+            bmp.close();
+            return;
+          }
+
+          // Canvas already shows cached skeleton — async inference gap is now covered.
+          // Rotate source into portrait inferCanvas and undistort (inference frames only)
           inferCtx.clearRect(0, 0, 120, 160);
           inferCtx.save();
           inferCtx.translate(120, 0);
@@ -7825,11 +7956,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
           await _applyDistLUTAsync();
           if (cancelled) { bmp.close(); return; }
 
-          // Always clear with solid fill to prevent semi-transparent combo ghosting.
-          ctx.clearRect(0, 0, W, H);
-          ctx.globalCompositeOperation = "source-over";
-          ctx.fillStyle = lsc.bg;
-          ctx.fillRect(0, 0, W, H);
+          lastInferenceTs = performance.now();
           const result = landmarker.detectForVideo(_undistCanvas, nextMpTs());
           if (result.landmarks?.length) {
             const rawLm    = result.landmarks[0];
@@ -7867,7 +7994,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
               }
             }
 
-            const activeRules = activeExerciseId ? exMap[activeExerciseId] : exRules;
+            const activeRules = activeRulesForRender;
             const errorBoneSet = new Set();
             if (activeRules) {
               // Rep state machine
@@ -7987,12 +8114,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
               }
             }
 
-            // vidTransform: map inferCanvas (120×160) to the display region
-            const effW = 120;
-            const effH = 160;
-            const skScale = Math.max(W / effW, H / effH);
-            const sdw = effW * skScale, sdh = effH * skScale;
-            const vt = { dx: (W-sdw)/2, dy: (H-sdh)/2, dw: sdw, dh: sdh };
+            // vt is computed above (shared with cached-skeleton path)
             const hudOpts = {
               dtw: lastDtwScore,
               comboActive,
@@ -8002,6 +8124,14 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
               keyJoints: (activeRules?.displayAngles ?? []).map((angle) => angle.joint).filter((joint) => joint != null),
               colors: (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).renderer,
             };
+            prevDisplayLm = lastDisplayLm;
+            prevInferenceTs = lastInferenceTs;
+            lastDisplayLm = displayLm;
+            lastErrorBoneSet = errorBoneSet;
+            // Redraw background to replace the pre-inference cached skeleton with fresh result
+            ctx.clearRect(0, 0, W, H);
+            ctx.fillStyle = lsc.bg;
+            ctx.fillRect(0, 0, W, H);
             drawSkeleton(ctx, vt, displayLm, errorBoneSet, hudOpts);
             if (!cardioMode && drawAngle && activeRules?.displayAngles?.length) drawAngle(ctx, vt, displayLm, activeRules, hudOpts);
 
@@ -8114,24 +8244,57 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
       // Latest-frame ref: onmessage just stores the newest blob; rAF drain loop consumes it.
       const latestBlobRef = { current: null };
       let sock = null;
+      let frameTimeoutId = null;
+      let retryCount = 0;
 
-      const wsTimer = setTimeout(() => {
+      function openSock() {
         if (cancelled) return;
-        fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
-        // Safari on HTTPS blocks ws:// as mixed content — surface a clear hint.
+        // HTTPS → ws:// is blocked as mixed content on both Safari and Firefox iOS.
         if (window.location.protocol === "https:" && wsUrl.startsWith("ws://")) {
-          setHint("Safari HTTPS blocks camera (ws://). Use BLE or open the app over HTTP.");
+          setHint("HTTPS blocks camera stream (ws://). Use BLE or open the app over HTTP.");
           return;
         }
         try {
           sock = new WebSocket(wsUrl);
-        } catch (e) {
+        } catch {
           setHint("WebSocket blocked (mixed content). Try BLE or serve app over HTTP.");
           return;
         }
         sock.binaryType = "arraybuffer";
-        sock.onmessage = ({ data }) => { latestBlobRef.current = new Blob([data], { type: "image/jpeg" }); };
-        sock.onerror   = () => { if (!cancelled) console.warn("[LiveScreen] WS error"); };
+
+        let lastFrameAt = 0; // tracks actual frame receipt time (latestBlobRef is cleared by drainLoop)
+
+        sock.onopen = () => {
+          // Re-send cam config — the /cam fetch before WS open may arrive before camera is ready.
+          fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+          // If no frame arrives within 10 s, retry the WebSocket.
+          clearTimeout(frameTimeoutId);
+          frameTimeoutId = setTimeout(() => {
+            if (cancelled || lastFrameAt > 0) return;
+            retryCount++;
+            sock.onmessage = sock.onerror = sock.onclose = null;
+            sock.close();
+            if (retryCount <= 2) {
+              setHint(retryCount === 1 ? "Camera starting… retrying stream" : "Stream slow — reconnecting…");
+              setTimeout(openSock, 800);
+            } else {
+              setHint("No video from camera. Check device WiFi, then go Back and retry.");
+            }
+          }, 10000);
+        };
+
+        sock.onmessage = ({ data }) => {
+          lastFrameAt = performance.now(); // first frame — stream is healthy
+          clearTimeout(frameTimeoutId);
+          latestBlobRef.current = new Blob([data], { type: "image/jpeg" });
+        };
+        sock.onerror = () => { if (!cancelled) console.warn("[LiveScreen] WS error"); };
+      }
+
+      const wsTimer = setTimeout(() => {
+        if (cancelled) return;
+        fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
+        openSock();
       }, 50);
 
       // rAF drain — picks up only the newest frame when main thread is free
@@ -8146,6 +8309,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
 
       streamCleanup = () => {
         clearTimeout(wsTimer);
+        clearTimeout(frameTimeoutId);
         latestBlobRef.current = null;
         if (sock) {
           sock.onmessage = sock.onerror = sock.onclose = null;
@@ -8231,6 +8395,9 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
               </div>
               {mpStatus === "loading" && (
                 <div className="cam-init-sub">AI vision model loading · first launch only</div>
+              )}
+              {mpStatus !== "loading" && (
+                <div className="cam-init-sub">Waiting for camera feed · ensure same WiFi</div>
               )}
             </div>
           </div>
@@ -8825,27 +8992,37 @@ function SettingsScreen({ profile, deviceUrl, setDeviceUrl, connMode, setConnMod
   const [probeState, setProbeState] = useState("idle"); // "idle" | "checking" | "ok" | "err"
   const [probeInfo, setProbeInfo]   = useState(null);
 
+  function describeProbeError(error) {
+    const message = error?.message || String(error || "request failed");
+    if (error?.name === "AbortError" || error?.name === "TimeoutError") return "request timed out";
+    if (/failed to fetch|networkerror|load failed/i.test(message)) {
+      return "browser blocked the request or the device is unreachable";
+    }
+    return message;
+  }
+
   async function probeDevice(url) {
-    const base = (url || "").replace(/\/+$/, "");
+    const base = normalizeDeviceHttpUrl(url);
     if (!base) return;
     setProbeState("checking");
     setProbeInfo(null);
     try {
-      const r = await fetch(`${base}/hello`, { signal: AbortSignal.timeout(4000) });
+      const r = await fetch(`${base}/hello`, { cache: "no-store", signal: AbortSignal.timeout(4000) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       if (d.ws_token) localStorage.setItem("kl-ws-token", d.ws_token);
+      setDeviceUrl(base);
       setProbeState("ok");
       setProbeInfo(`${d.device_id || base} · ${d.cam_model || "camera"} · fw ${d.fw_version || "?"}`);
-    } catch {
+    } catch (error) {
       setProbeState("err");
-      setProbeInfo(null);
+      setProbeInfo(describeProbeError(error));
     }
   }
 
   // Auto-probe saved address on mount
   useEffect(() => {
-    if (deviceUrl && deviceUrl.startsWith("http")) probeDevice(deviceUrl);
+    if (deviceUrl) probeDevice(deviceUrl);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -8915,7 +9092,7 @@ function SettingsScreen({ profile, deviceUrl, setDeviceUrl, connMode, setConnMod
                 {probeState === "idle"     && "Device not checked"}
                 {probeState === "checking" && "Reaching device…"}
                 {probeState === "ok"       && (probeInfo || "Device online")}
-                {probeState === "err"      && `No response — check address and WiFi`}
+                {probeState === "err"      && `No response — ${probeInfo || "check address and WiFi"}`}
               </span>
             </div>
           </div>
@@ -9499,6 +9676,7 @@ export default function KineticLifeApp() {
   const [aiUnread, setAiUnread] = useState(() => loadAiUnread());
   const [nexusCheckins, setNexusCheckins] = useState(() => loadNexusCheckins());
   const iotConnRef = useRef(null);
+  const screenLayerRef = useRef(null);
 
   useEffect(() => { saveDeviceUrl(deviceUrl, currentUser); }, [deviceUrl, currentUser]);
   useEffect(() => { saveConnMode(connMode, currentUser); }, [connMode, currentUser]);
@@ -9506,6 +9684,45 @@ export default function KineticLifeApp() {
 
   const NAV_SCREENS = ["dashboard", "core", "nexus", "profile", "settings"];
   const showNav = NAV_SCREENS.includes(screen);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const updateViewportMetrics = () => {
+      const visualViewport = window.visualViewport;
+      const height = visualViewport?.height || window.innerHeight;
+      const nav = document.querySelector(".bottom-nav");
+      root.style.setProperty("--app-height", `${Math.round(height)}px`);
+      if (nav) root.style.setProperty("--bottom-nav-h", `${Math.ceil(nav.getBoundingClientRect().height)}px`);
+      else root.style.setProperty("--bottom-nav-h", "76px");
+    };
+
+    updateViewportMetrics();
+    window.addEventListener("resize", updateViewportMetrics);
+    window.addEventListener("orientationchange", updateViewportMetrics);
+    window.visualViewport?.addEventListener("resize", updateViewportMetrics);
+    window.visualViewport?.addEventListener("scroll", updateViewportMetrics);
+    return () => {
+      window.removeEventListener("resize", updateViewportMetrics);
+      window.removeEventListener("orientationchange", updateViewportMetrics);
+      window.visualViewport?.removeEventListener("resize", updateViewportMetrics);
+      window.visualViewport?.removeEventListener("scroll", updateViewportMetrics);
+    };
+  }, [showNav]);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const layer = screenLayerRef.current;
+      if (!layer) return;
+      const scrollables = layer.querySelectorAll(
+        ".auth-wrap,.dash-wrap,.connect-wrap,.classify-wrap,.live-root,.analysis-wrap,.nexus-wrap,.profile-wrap,.settings-wrap,.plan-wrap,.core-timeline,.hw-wrap,.cardio-wrap"
+      );
+      scrollables.forEach((el) => {
+        el.scrollTop = 0;
+        el.scrollLeft = 0;
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [screen]);
 
   function appendAiMessage(message, { unread = true } = {}) {
     setAiMessages((prev) => {
@@ -10114,18 +10331,20 @@ export default function KineticLifeApp() {
       <div className="ath-root" data-theme={theme}>
         <AetherisWorld visualState={visualState} theme={theme} />
 
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={screen}
-            className="ath-screen-layer"
-            variants={pageVariants}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-          >
-            {renderScreen()}
-          </motion.div>
-        </AnimatePresence>
+        <div ref={screenLayerRef} className="ath-screen-host">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={screen}
+              className="ath-screen-layer"
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              {renderScreen()}
+            </motion.div>
+          </AnimatePresence>
+        </div>
 
         {showNav && <BottomNav tab={navTab} onChange={handleNavTab} aiUnread={aiUnread} />}
       </div>

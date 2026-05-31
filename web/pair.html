@@ -341,6 +341,15 @@
       return `http://${trimmed}`;
     }
 
+    function describeProbeError(error) {
+      const message = error && error.message ? error.message : String(error || "request failed");
+      if (error && (error.name === "AbortError" || error.name === "TimeoutError")) return "request timed out";
+      if (/failed to fetch|networkerror|load failed/i.test(message)) {
+        return "browser blocked the request or the device is unreachable";
+      }
+      return message;
+    }
+
     function drawQr(targetEl, text, width, height) {
       targetEl.innerHTML = "";
       if (!window.QRCode) { targetEl.textContent = "QR library failed to load"; return; }
@@ -485,9 +494,10 @@
       probeStatusEl.style.display = "";
       probeStatusEl.innerHTML = `<span class="status-dot"></span>Checking ${url} …`;
       try {
-        const r = await fetch(url + "/hello", { signal: AbortSignal.timeout(4000) });
+        const r = await fetch(url + "/hello", { cache: "no-store", signal: AbortSignal.timeout(4000) });
         if (!r.ok) throw new Error("HTTP " + r.status);
         const d = await r.json();
+        if (d.ws_token) localStorage.setItem("kl-ws-token", d.ws_token);
         probeStatusEl.innerHTML =
           `<div class="notice"><span class="status-dot ok"></span>` +
           `Connected · device <b>${d.device_id}</b> · ${d.cam_model || "camera"} · fw ${d.fw_version}</div>`;
@@ -495,7 +505,7 @@
       } catch (e) {
         probeStatusEl.innerHTML =
           `<div class="error"><span class="status-dot err"></span>` +
-          `No response from <b>${url}</b> — make sure this device is on the same WiFi network and ESP32 is in READY state.</div>`;
+          `No response from <b>${url}</b> — ${describeProbeError(e)}. Make sure this device is on the same WiFi network and ESP32 is in READY state.</div>`;
       }
     });
 
