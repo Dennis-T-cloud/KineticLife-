@@ -23,8 +23,11 @@ static String      s_ws_token;
 static uint32_t    s_ws_client_ids[DEFAULT_MAX_WS_CLIENTS] = {0};
 static size_t      s_ws_client_count = 0;
 
-// Push rate: 67 ms ≈ 15 fps
-static const uint32_t FRAME_MS    = 67;
+// Push rate: 100 ms = 10 fps.
+// 15 fps (67 ms) overflows the iOS WebKit TCP receive buffer (~128 KB) in ~2.7 s
+// when the client can only consume ~3-5 fps (Firefox/Safari on iPhone).
+// 10 fps halves the net fill rate and eliminates the multi-second stall at startup.
+static const uint32_t FRAME_MS    = 100;
 static const uint32_t PERF_LOG_MS = 5000;
 
 // Rolling perf counters, reset each PERF_LOG_MS window
@@ -108,9 +111,12 @@ static void ws_untrack_client(uint32_t client_id) {
 }
 
 static bool ws_client_ready(AsyncWebSocketClient* client) {
+    // queueLen() < 2: allow one frame "in pipeline" while the previous is being sent.
+    // The strict queueLen()==0 created unnecessary gaps between frames when the TCP
+    // layer was momentarily busy; allowing 1 queued frame improves pipeline utilisation.
     return client &&
            client->status() == WS_CONNECTED &&
-           client->queueLen() == 0 &&
+           client->queueLen() < 2 &&
            client->canSend();
 }
 
@@ -268,8 +274,10 @@ static PendingCamConfig s_pending_cam;
 
 static void handle_cam_config(AsyncWebServerRequest* req) {
     // Parse params — no sensor access here (would block async_tcp and trigger WDT)
+    // Note: "q" (JPEG quality) is intentionally ignored — quality is fixed at
+    // WIFI_JPEG_QUALITY in config.h and should not be changed at runtime.
     if (req->hasParam("res"))        { s_pending_cam.has_res   = true; s_pending_cam.res        = req->getParam("res")->value(); }
-    if (req->hasParam("q"))          { s_pending_cam.has_q     = true; s_pending_cam.q          = req->getParam("q")->value().toInt(); }
+    // q is read-only — do not apply
     if (req->hasParam("brightness")) { s_pending_cam.has_bright = true; s_pending_cam.brightness = constrain(req->getParam("brightness")->value().toInt(), -2, 2); }
     if (req->hasParam("contrast"))   { s_pending_cam.has_cont  = true; s_pending_cam.contrast   = constrain(req->getParam("contrast")->value().toInt(),   -2, 2); }
     if (req->hasParam("saturation")) { s_pending_cam.has_sat   = true; s_pending_cam.saturation = constrain(req->getParam("saturation")->value().toInt(), -2, 2); }
@@ -346,6 +354,7 @@ void http_server_start(const char* fw_version, const char* board_model,
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin",  "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "*");
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Private-Network", "true");
 
     // WebSocket — gate must be added BEFORE ws so it intercepts unauthorized upgrades first
     ws.onEvent(on_ws_event);
@@ -390,7 +399,7 @@ void http_server_handle() {
         sensor_t* s = esp_camera_sensor_get();
         if (s) {
             if (s_pending_cam.has_res)   camera_set_framesize(s_pending_cam.res.c_str());
-            if (s_pending_cam.has_q)     camera_set_quality(s_pending_cam.q);
+            // has_q intentionally skipped — quality is fixed at WIFI_JPEG_QUALITY
             if (s_pending_cam.has_bright) s->set_brightness(s, s_pending_cam.brightness);
             if (s_pending_cam.has_cont)   s->set_contrast(s,   s_pending_cam.contrast);
             if (s_pending_cam.has_sat)    s->set_saturation(s, s_pending_cam.saturation);

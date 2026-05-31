@@ -10,7 +10,7 @@ Real-time fitness tracking and form feedback for an ESP32-S3 camera device. The 
 
 Raw video is processed locally in the browser. Server calls use derived joint-angle frames only.
 
-**Status**: `main` branch, documentation refreshed against the current repo on 2026-05-26.
+**Status**: `feature-homeworkout` branch, documentation refreshed 2026-05-30.
 
 ---
 
@@ -81,7 +81,15 @@ Server
   GET /api/history/{action_id} returns in-memory submitted frames
 ```
 
-Important current gap: firmware protects `/ws` with a token returned by `/hello`; several web entry points still construct `/ws` without appending that token. Treat this as the next integration fix before relying on WiFi video mode.
+**WiFi streaming fixes (2026-05-30):**
+
+- `ConnectScreen` now parses `/hello` JSON and saves `ws_token` to localStorage — WS auth gap is closed
+- JPEG quality hardcoded to `WIFI_JPEG_QUALITY = 40` in firmware `config.h`; web `/cam?q=` requests are ignored
+- Camera warm-up (`camera_warmup_stream`) runs 20 frames after WiFi connects to stabilise OV2640 AE/AWB; sensor registers are not touched during warm-up (setting vflip inside warm-up caused a 44-second DMA stall)
+- Push rate reduced from 15 fps (67 ms) to 10 fps (100 ms) — matches observed client consumption rate (~3–8 fps on Firefox iOS WebKit)
+- **Pull-mode flow control**: client sends `"READY"` over WebSocket after each frame is processed; server pushes next frame only on receipt. Eliminates TCP receive-buffer overflow and the multi-second freeze at connection start. Legacy clients (debug.html) fall back to FRAME_MS rate automatically
+- Default `connMode` changed from `"ble"` to `"wifi"` so first-launch users reach the WiFi path without visiting Settings
+- Safari/Firefox layout: `html,body` get `overscroll-behavior-x:none; touch-action:pan-y` to prevent visual-viewport drift; bottom-nav gets `env(safe-area-inset-left/right)` and `box-sizing:border-box`; `connect-wrap` padding updated with `env(safe-area-inset-bottom)`; nexus scroll enabled on Firefox iOS with `touch-action:pan-y; -webkit-overflow-scrolling:touch`
 
 ---
 

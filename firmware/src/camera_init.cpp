@@ -1,5 +1,6 @@
 #include "camera_init.h"
 #include <Arduino.h>
+#include "config.h"
 #include "debug_log.h"
 
 // Freenove ESP32-S3-WROOM Board (FNK0085 B) pin mapping
@@ -184,8 +185,8 @@ bool camera_init() {
     s_camera_mode = "stream";
     // fb_count=2 in PSRAM eliminates DMA bus contention between camera and WiFi.
     // XCLK=20MHz — FNK0085B board limit; 24MHz causes tearing regardless of sensor.
-    // Start at q=12; tune live via /cam?q= from debug.html.
-    return camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_QVGA, 15, 2,
+    // Quality is fixed at WIFI_JPEG_QUALITY (config.h) and not overridable via /cam.
+    return camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_QVGA, WIFI_JPEG_QUALITY, 2,
                             CAMERA_FB_IN_PSRAM);
 }
 
@@ -242,6 +243,21 @@ bool camera_capture_self_test(uint8_t attempts, uint32_t retry_delay_ms) {
         if (i + 1 < attempts) delay(retry_delay_ms);
     }
     return false;
+}
+
+void camera_warmup_stream(int frames, uint32_t delay_ms) {
+    // Capture and discard frames so OV2640 AE/AWB converges before first WS client.
+    // Do NOT change sensor settings here — vflip or quality changes can stall the
+    // OV2640 DMA pipeline for tens of seconds while the sensor re-stabilises.
+    kl_logf("[camera] warmup start frames=%d delay_ms=%lu q=%d\n",
+            frames, (unsigned long)delay_ms, s_jpeg_quality);
+    const uint32_t t0 = millis();
+    for (int i = 0; i < frames; i++) {
+        camera_fb_t* fb = esp_camera_fb_get();
+        if (fb) esp_camera_fb_return(fb);
+        if (delay_ms > 0) delay(delay_ms);
+    }
+    kl_logf("[camera] warmup done elapsed_ms=%lu\n", (unsigned long)(millis() - t0));
 }
 
 const char* camera_mode_name() {

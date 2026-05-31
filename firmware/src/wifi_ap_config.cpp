@@ -79,7 +79,17 @@ function poll(){
 </script></body></html>)html";
 
 // ── HTTP handlers ─────────────────────────────────────────────────
-static void cors(){ s_server.sendHeader("Access-Control-Allow-Origin","*"); }
+static void cors(){
+    s_server.sendHeader("Access-Control-Allow-Origin","*");
+    s_server.sendHeader("Access-Control-Allow-Methods","GET, POST, OPTIONS");
+    s_server.sendHeader("Access-Control-Allow-Headers","*");
+    s_server.sendHeader("Access-Control-Allow-Private-Network","true");
+}
+
+static void handle_options() {
+    cors();
+    s_server.send(204);
+}
 
 static void handle_root() {
     s_server.send_P(200, "text/html", CONFIG_HTML);
@@ -159,6 +169,9 @@ void wifi_ap_config_start() {
     s_server.on("/config-networks",HTTP_GET, handle_networks);
     s_server.on("/try-config",     HTTP_GET, handle_try_config);
     s_server.on("/config-status",  HTTP_GET, handle_status);
+    s_server.on("/config-networks",HTTP_OPTIONS, handle_options);
+    s_server.on("/try-config",     HTTP_OPTIONS, handle_options);
+    s_server.on("/config-status",  HTTP_OPTIONS, handle_options);
     s_server.begin();
 }
 
