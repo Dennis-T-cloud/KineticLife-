@@ -96,8 +96,6 @@ function drawHeadRing(ctx, vt, lm, frame, comboActive, col) {
   ctx.globalCompositeOperation = col.blendMode;
   ctx.strokeStyle = col.white;
   ctx.lineWidth = 2;
-  ctx.shadowColor = col.ok_b;
-  ctx.shadowBlur = 18;
 
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -105,7 +103,6 @@ function drawHeadRing(ctx, vt, lm, frame, comboActive, col) {
 
   ctx.globalAlpha = 0.72;
   ctx.lineWidth = 1;
-  ctx.shadowBlur = 8;
   ctx.beginPath();
   ctx.moveTo(x - r * 0.62, y);
   ctx.lineTo(x + r * 0.62, y);
@@ -183,8 +180,6 @@ export function drawSkeleton(ctx, vidTransform, lm, errorBoneSet = new Set(), op
     }
 
     ctx.globalAlpha = lowVis ? 0.28 : 0.92;
-    ctx.shadowColor = err ? col.err : col.ok_b;
-    ctx.shadowBlur = lowVis ? 0 : err ? 18 : comboActive ? 22 : 12;
     ctx.strokeStyle = grad;
     ctx.lineWidth = lowVis ? 2 : err ? 4.5 : 3.2;
     ctx.beginPath();
@@ -218,8 +213,6 @@ export function drawSkeleton(ctx, vidTransform, lm, errorBoneSet = new Set(), op
 
     if (err || key) {
       ctx.globalAlpha = lowVis ? 0.32 : 1;
-      ctx.shadowColor = lowVis ? 'transparent' : ringColor;
-      ctx.shadowBlur = lowVis ? 0 : err ? 20 : 14;
       ctx.strokeStyle = ringColor;
       ctx.lineWidth = err ? 2 : 1.4;
       ctx.beginPath();
@@ -227,8 +220,6 @@ export function drawSkeleton(ctx, vidTransform, lm, errorBoneSet = new Set(), op
       ctx.stroke();
     }
 
-    ctx.shadowColor = 'rgba(255,255,255,0.95)';
-    ctx.shadowBlur = lowVis ? 0 : err || key ? 10 : 4;
     ctx.fillStyle = err ? col.err : col.white;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -263,8 +254,6 @@ export function drawAngleOnCanvas(ctx, vidTransform, lm, ex, opts = {}) {
     ctx.globalAlpha = 0.76;
     ctx.strokeStyle = bad ? col.err : 'rgba(255,255,255,0.76)';
     ctx.lineWidth = 2;
-    ctx.shadowColor = bad ? col.err : col.ok_a;
-    ctx.shadowBlur = bad ? 14 : 10;
     ctx.beginPath();
     ctx.arc(joint.x, joint.y, arcR, angle, angle + Math.PI * 1.25);
     ctx.stroke();
@@ -273,7 +262,6 @@ export function drawAngleOnCanvas(ctx, vidTransform, lm, ex, opts = {}) {
     ctx.fillStyle = col.labelBg;
     ctx.strokeStyle = bad ? 'rgba(255,51,102,0.45)' : 'rgba(255,255,255,0.16)';
     ctx.lineWidth = 1;
-    ctx.shadowBlur = 0;
     ctx.beginPath();
     ctx.roundRect(labelX - 34, labelY - 13, 68, 26, 8);
     ctx.fill();
