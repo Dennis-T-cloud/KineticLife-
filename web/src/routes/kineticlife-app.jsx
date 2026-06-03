@@ -3,22 +3,22 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createAvatar } from "@dicebear/core";
 import * as thumbs from "@dicebear/thumbs";
 import Lottie from "lottie-react";
-import lottieAiCore        from "../assets/ai-core.json";
-import lottieSetClear      from "../assets/Set_clear.json";
-import lottiePathClear     from "../assets/path_clear.json";
-import lottieCheeringRibbons from "../assets/cheering_ribbons.json";
-import lottieTrophy        from "../assets/Trophy.json";
-import lottieJumpingJack   from "../assets/home_Jumping_Jack.json";
-import lottieSquatKick     from "../assets/home_Squat_Kick.json";
-import lottieBlueJumping   from "../assets/blue_jumping.json";
-import lottieAvocadoWalking from "../assets/Avocado_walking.json";
-import lottieSqurtWalking  from "../assets/squrt_walking.json";
 import jumpInDeep from "../assets/home-entry/jump-in-deep.svg";
 import jumpInSunset from "../assets/home-entry/jump-in-sunset.svg";
 import aiPlanDeep from "../assets/home-entry/ai-plan-deep.svg";
 import aiPlanSunset from "../assets/home-entry/ai-plan-sunset.svg";
 import homeModeDeep from "../assets/home-entry/home-mode-deep.svg";
 import homeModeSunset from "../assets/home-entry/home-mode-sunset.svg";
+
+function useLottieData(loader) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    loader().then(m => { if (!cancelled) setData(m.default ?? m); });
+    return () => { cancelled = true; };
+  }, []); // loader is a stable inline arrow — intentionally omitted from deps
+  return data;
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -969,8 +969,138 @@ function avgFinite(...values) {
   return finite.reduce((sum, value) => sum + value, 0) / finite.length;
 }
 
+// For side-view exercises: pick the side whose primary joint has higher visibility.
+// Avoids averaging a good near-side angle with a noisy occluded far-side angle.
+function visBest(lm, visIdxA, fnA, visIdxB, fnB) {
+  const vA = lm[visIdxA]?.visibility ?? 0;
+  const vB = lm[visIdxB]?.visibility ?? 0;
+  return vA >= vB ? fnA(lm) : fnB(lm);
+}
+
 function classifierActiveJointCount(id) {
   return Math.max(1, (AUTO_CLASSIFIER_SPECS[id]?.features ?? []).filter((feature) => feature.type === "active").length);
+}
+
+// ── Hierarchical orientation groups ──────────────────────────────────────────
+const GROUP_SIDE  = ["squat_side", "barbell_squat_side", "deadlift_side"];
+const GROUP_ARM   = ["bicep_curl", "right_bicep_curl", "both_bicep_curl", "lateral_raise"];
+const GROUP_FRONT = ["squat"];
+
+// Level-1 signal: ratio of hip x-separation to torso length.
+// Front view: hips spread ~20% of image width, torso ~35% → ratio ≈ 0.57
+// Side view (left OR right mirror): hips stack behind each other → ratio ≈ 0.05-0.15
+function computeOrientSignals(lm) {
+  if (!lm) return null;
+  const lh = lm[23], rh = lm[24], ls = lm[11], rs = lm[12];
+  if (!lh || !rh || !ls || !rs) return null;
+  const hipXSep = Math.abs(lh.x - rh.x);
+  const midHipX = (lh.x + rh.x) / 2, midHipY = (lh.y + rh.y) / 2;
+  const midShX  = (ls.x + rs.x) / 2, midShY  = (ls.y + rs.y) / 2;
+  const torsoLen = Math.sqrt((midShX - midHipX) ** 2 + (midShY - midHipY) ** 2);
+  const relHipXSep = torsoLen > 0.02 ? hipXSep / torsoLen : hipXSep * 5;
+  const kneeAngle = avgFinite(
+    classifierAngle(lm[23], lm[25], lm[27]),
+    classifierAngle(lm[24], lm[26], lm[28])
+  );
+  return { relHipXSep, kneeAngle };
+}
+
+// Resolve orientation group from the most-recent 1.2 s of samples (fast response).
+// < 0.30 relHipXSep (hips stacked) → side group; knees never dip below 145° → arm group; else → front.
+// arm threshold at 145° (vs 138°) avoids false "arm" detection during the standing pause between exercises.
+function resolveOrientGroup(samples) {
+  if (!samples.length) return null;
+  const now = samples[samples.length - 1].t;
+  const sigs = samples.filter((s) => now - s.t <= 1200).map((s) => s.orient).filter(Boolean);
+  if (sigs.length < 4) return null;
+  const hipSeps = sigs.map((s) => s.relHipXSep).filter(Number.isFinite).sort((a, b) => a - b);
+  const medianHipSep = hipSeps.length ? hipSeps[Math.floor(hipSeps.length / 2)] : 1;
+  const knees = sigs.map((s) => s.kneeAngle).filter(Number.isFinite);
+  const minKnee = knees.length ? Math.min(...knees) : 180;
+  if (medianHipSep < 0.30) return "side";
+  if (minKnee > 145)       return "arm";
+  return "front";
+}
+
+// ── Primary-mover classifier ──────────────────────────────────────────────────
+
+// Compute the 8 key joint angles + trunk lean from raw landmarks for one frame.
+// knee / hip use visBest so side-view occluded landmarks don't contaminate.
+// elbow / shoulder are kept bilateral so L vs R bicep-curl stays distinguishable.
+function computeJointAngles(lm) {
+  if (!lm) return {};
+  const lh = lm[23], rh = lm[24], ls = lm[11], rs = lm[12];
+  let trunk = null;
+  if (lh && rh && ls && rs) {
+    const vx = (ls.x + rs.x) / 2 - (lh.x + rh.x) / 2;
+    const vy = (ls.y + rs.y) / 2 - (lh.y + rh.y) / 2;
+    const mag = Math.sqrt(vx * vx + vy * vy);
+    if (mag > 0.02) trunk = Math.round(Math.acos(Math.max(-1, Math.min(1, -vy / mag))) * 180 / Math.PI);
+  }
+  return {
+    knee:       visBest(lm, 25, (l) => classifierAngle(l[23], l[25], l[27]), 26, (l) => classifierAngle(l[24], l[26], l[28])),
+    hip:        visBest(lm, 23, (l) => classifierAngle(l[11], l[23], l[25]), 24, (l) => classifierAngle(l[12], l[24], l[26])),
+    elbow_L:    classifierAngle(lm[11], lm[13], lm[15]),
+    elbow_R:    classifierAngle(lm[12], lm[14], lm[16]),
+    shoulder_L: classifierAngle(lm[23], lm[11], lm[13]),
+    shoulder_R: classifierAngle(lm[24], lm[12], lm[14]),
+    trunk,
+  };
+}
+
+// Level-2 classifier: given sample history + orientation group, return exercise id or null.
+// Logic: find the anatomical group with max amplitude, then sub-classify within it.
+function classifyByPrimaryMover(samples, orientGroup) {
+  if (samples.length < 8) return null;
+
+  const series  = (k) => samples.map((s) => s.joints?.[k]).filter(Number.isFinite);
+  const amp     = (k) => { const v = series(k); return v.length >= 5 ? Math.max(...v) - Math.min(...v) : 0; };
+  const minOf   = (k) => { const v = series(k); return v.length ? Math.min(...v) : null; };
+  const meanOf  = (k) => { const v = series(k); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+
+  const kneeAmp  = amp("knee");
+  const hipAmp   = amp("hip");
+  const elbowL   = amp("elbow_L");
+  const elbowR   = amp("elbow_R");
+  const shoulL   = amp("shoulder_L");
+  const shoulR   = amp("shoulder_R");
+  const trunkAmp = amp("trunk");
+
+  const legAmp  = Math.max(kneeAmp, hipAmp);
+  const armAmp  = Math.max(elbowL, elbowR, shoulL, shoulR);
+
+  if (Math.max(legAmp, armAmp, trunkAmp) < 20) return null; // no real movement
+
+  // ── Trunk dominant: hip-hinge exercises (deadlift) ──
+  // Deadlift has trunk_amp ≈ 50-80° and hip_amp > knee_amp.
+  // Threshold 0.9 so deadlift narrowly wins over squat even when trunk slightly < hip.
+  const trunkDominant = trunkAmp >= legAmp * 0.9 && trunkAmp >= armAmp && trunkAmp >= 45;
+  if (trunkDominant) return "deadlift_side";
+
+  // ── Arm dominant: curl / raise family ──
+  if (armAmp > legAmp) {
+    const shoulAmp = Math.max(shoulL, shoulR);
+    const elbowAmp = Math.max(elbowL, elbowR);
+    // Lateral raise: shoulder clearly leads elbow (arms stay mostly straight)
+    if (shoulAmp > elbowAmp * 1.3 && shoulAmp > 35) return "lateral_raise";
+    // Bicep curl: which arm reaches a more flexed (lower angle) position?
+    const minL = minOf("elbow_L"), minR = minOf("elbow_R");
+    if (minL !== null && minR !== null && Math.abs(minL - minR) > 20) {
+      return minL < minR ? "bicep_curl" : "right_bicep_curl";
+    }
+    return "both_bicep_curl";
+  }
+
+  // ── Leg dominant: squat family ──
+  if (orientGroup === "side") {
+    // Deadlift (leg-near-tie): hip hinge larger than knee bend + meaningful trunk lean
+    if (hipAmp > kneeAmp && trunkAmp > 35) return "deadlift_side";
+    // Barbell squat: shoulders held elevated throughout (DTW mean 92-97° vs squat ≤ 34°)
+    const shMean = avgFinite(meanOf("shoulder_L"), meanOf("shoulder_R"));
+    if (shMean !== null && shMean > 70) return "barbell_squat_side";
+    return "squat_side";
+  }
+  return "squat";
 }
 
 const AUTO_CLASSIFIER_SPECS = {
@@ -1039,9 +1169,9 @@ const AUTO_CLASSIFIER_SPECS = {
     work: 120,
     direction: "down",
     features: [
-      { id: "visible_knee", type: "active", weight: 0.36, minAmp: 22, strongAmp: 58, rest: 150, work: 124, direction: "down", fn: (lm) => avgFinite(classifierAngle(lm[23], lm[25], lm[27]), classifierAngle(lm[24], lm[26], lm[28])) },
-      { id: "visible_hip", type: "active", weight: 0.30, minAmp: 18, strongAmp: 52, rest: 150, work: 118, direction: "down", fn: (lm) => avgFinite(classifierAngle(lm[11], lm[23], lm[25]), classifierAngle(lm[12], lm[24], lm[26])) },
-      { id: "arms_quiet", type: "quiet", weight: 0.12, maxAmp: 30, fn: (lm) => avgFinite(classifierAngle(lm[11], lm[13], lm[15]), classifierAngle(lm[12], lm[14], lm[16])) },
+      { id: "visible_knee", type: "active", weight: 0.36, minAmp: 22, strongAmp: 58, rest: 150, work: 124, direction: "down", fn: (lm) => visBest(lm, 25, (l) => classifierAngle(l[23], l[25], l[27]), 26, (l) => classifierAngle(l[24], l[26], l[28])) },
+      { id: "visible_hip",  type: "active", weight: 0.30, minAmp: 18, strongAmp: 52, rest: 150, work: 118, direction: "down", fn: (lm) => visBest(lm, 23, (l) => classifierAngle(l[11], l[23], l[25]), 24, (l) => classifierAngle(l[12], l[24], l[26])) },
+      { id: "arms_quiet",   type: "quiet",  weight: 0.12, maxAmp: 30, fn: (lm) => visBest(lm, 13, (l) => classifierAngle(l[11], l[13], l[15]), 14, (l) => classifierAngle(l[12], l[14], l[16])) },
     ],
   },
   barbell_squat_side: {
@@ -1051,9 +1181,11 @@ const AUTO_CLASSIFIER_SPECS = {
     work: 120,
     direction: "down",
     features: [
-      { id: "visible_knee", type: "active", weight: 0.34, minAmp: 22, strongAmp: 58, rest: 150, work: 124, direction: "down", fn: (lm) => avgFinite(classifierAngle(lm[23], lm[25], lm[27]), classifierAngle(lm[24], lm[26], lm[28])) },
-      { id: "visible_hip", type: "active", weight: 0.30, minAmp: 18, strongAmp: 52, rest: 150, work: 118, direction: "down", fn: (lm) => avgFinite(classifierAngle(lm[11], lm[23], lm[25]), classifierAngle(lm[12], lm[24], lm[26])) },
-      { id: "arms_quiet", type: "quiet", weight: 0.10, maxAmp: 34, fn: (lm) => avgFinite(classifierAngle(lm[11], lm[13], lm[15]), classifierAngle(lm[12], lm[14], lm[16])) },
+      { id: "visible_knee",              type: "active", weight: 0.32, minAmp: 22, strongAmp: 58, rest: 150, work: 124, direction: "down", fn: (lm) => visBest(lm, 25, (l) => classifierAngle(l[23], l[25], l[27]), 26, (l) => classifierAngle(l[24], l[26], l[28])) },
+      { id: "visible_hip",               type: "active", weight: 0.28, minAmp: 18, strongAmp: 52, rest: 150, work: 118, direction: "down", fn: (lm) => visBest(lm, 23, (l) => classifierAngle(l[11], l[23], l[25]), 24, (l) => classifierAngle(l[12], l[24], l[26])) },
+      // barbell held on shoulders → hip→shoulder→elbow stays near 90° throughout (DTW mean: 92-97°)
+      { id: "shoulder_elevated_passive", type: "quiet",  weight: 0.18, maxAmp: 65, minAvg: 68, fn: (lm) => visBest(lm, 11, (l) => classifierAngle(l[23], l[11], l[13]), 12, (l) => classifierAngle(l[24], l[12], l[14])) },
+      { id: "arms_quiet",                type: "quiet",  weight: 0.08, maxAmp: 34, fn: (lm) => visBest(lm, 13, (l) => classifierAngle(l[11], l[13], l[15]), 14, (l) => classifierAngle(l[12], l[14], l[16])) },
     ],
   },
   both_bicep_curl: {
@@ -1080,9 +1212,9 @@ const AUTO_CLASSIFIER_SPECS = {
     work: 118,
     direction: "down",
     features: [
-      { id: "hip_hinge", type: "active", weight: 0.42, minAmp: 28, strongAmp: 70, rest: 158, work: 118, direction: "down", fn: (lm) => avgFinite(classifierAngle(lm[11], lm[23], lm[25]), classifierAngle(lm[12], lm[24], lm[26])) },
-      { id: "knee_quiet", type: "quiet", weight: 0.24, maxAmp: 34, minAvg: 116, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[25], lm[27]), classifierAngle(lm[24], lm[26], lm[28])) },
-      { id: "shoulders_quiet", type: "quiet", weight: 0.10, maxAmp: 30, fn: (lm) => avgFinite(classifierAngle(lm[23], lm[11], lm[13]), classifierAngle(lm[24], lm[12], lm[14])) },
+      { id: "hip_hinge",       type: "active", weight: 0.42, minAmp: 28, strongAmp: 70, rest: 158, work: 118, direction: "down", fn: (lm) => visBest(lm, 23, (l) => classifierAngle(l[11], l[23], l[25]), 24, (l) => classifierAngle(l[12], l[24], l[26])) },
+      { id: "knee_quiet",     type: "quiet",  weight: 0.24, maxAmp: 34, minAvg: 116, fn: (lm) => visBest(lm, 25, (l) => classifierAngle(l[23], l[25], l[27]), 26, (l) => classifierAngle(l[24], l[26], l[28])) },
+      { id: "shoulders_quiet", type: "quiet", weight: 0.10, maxAmp: 30, fn: (lm) => visBest(lm, 11, (l) => classifierAngle(l[23], l[11], l[13]), 12, (l) => classifierAngle(l[24], l[12], l[14])) },
     ],
   },
 };
@@ -1100,164 +1232,61 @@ function makeAutoClassifierState() {
     totalFrames: 0,
     classifiedFrames: 0,
     unknownFramesTotal: 0,
+    lastOrientGroup: null,
   };
 }
 
-function countAngleTurns(values) {
-  let prevSign = 0;
-  let turns = 0;
-  for (let i = 1; i < values.length; i++) {
-    const delta = values[i] - values[i - 1];
-    if (Math.abs(delta) < 4) continue;
-    const sign = Math.sign(delta);
-    if (prevSign && sign !== prevSign) turns += 1;
-    prevSign = sign;
-  }
-  return turns;
-}
-
-function scoreAnglePattern(values, spec, maxAmp = 1) {
-  if (!spec || values.length < 10) return { score: 0, amp: 0, matched: false };
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const amp = max - min;
-  const ampScore = Math.max(0, Math.min(1, (amp - spec.minAmp) / (spec.strongAmp - spec.minAmp)));
-  const sawRest = spec.direction === "down" ? max >= spec.rest : min <= spec.rest;
-  const sawWork = spec.direction === "down" ? min <= spec.work : max >= spec.work;
-  const rangeScore = (sawRest ? 0.5 : 0) + (sawWork ? 0.5 : 0);
-  const rhythmScore = Math.max(0, Math.min(1, countAngleTurns(values) / 2));
-  const dominanceScore = maxAmp > 0 ? Math.max(0, Math.min(1, (amp - maxAmp * 0.45) / Math.max(1, maxAmp * 0.55))) : 0;
-  const score = ampScore * 0.48 + rangeScore * 0.28 + rhythmScore * 0.12 + dominanceScore * 0.12;
-  return { score, amp, matched: score >= 0.58 };
-}
-
-function scoreQuietFeature(values, feature) {
-  if (!feature || values.length < 10) return { score: 0, amp: 0, matched: false };
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const amp = max - min;
-  const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const maxAmp = feature.maxAmp ?? 30;
-  const quietScore = Math.max(0, Math.min(1, 1 - Math.max(0, amp - maxAmp) / Math.max(1, maxAmp)));
-  const postureScore = feature.minAvg == null ? 1 : Math.max(0, Math.min(1, (avg - feature.minAvg) / 28));
-  const score = quietScore * 0.72 + postureScore * 0.28;
-  return { score, amp, matched: score >= 0.58 };
-}
-
-function scoreAutoExercise(id, values, maxAmp, featureValues = {}) {
-  const spec = AUTO_CLASSIFIER_SPECS[id];
-  if (!spec || values.length < 10) return { score: 0, confidence: 0, amp: 0, jointMatches: 0 };
-  const primary = scoreAnglePattern(values, spec, maxAmp);
-  let featureWeightTotal = 0;
-  let featureScoreTotal = 0;
-  let jointMatches = primary.matched ? 1 : 0;
-
-  for (const feature of spec.features ?? []) {
-    const fValues = featureValues[feature.id] ?? [];
-    const result = feature.type === "quiet"
-      ? scoreQuietFeature(fValues, feature)
-      : scoreAnglePattern(fValues, feature, maxAmp);
-    const weight = feature.weight ?? 0.1;
-    featureWeightTotal += weight;
-    featureScoreTotal += result.score * weight;
-    if (result.matched) jointMatches += 1;
-  }
-
-  const featureScore = featureWeightTotal ? featureScoreTotal / featureWeightTotal : 0;
-  const multiJointScore = Math.max(0, Math.min(1, jointMatches / Math.max(2, (spec.features?.length ?? 0) + 1)));
-  const score = primary.score * 0.50 + featureScore * 0.38 + multiJointScore * 0.12;
-  return {
-    score,
-    confidence: Math.round(score * 100),
-    amp: primary.amp,
-    jointMatches,
-  };
-}
-
-function classifyMotionWindow(classifier, rawLm, exMap, now) {
-  const angles = {};
-  const features = {};
-  for (const id of AUTO_CLASSIFIER_IDS) {
-    const rules = exMap?.[id];
-    if (!rules) continue;
-    const angle = rules.getKeyAngle(rawLm);
-    if (Number.isFinite(angle)) angles[id] = angle;
-    const spec = AUTO_CLASSIFIER_SPECS[id];
-    features[id] = {};
-    for (const feature of spec?.features ?? []) {
-      const value = feature.fn?.(rawLm);
-      if (Number.isFinite(value)) features[id][feature.id] = value;
-    }
-  }
-
-  classifier.samples.push({ t: now, angles, features });
-  classifier.samples = classifier.samples.filter((sample) => now - sample.t <= 2800);
+function classifyMotionWindow(classifier, rawLm, _exMap, now) {
+  classifier.samples.push({ t: now, joints: computeJointAngles(rawLm), orient: computeOrientSignals(rawLm) });
+  classifier.samples = classifier.samples.filter((s) => now - s.t <= 2800);
   classifier.totalFrames += 1;
 
-  const valuesById = Object.fromEntries(AUTO_CLASSIFIER_IDS.map((id) => [
-    id,
-    classifier.samples.map((sample) => sample.angles[id]).filter(Number.isFinite),
-  ]));
-  const maxAmp = Math.max(1, ...AUTO_CLASSIFIER_IDS.map((id) => {
-    const values = valuesById[id];
-    return values.length ? Math.max(...values) - Math.min(...values) : 0;
-  }));
-  const featureValuesById = Object.fromEntries(AUTO_CLASSIFIER_IDS.map((id) => [
-    id,
-    Object.fromEntries((AUTO_CLASSIFIER_SPECS[id]?.features ?? []).map((feature) => [
-      feature.id,
-      classifier.samples
-        .map((sample) => sample.features?.[id]?.[feature.id])
-        .filter(Number.isFinite),
-    ])),
-  ]));
+  // Level 1: orientation group (1.2 s window, resets state on group change)
+  const orientGroup = resolveOrientGroup(classifier.samples);
+  const prevGroup   = classifier.lastOrientGroup;
+  const groupChanged = orientGroup !== null && prevGroup !== null && orientGroup !== prevGroup;
+  if (groupChanged) {
+    classifier.samples        = classifier.samples.filter((s) => now - s.t <= 800);
+    classifier.candidateId    = null;
+    classifier.candidateFrames = 0;
+    classifier.activeId       = null;
+    classifier.activeSince    = 0;
+    classifier.activeConfidence = 0;
+    classifier.unknownFrames  = 0;
+  }
+  if (orientGroup) classifier.lastOrientGroup = orientGroup;
 
-  const ranked = AUTO_CLASSIFIER_IDS
-    .map((id) => ({ id, ...scoreAutoExercise(id, valuesById[id], maxAmp, featureValuesById[id]) }))
-    .sort((a, b) => b.score - a.score);
-  const top = ranked[0] ?? { id: null, score: 0, confidence: 0 };
-  const runnerUp = ranked[1] ?? { score: 0 };
+  // Level 2: primary-mover sub-classification
+  const classifiedId = classifyByPrimaryMover(classifier.samples, orientGroup);
 
-  if (!top.id || top.score < 0.58 || top.jointMatches < 2 || top.score - runnerUp.score < 0.06) {
+  if (!classifiedId) {
     classifier.unknownFrames += 1;
     classifier.unknownFramesTotal += 1;
     if (classifier.unknownFrames >= 18) {
-      classifier.activeId = null;
-      classifier.activeSince = 0;
+      classifier.activeId       = null;
+      classifier.activeSince    = 0;
       classifier.activeConfidence = 0;
     }
     return { id: classifier.activeId, confidence: classifier.activeConfidence, status: classifier.activeId ? "hold" : "unassigned" };
   }
 
   classifier.unknownFrames = 0;
-  if (classifier.activeId && classifier.activeId !== top.id) {
-    const activeRank = ranked.find((item) => item.id === classifier.activeId);
-    const holdActive = now - (classifier.activeSince || 0) < AUTO_SWITCH_HOLD_MS;
-    const switchingToSimpler = classifierActiveJointCount(top.id) < classifierActiveJointCount(classifier.activeId);
-    const activeStillPlausible = activeRank && activeRank.score >= 0.46 && activeRank.jointMatches >= 2;
-
-    if (holdActive || (switchingToSimpler && activeStillPlausible && top.score - activeRank.score < AUTO_SIMPLER_SWITCH_MARGIN)) {
-      classifier.candidateId = classifier.activeId;
-      classifier.candidateFrames = 0;
-      classifier.activeConfidence = Math.max(0, Math.round((activeRank?.score ?? classifier.activeConfidence / 100) * 100));
-      classifier.classifiedFrames += 1;
-      return { id: classifier.activeId, confidence: classifier.activeConfidence, status: "hold" };
-    }
-  }
-
-  if (classifier.candidateId === top.id) classifier.candidateFrames += 1;
-  else {
-    classifier.candidateId = top.id;
+  if (classifier.candidateId === classifiedId) {
+    classifier.candidateFrames += 1;
+  } else {
+    classifier.candidateId    = classifiedId;
     classifier.candidateFrames = 1;
   }
 
-  if (classifier.candidateFrames >= 5 && classifier.activeId !== top.id) {
+  if (classifier.candidateFrames >= 4 && classifier.activeId !== classifiedId) {
     if (classifier.activeId) classifier.switches += 1;
-    classifier.activeId = top.id;
+    classifier.activeId    = classifiedId;
     classifier.activeSince = now;
   }
-  classifier.activeConfidence = top.confidence;
-  if (classifier.activeId) classifier.classifiedFrames += 1;
+  if (classifier.activeId) {
+    classifier.classifiedFrames += 1;
+    classifier.activeConfidence = Math.min(95, 70 + classifier.candidateFrames * 3);
+  }
   return { id: classifier.activeId, confidence: classifier.activeConfidence, status: classifier.activeId ? "matched" : "scanning" };
 }
 
@@ -5456,14 +5485,14 @@ h2.ath-title {
 // ─── Screen Transition Variants ──────────────────────────────────────────────
 
 const pageVariants = {
-  initial: { scale: 0.88, opacity: 0, filter: "blur(10px)" },
+  initial: { opacity: 0, y: 10 },
   animate: {
-    scale: 1, opacity: 1, filter: "blur(0px)",
-    transition: { type: "spring", stiffness: 100, damping: 25, mass: 1.2 },
+    opacity: 1, y: 0,
+    transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
   },
   exit: {
-    scale: 1.12, opacity: 0, filter: "blur(14px)",
-    transition: { duration: 0.28, ease: [0.4, 0, 1, 1] },
+    opacity: 0,
+    transition: { duration: 0 },
   },
 };
 
@@ -5477,15 +5506,17 @@ const panelVariants = {
 
 // ─── AetherisWorld (persistent background) ───────────────────────────────────
 
-function AetherisWorld({ visualState, theme }) {
+function AetherisWorld({ visualState, theme, paused = false }) {
   const canvasRef = useRef(null);
   const rafRef = useRef(null);
   const stateRef = useRef(visualState);
   const themeRef = useRef(theme);
+  const pausedRef = useRef(paused);
   const particlesRef = useRef([]);
 
   useEffect(() => { stateRef.current = visualState; }, [visualState]);
   useEffect(() => { themeRef.current = theme; }, [theme]);
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -5525,6 +5556,8 @@ function AetherisWorld({ visualState, theme }) {
     let lastTime = performance.now();
 
     function tick(now) {
+      rafRef.current = requestAnimationFrame(tick);
+      if (pausedRef.current) return; // LiveScreen active — don't compete with camera rAF
       const dt = Math.min((now - lastTime) / 1000, 0.1); // seconds, capped
       lastTime = now;
 
@@ -5657,8 +5690,6 @@ function AetherisWorld({ visualState, theme }) {
         ctx.fillStyle = `rgba(255,255,255,${coreAlpha * 0.85})`;
         ctx.fill();
       });
-
-      rafRef.current = requestAnimationFrame(tick);
     }
 
     rafRef.current = requestAnimationFrame(tick);
@@ -6545,6 +6576,7 @@ function AutoClassifyScreen({ onClassified, onBack }) {
 // ─── PlanConfigScreen ─────────────────────────────────────────────────────────
 
 function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPlanGenerated }) {
+  const lottieAiCore = useLottieData(() => import("../assets/ai-core.json"));
   const [aiProfile, setAiProfile] = useState(() => loadAiCoreProfile(userName));
   const [draft, setDraft] = useState(() => loadAiCoreProfile(userName));
   const [focus, setFocus] = useState(() => new Set(loadAiCoreProfile(userName).focusTags));
@@ -6618,7 +6650,7 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
 
         <motion.div className="glass plan-ai-card" custom={0} variants={panelVariants} initial="hidden" animate="visible">
           <div className="plan-ai-header">
-            <span className="plan-ai-icon"><Lottie animationData={lottieAiCore} loop={true} style={{ width:100, height:100 }} /></span>
+            <span className="plan-ai-icon">{lottieAiCore && <Lottie animationData={lottieAiCore} loop={true} style={{ width:100, height:100 }} />}</span>
             <div>
               <span className="plan-ai-title">Kinetic Core</span>
               <div className="ai-core-status">{aiReady ? aiDecision.action_keyword : "ONBOARDING_REQUIRED"}</div>
@@ -7170,6 +7202,8 @@ function CardioCountdownScreen({ duration = 30, iotConnRef, onComplete, label = 
 }
 
 function HomeSetRestScreen({ ctx, route, onStartNext }) {
+  const lottieSetClear     = useLottieData(() => import("../assets/Set_clear.json"));
+  const lottieSqurtWalking = useLottieData(() => import("../assets/squrt_walking.json"));
   const [countdown, setCountdown] = useState(15);
   const [setClearDone, setSetClearDone] = useState(false);
   const step = route.steps[ctx.stepIdx - 1] ?? route.steps[0];
@@ -7214,12 +7248,10 @@ function HomeSetRestScreen({ ctx, route, onStartNext }) {
         </div>
 
         <div className="hw-kini-section">
-          {!setClearDone ? (
-            <Lottie animationData={lottieSetClear} loop={false}
-              onComplete={() => setSetClearDone(true)} style={{ height:120 }} />
-          ) : (
-            <Lottie animationData={lottieSqurtWalking} loop={true} style={{ height:120 }} />
-          )}
+          {!setClearDone
+            ? (lottieSetClear && <Lottie animationData={lottieSetClear} loop={false} onComplete={() => setSetClearDone(true)} style={{ height:120 }} />)
+            : (lottieSqurtWalking && <Lottie animationData={lottieSqurtWalking} loop={true} style={{ height:120 }} />)
+          }
           <div className="hw-kini-bubble">
             <div className="hw-kini-name">Kini</div>
             {ctx.kiniLine}
@@ -7240,6 +7272,8 @@ function HomeSetRestScreen({ ctx, route, onStartNext }) {
 }
 
 function HomeExerciseDoneScreen({ ctx, route, onContinue }) {
+  const lottiePathClear    = useLottieData(() => import("../assets/path_clear.json"));
+  const lottieSqurtWalking = useLottieData(() => import("../assets/squrt_walking.json"));
   const [pathClearDone, setPathClearDone] = useState(false);
   const results = ctx.setResults ?? [];
   const avgDtw = results.length ? results.reduce((s, r) => s + r.dtw, 0) / results.length : 0;
@@ -7286,12 +7320,10 @@ function HomeExerciseDoneScreen({ ctx, route, onContinue }) {
         </div>
 
         <div className="hw-kini-section">
-          {!pathClearDone ? (
-            <Lottie animationData={lottiePathClear} loop={false}
-              onComplete={() => setPathClearDone(true)} style={{ height:110 }} />
-          ) : (
-            <Lottie animationData={lottieSqurtWalking} loop={true} style={{ height:110 }} />
-          )}
+          {!pathClearDone
+            ? (lottiePathClear && <Lottie animationData={lottiePathClear} loop={false} onComplete={() => setPathClearDone(true)} style={{ height:110 }} />)
+            : (lottieSqurtWalking && <Lottie animationData={lottieSqurtWalking} loop={true} style={{ height:110 }} />)
+          }
           <div className="hw-kini-bubble">
             <div className="hw-kini-name">Kini</div>
             {adviceText}
@@ -7317,17 +7349,20 @@ function HomeExerciseDoneScreen({ ctx, route, onContinue }) {
 }
 
 function HomeRewardScreen({ ctx, route, onCollectReward }) {
+  const lottieCheeringRibbons = useLottieData(() => import("../assets/cheering_ribbons.json"));
+  const lottieTrophy          = useLottieData(() => import("../assets/Trophy.json"));
   const [showTrophy, setShowTrophy] = useState(false);
 
-  // Start trophy at the halfway point of cheering_ribbons
+  // Start trophy at the halfway point of cheering_ribbons (fires once data loads)
   useEffect(() => {
+    if (!lottieCheeringRibbons) return;
     const fr  = lottieCheeringRibbons.fr ?? 30;
     const op  = lottieCheeringRibbons.op ?? 90;
     const ip  = lottieCheeringRibbons.ip ?? 0;
-    const halfMs = ((op - ip) / fr) * 500; // half duration in ms
+    const halfMs = ((op - ip) / fr) * 500;
     const t = setTimeout(() => setShowTrophy(true), halfMs);
     return () => clearTimeout(t);
-  }, []);
+  }, [lottieCheeringRibbons]);
 
   const elapsed = ctx.startTime ? Math.round((Date.now() - ctx.startTime) / 1000) : 0;
   const mins = Math.floor(elapsed / 60);
@@ -7350,8 +7385,8 @@ function HomeRewardScreen({ ctx, route, onCollectReward }) {
         <div className="hw-kini-section">
           {/* Cheering + Trophy overlay: trophy starts at halfway point of cheering */}
           <div style={{ position:"relative", height:160, width:"100%", display:"flex", justifyContent:"center" }}>
-            <Lottie animationData={lottieCheeringRibbons} loop={false} style={{ height:160 }} />
-            {showTrophy && (
+            {lottieCheeringRibbons && <Lottie animationData={lottieCheeringRibbons} loop={false} style={{ height:160 }} />}
+            {showTrophy && lottieTrophy && (
               <div style={{ position:"absolute", inset:0, zIndex:2, display:"flex", justifyContent:"center", alignItems:"center" }}>
                 <Lottie animationData={lottieTrophy} loop={false} style={{ height:160 }} />
               </div>
@@ -7404,10 +7439,13 @@ function HomeRewardScreen({ ctx, route, onCollectReward }) {
 }
 
 function HomeWorkoutContainer({ ctx, onSelectRoute, onNodeTap, onContinueBetween, onCardioDone, onCollectReward, onExit, onStartNextSet, onExerciseContinue, onCardioPreviewReady, iotConnRef }) {
+  const lottieJumpingJack    = useLottieData(() => import("../assets/home_Jumping_Jack.json"));
+  const lottieSquatKick      = useLottieData(() => import("../assets/home_Squat_Kick.json"));
+  const lottieAvocadoWalking = useLottieData(() => import("../assets/Avocado_walking.json"));
+  const lottieBlueJumping    = useLottieData(() => import("../assets/blue_jumping.json"));
   const sub = ctx?.hwSub ?? "select";
   const route = ctx?.routeId ? HOME_ROUTES[ctx.routeId] : null;
 
-  // helper: resolve lottie data from step.lottie key
   const cardioLottie = (step) => {
     if (!step?.lottie) return null;
     if (step.lottie === "jumping_jack") return lottieJumpingJack;
@@ -7449,7 +7487,7 @@ function HomeWorkoutContainer({ ctx, onSelectRoute, onNodeTap, onContinueBetween
               <div className="hw-kini-name">Kini</div>
               {ctx?.kiniLine ?? pickKiniLine("selection")}
             </div>
-            <Lottie animationData={lottieAvocadoWalking} loop={true} style={{ height:180, width:180 }} />
+            {lottieAvocadoWalking && <Lottie animationData={lottieAvocadoWalking} loop={true} style={{ height:180, width:180 }} />}
           </div>
 
           <div className="hw-select-title">Choose Protocol</div>
@@ -7503,7 +7541,7 @@ function HomeWorkoutContainer({ ctx, onSelectRoute, onNodeTap, onContinueBetween
               <div className="hw-kini-name">Kini</div>
               {ctx.mapKiniLine ?? pickKiniLineForMap(ctx.routeId, {})}
             </div>
-            <Lottie animationData={lottieAvocadoWalking} loop={true} style={{ height:180, width:180 }} />
+            {lottieAvocadoWalking && <Lottie animationData={lottieAvocadoWalking} loop={true} style={{ height:180, width:180 }} />}
           </div>
 
           <div className="hw-node-list">
@@ -7580,7 +7618,7 @@ function HomeWorkoutContainer({ ctx, onSelectRoute, onNodeTap, onContinueBetween
 
           {/* blue_jumping: celebration animation between exercises */}
           <div style={{ display:"flex", justifyContent:"center" }}>
-            <Lottie animationData={lottieBlueJumping} loop={true} style={{ height:110, width:110 }} />
+            {lottieBlueJumping && <Lottie animationData={lottieBlueJumping} loop={true} style={{ height:110, width:110 }} />}
           </div>
 
           <div>
@@ -7636,6 +7674,7 @@ function HomeWorkoutContainer({ ctx, onSelectRoute, onNodeTap, onContinueBetween
 // Module-level MediaPipe singleton — survives StrictMode double-mount and screen transitions.
 // Never closed so re-entry is instant; only one PoseLandmarker instance ever exists per page.
 let _mpLandmarkerPromise = null;
+const LIVE_STREAM_ONLY_DIAGNOSTIC = false;
 
 function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, homeMode = false, targetReps = null, cardioMode = false, onMotionChange = null }) {
   const [reps, setReps] = useState(0);
@@ -7762,12 +7801,15 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
     let repPhase     = "rest";
     let consecErrFrames = 0;
     let processing   = false; // one frame at a time
+    let renderRafId; // cancelAnimationFrame handle for the 20 fps render loop
+    let startCameraStream = () => {}; // assigned by WiFi block; called by loadMP() after MP ready
     let lastDisplayLm = null;      // landmarks from most recent inference
     let prevDisplayLm = null;      // landmarks from inference before last (for lerp)
     let lastErrorBoneSet = new Set();
-    let lastInferenceTs = 0;       // timestamp of most recent inference
-    let prevInferenceTs = 0;       // timestamp of inference before last (for lerp)
-    const INFERENCE_INTERVAL_MS = 80; // ~7 fps inference
+    let lastInferenceTs = 0;       // timestamp when inference was submitted (rate limiter)
+    let lastResultTs    = 0;       // timestamp when last result arrived (lerp anchor)
+    let prevResultTs    = 0;       // timestamp when previous result arrived (lerp interval)
+    const INFERENCE_INTERVAL_MS = 125; // 5fps inference — matches camera frame rate
     let hintTimer    = null;
     let hudFrame     = 0;
     let highDtwStreak = 0;
@@ -7775,6 +7817,7 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
     let lastDtwScore = 0.5;
     let lastDtwUiAt = 0;
     let lastDtwUiValue = 0.5;
+    let lastClassUiAt = 0;  // throttle setClassification to ≤2fps to reduce React re-renders
     let targetProgress = 0;
     let lastProgressUiAt = 0;
     let lastProgressUiValue = 0;
@@ -7788,49 +7831,39 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
     let lastRowsUiAt = 0;
     const ERR_DEBOUNCE = 4;
 
+    // ── Frontend perf telemetry ───────────────────────────────────────────────
+    let _wsRx = 0, _drain = 0, _drainDrop = 0, _mpFrames = 0, _mpMsSum = 0, _wsCloses = 0, _renderFrames = 0;
+    let _perfTs = performance.now();
+    const _perfInterval = setInterval(() => {
+      const dt = (performance.now() - _perfTs) / 1000;
+      const mpAvg = _mpFrames > 0 ? (_mpMsSum / _mpFrames).toFixed(0) : '--';
+      console.log(
+        `[fe-perf] wsRxFps=${(_wsRx/dt).toFixed(1)} drainFps=${(_drain/dt).toFixed(1)}` +
+        ` dropFps=${(_drainDrop/dt).toFixed(1)} mpFps=${(_mpFrames/dt).toFixed(1)}` +
+        ` mpAvg=${mpAvg}ms renderFps=${(_renderFrames/dt).toFixed(1)} closes=${_wsCloses}`
+      );
+      _wsRx = _drain = _drainDrop = _mpFrames = _mpMsSum = _renderFrames = 0;
+      _wsCloses = 0;
+      _perfTs = performance.now();
+    }, 5000);
+
     const inferCanvas = document.createElement("canvas");
-    inferCanvas.width = 120; inferCanvas.height = 160;
+    inferCanvas.width = 176; inferCanvas.height = 240; // HQVGA 240×176 rotated to portrait
     const inferCtx = inferCanvas.getContext("2d", { willReadFrequently: true });
     let _mpTs = 0;
     const nextMpTs = () => { _mpTs = Math.max(performance.now(), _mpTs + 1); return _mpTs; };
 
-    // ── Lens undistortion — Web Worker path (fisheye theta model) ───────────
-    // LUT is built inside the worker; main thread only does getImageData + putImageData.
-    const _D = { k1:-0.38, k2:0.18, k3:0, p1:0, p2:0, fx:250, fy:250, cx:60, cy:80 };
+    // ── Pose inference Worker (undistortion off main thread) + MediaPipe ───────
+    // detectForVideo WASM stays on main thread (MediaPipe can't be bundled into Worker).
+    // Undistortion LUT remap (~3ms) runs in the Worker to keep onFrame fast.
+    let poseWorker      = null;
+    let poseWorkerReady = false;
+    let poseWorkerBusy  = false;
+
+    // Canvas that holds the undistorted frame, read by detectForVideo
     const _undistCanvas = document.createElement("canvas");
-    _undistCanvas.width = 120; _undistCanvas.height = 160;
+    _undistCanvas.width = 176; _undistCanvas.height = 240;
     const _undistCtx = _undistCanvas.getContext("2d", { willReadFrequently: true });
-
-    let _workerReady = false;
-    let _workerCallId = 0;
-    const _workerPending = new Map();
-    const _undistWorker = new Worker("/undistort.worker.js");
-    _undistWorker.onmessage = ({ data }) => {
-      if (data.type === "ready") { _workerReady = true; return; }
-      if (data.type === "result") {
-        const cb = _workerPending.get(data.id);
-        if (cb) { _workerPending.delete(data.id); cb(data.dstBuf); }
-      }
-    };
-    _undistWorker.postMessage({ type: "init", params: _D });
-
-    function _applyDistLUTAsync() {
-      const src = inferCtx.getImageData(0, 0, 120, 160);
-      if (!_workerReady) {
-        // Worker not yet initialised — skip undistortion this frame
-        _undistCtx.putImageData(src, 0, 0);
-        return Promise.resolve();
-      }
-      const srcBuf = src.data.buffer; // zero-copy transfer
-      const id = ++_workerCallId;
-      return new Promise((resolve) => {
-        _workerPending.set(id, (dstBuf) => {
-          _undistCtx.putImageData(new ImageData(new Uint8ClampedArray(dstBuf), 120, 160), 0, 0);
-          resolve();
-        });
-        _undistWorker.postMessage({ type: "undistort", id, srcBuf }, [srcBuf]);
-      });
-    }
     function getAutoConfirmations(id) {
       if (!autoMode || !id) return AUTO_REP_CONFIRMATIONS_REQUIRED;
       return Math.min(AUTO_REP_CONFIRMATIONS_REQUIRED, autoConfirmationsByExercise[id] ?? 0);
@@ -7892,307 +7925,135 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
     }
     const enc = new TextEncoder();
 
-    // Single frame handler: display raw feed + inference in one pass
+    // Single frame handler: inference dispatch only — renderLoop handles all drawing.
     async function onFrame(blob) {
       if (processing || cancelled) return;
-      processing = true;
-      try {
-        let bmp;
-        try { bmp = await createImageBitmap(blob); } catch { return; }
+      setIsReady(true);
 
-        const canvas = canvasRef.current;
-        if (!canvas) { bmp.close(); return; }
-        const W = canvas.offsetWidth || 300, H = canvas.offsetHeight || 400;
-        if (canvas.width !== W) canvas.width = W;
-        if (canvas.height !== H) canvas.height = H;
-        const ctx = canvas.getContext("2d");
-
-        setIsReady(true); // first frame → hide placeholder
-
-        hudFrame += 1;
-
-        const lsc = (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).skeleton;
-
-        // ── MediaPipe inference (skips silently until landmarker ready) ──────
-        // Time-gated: run inference at most every INFERENCE_INTERVAL_MS (≤4 fps).
-        // On skipped frames re-draw skeleton from cached landmarks — no GPU work needed.
-        const nowTs = performance.now();
-        const runInference = landmarker && smoother && drawSkeleton && exMap &&
-                             (nowTs - lastInferenceTs >= INFERENCE_INTERVAL_MS);
-        if (landmarker && smoother && drawSkeleton && exMap) {
-          // Pre-compute vidTransform here so both inference and cached-skeleton paths can use it
-          const effW = 120, effH = 160;
-          const skScale = Math.max(W / effW, H / effH);
-          const sdw = effW * skScale, sdh = effH * skScale;
-          const vt = { dx: (W - sdw) / 2, dy: (H - sdh) / 2, dw: sdw, dh: sdh };
-          const activeRulesForRender = activeExerciseId ? exMap[activeExerciseId] : exRules;
-
-          // Draw background + cached skeleton BEFORE starting inference.
-          // Fills the ~200ms async gap so the user sees skeleton instead of blank screen.
+      if (LIVE_STREAM_ONLY_DIAGNOSTIC) {
+        processing = true;
+        let bmp = null;
+        try {
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const W = canvas.offsetWidth || 300, H = canvas.offsetHeight || 400;
+          if (canvas.width !== W) canvas.width = W;
+          if (canvas.height !== H) canvas.height = H;
+          const ctx = canvas.getContext("2d");
+          const lsc = (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).skeleton;
+          try { bmp = await createImageBitmap(blob); } catch { return; }
+          if (cancelled) return;
           ctx.clearRect(0, 0, W, H);
           ctx.globalCompositeOperation = "source-over";
           ctx.fillStyle = lsc.bg;
           ctx.fillRect(0, 0, W, H);
-          if (lastDisplayLm) {
-            // Lerp between the two most recent inference results to smooth across the inference gap.
-            // t animates prev→last within the elapsed interval; clamps to 1.0 (hold-last) after.
-            const intervalMs = lastInferenceTs - prevInferenceTs;
-            const interpLm = (prevDisplayLm && intervalMs > 0)
-              ? (() => {
-                  const t = Math.min(1.0, (nowTs - prevInferenceTs) / intervalMs);
-                  return lastDisplayLm.map((lm, i) => {
-                    const p = prevDisplayLm[i];
-                    // Low-visibility joints (occluded/guessed) get a smaller lerp factor
-                    // so they stay near last known position instead of drifting to bad estimates.
-                    const minVis = Math.min(lm.visibility ?? 1, p.visibility ?? 1);
-                    const tw = t * Math.pow(minVis, 0.5);
-                    return { x: p.x + tw*(lm.x-p.x), y: p.y + tw*(lm.y-p.y),
-                             z: p.z + tw*(lm.z-p.z), visibility: p.visibility + t*(lm.visibility-p.visibility) };
-                  });
-                })()
-              : lastDisplayLm;
-            const cachedOpts = {
-              dtw: lastDtwScore, comboActive, frame: hudFrame, targetProgress,
-              errorBoneSet: lastErrorBoneSet,
-              keyJoints: (activeRulesForRender?.displayAngles ?? []).map((a) => a.joint).filter(Boolean),
-              colors: (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).renderer,
-            };
-            drawSkeleton(ctx, vt, interpLm, lastErrorBoneSet, cachedOpts);
-            if (!cardioMode && drawAngle && activeRulesForRender?.displayAngles?.length) {
-              drawAngle(ctx, vt, interpLm, activeRulesForRender, cachedOpts);
-            }
-          }
-
-          if (!runInference) {
-            bmp.close();
-            return;
-          }
-
-          // Canvas already shows cached skeleton — async inference gap is now covered.
-          // Rotate source into portrait inferCanvas and undistort (inference frames only)
-          inferCtx.clearRect(0, 0, 120, 160);
-          inferCtx.save();
-          inferCtx.translate(120, 0);
-          inferCtx.rotate(Math.PI / 2);
-          inferCtx.drawImage(bmp, 0, 0, 160, 120);
-          inferCtx.restore();
-
-          await _applyDistLUTAsync();
-          if (cancelled) { bmp.close(); return; }
-
-          lastInferenceTs = performance.now();
-          const result = landmarker.detectForVideo(_undistCanvas, nextMpTs());
-          if (result.landmarks?.length) {
-            const rawLm    = result.landmarks[0];
-            const smoothLm  = smoother.smooth(rawLm);
-            // Keep head up: if nose is below hip midpoint (camera upside-down), flip y
-            const noseY    = smoothLm[0]?.y ?? 0;
-            const hipMidY  = ((smoothLm[23]?.y ?? 0) + (smoothLm[24]?.y ?? 0)) / 2;
-            const flipped  = noseY > hipMidY + 0.05; // +0.05 dead-zone avoids spurious flip
-            const displayLm = flipped ? smoothLm.map(p => ({ ...p, y: 1 - p.y })) : smoothLm;
-            const now = performance.now();
-
-            if (autoMode && !cardioMode) {
-              const nextClass = classifyMotionWindow(classifierStatsRef.current, rawLm, exMap, now);
-              if (nextClass.id !== activeExerciseId) {
-                activeExerciseId = nextClass.id;
-                exRules = activeExerciseId ? exMap[activeExerciseId] : null;
-                repPhase = "rest";
-                chargeProgress = 0;
-                chargeLocked = false;
-                const carryProgress = autoDisplayProgress(activeExerciseId, 0);
-                lastProgressUiValue = carryProgress;
-                setRepCharge({ value: carryProgress, resetting: false });
-                publishAutoGate(activeExerciseId, 0);
-                publishAutoActionRow(activeExerciseId, 0, true);
-              }
-              const uiClass = {
-                id: activeExerciseId,
-                confidence: nextClass.confidence,
-                status: activeExerciseId ? "matched" : nextClass.status,
-              };
-              const prev = classificationRef.current;
-              if (prev.id !== uiClass.id || prev.status !== uiClass.status || Math.abs(prev.confidence - uiClass.confidence) >= 4) {
-                classificationRef.current = uiClass;
-                setClassification(uiClass);
-              }
-            }
-
-            const activeRules = activeRulesForRender;
-            const errorBoneSet = new Set();
-            if (activeRules) {
-              // Rep state machine
-              const keyAngle = activeRules.getKeyAngle(rawLm);
-              // Sample for post-session chart (1 per 3 frames, max 300 pts)
-              if (++angleFrameN % 3 === 0 && keyAnglesRef.current.length < 300) {
-                keyAnglesRef.current.push(Math.round(keyAngle));
-              }
-              targetProgress = movementProgress(activeExerciseId, keyAngle);
-              publishAutoGate(activeExerciseId, chargeProgress);
-              publishAutoActionRow(activeExerciseId, chargeProgress);
-              if (!chargeLocked) {
-                chargeProgress = Math.max(chargeProgress, targetProgress);
-                const displayCharge = autoDisplayProgress(activeExerciseId, chargeProgress);
-                publishAutoActionRow(activeExerciseId, chargeProgress);
-                if (chargeProgress >= 0.98) {
-                  chargeLocked = true;
-                  chargeProgress = 1;
-                  const lockedDisplayCharge = autoDisplayProgress(activeExerciseId, 1);
-                  lastProgressUiAt = now;
-                  lastProgressUiValue = lockedDisplayCharge;
-                  setRepCharge({ value: lockedDisplayCharge, resetting: false });
-                  publishAutoActionRow(activeExerciseId, 1, true);
-                  if (chargeResetTimer) clearTimeout(chargeResetTimer);
-                  if (!autoMode || getAutoConfirmations(activeExerciseId) >= AUTO_REP_CONFIRMATIONS_REQUIRED) {
-                    chargeResetTimer = setTimeout(() => {
-                      lastProgressUiValue = 0;
-                      setRepCharge({ value: 0, resetting: true });
-                    }, 260);
-                  }
-                } else if (now - lastProgressUiAt > 110 && Math.abs(displayCharge - lastProgressUiValue) > 0.018) {
-                  lastProgressUiAt = now;
-                  lastProgressUiValue = displayCharge;
-                  setRepCharge({ value: displayCharge, resetting: false });
-                }
-              } else if (targetProgress < 0.25) {
-                chargeLocked = false;
-                chargeProgress = 0;
-                const displayCharge = autoDisplayProgress(activeExerciseId, 0);
-                if (now - lastProgressUiAt > 110 && Math.abs(displayCharge - lastProgressUiValue) > 0.018) {
-                  lastProgressUiAt = now;
-                  lastProgressUiValue = displayCharge;
-                  setRepCharge({ value: displayCharge, resetting: false });
-                  publishAutoActionRow(activeExerciseId, 0);
-                }
-              }
-              if (repPhase === "rest" && activeRules.workCond(keyAngle)) repPhase = "work";
-              else if (repPhase === "work" && activeRules.restCond(keyAngle)) {
-                repPhase = "rest";
-                let shouldCountRep = Boolean(activeExerciseId);
-                if (autoMode && activeExerciseId) {
-                  const confirmed = getAutoConfirmations(activeExerciseId);
-                  shouldCountRep = confirmed >= AUTO_REP_CONFIRMATIONS_REQUIRED;
-                  if (!shouldCountRep) {
-                    const nextConfirmed = Math.min(AUTO_REP_CONFIRMATIONS_REQUIRED, confirmed + 1);
-                    autoConfirmationsByExercise[activeExerciseId] = nextConfirmed;
-                    if (nextConfirmed >= AUTO_REP_CONFIRMATIONS_REQUIRED) {
-                      const credit = AUTO_REP_CONFIRMATIONS_REQUIRED;
-                      repsByExerciseRef.current[activeExerciseId] = (repsByExerciseRef.current[activeExerciseId] ?? 0) + credit;
-                      setReps((r) => {
-                        if (navigator.vibrate) navigator.vibrate(50);
-                        return r + credit;
-                      });
-                    }
-                    publishAutoGate(activeExerciseId, 0);
-                    publishAutoActionRow(activeExerciseId, 0, true);
-                    const displayCharge = autoDisplayProgress(activeExerciseId, 0);
-                    lastProgressUiValue = displayCharge;
-                    setRepCharge({ value: displayCharge, resetting: false });
-                  } else {
-                    lastProgressUiValue = 0;
-                    setRepCharge({ value: 0, resetting: true });
-                  }
-                }
-                if (shouldCountRep && activeExerciseId) {
-                  repsByExerciseRef.current[activeExerciseId] = (repsByExerciseRef.current[activeExerciseId] ?? 0) + 1;
-                  publishAutoActionRow(activeExerciseId, 0, true);
-                  setReps((r) => { if (navigator.vibrate) navigator.vibrate(50); return r + 1; });
-                }
-              }
-
-            // Form checks
-            const activeHints  = [];
-            let frameErr = false;
-            for (const check of (activeRules.checks ?? [])) {
-              if (!check.valid(check.getVal(rawLm), repPhase)) {
-                check.bones.forEach(([a, b]) => errorBoneSet.add(`${Math.min(a,b)}_${Math.max(a,b)}`));
-                activeHints.push(check.hint);
-                frameErr = true;
-              }
-            }
-            consecErrFrames = frameErr ? Math.min(consecErrFrames + 1, ERR_DEBOUNCE) : 0;
-            if (consecErrFrames >= ERR_DEBOUNCE && activeHints.length) {
-              setHint(activeHints[0]);
-              if (hintTimer) clearTimeout(hintTimer);
-                hintTimer = setTimeout(() => setHint(null), 3000);
-            }
-            // Live DTW proxy: form-check pass/fail smoothed with EMA (α=0.15).
-            // Raw random jitter removed — was causing comboActive/aurora to oscillate
-            // every few frames even when form was stable.
-            const rawDtw = frameErr ? 0.42 : 0.82;
-            lastDtwScore = lastDtwScore * 0.85 + rawDtw * 0.15;
-            highDtwStreak = lastDtwScore > 0.88 ? Math.min(6, highDtwStreak + 1) : Math.max(0, highDtwStreak - 1);
-            comboActive = highDtwStreak >= 5;
-            if (now - lastDtwUiAt > 180 || Math.abs(lastDtwScore - lastDtwUiValue) > 0.08) {
-              lastDtwUiAt = now;
-              lastDtwUiValue = lastDtwScore;
-              setDtw(lastDtwScore);
-            }
-            } else {
-              targetProgress = 0;
-              chargeProgress = Math.max(0, chargeProgress * 0.92);
-              if (performance.now() - lastProgressUiAt > 180 && lastProgressUiValue !== 0) {
-                lastProgressUiAt = performance.now();
-                lastProgressUiValue = 0;
-                setRepCharge({ value: 0, resetting: false });
-              }
-            }
-
-            // vt is computed above (shared with cached-skeleton path)
-            const hudOpts = {
-              dtw: lastDtwScore,
-              comboActive,
-              frame: hudFrame,
-              targetProgress,
-              errorBoneSet,
-              keyJoints: (activeRules?.displayAngles ?? []).map((angle) => angle.joint).filter((joint) => joint != null),
-              colors: (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).renderer,
-            };
-            prevDisplayLm = lastDisplayLm;
-            prevInferenceTs = lastInferenceTs;
-            lastDisplayLm = displayLm;
-            lastErrorBoneSet = errorBoneSet;
-            // Redraw background to replace the pre-inference cached skeleton with fresh result
-            ctx.clearRect(0, 0, W, H);
-            ctx.fillStyle = lsc.bg;
-            ctx.fillRect(0, 0, W, H);
-            drawSkeleton(ctx, vt, displayLm, errorBoneSet, hudOpts);
-            if (!cardioMode && drawAngle && activeRules?.displayAngles?.length) drawAngle(ctx, vt, displayLm, activeRules, hudOpts);
-
-            // Cardio mode: motion detection via key-landmark displacement
-            // Only check wrists(15,16), ankles(27,28), hips(23,24) — 6 landmarks that
-            // move most during cardio. Stationary jitter on these is ~0.01-0.02/frame;
-            // actual cardio movement is > 0.04/frame on average for these points.
-            if (cardioMode && onMotionChangeRef.current) {
-              if (prevCardioLm) {
-                const KEY_LM = [15, 16, 23, 24, 27, 28];
-                let disp = 0;
-                for (const i of KEY_LM) {
-                  if (rawLm[i] && prevCardioLm[i]) {
-                    disp += Math.abs(rawLm[i].x - prevCardioLm[i].x) + Math.abs(rawLm[i].y - prevCardioLm[i].y);
-                  }
-                }
-                if (disp / KEY_LM.length > 0.028) {
-                  onMotionChangeRef.current(true);
-                  clearTimeout(cardioStaleTimer);
-                  cardioStaleTimer = setTimeout(() => onMotionChangeRef.current?.(false), 2500);
-                }
-              }
-              prevCardioLm = rawLm;
-            }
-          }
-        } else {
-          // MP not loaded yet — ensure a dark background is always shown
-          if (!comboActive) ctx.clearRect(0, 0, W, H);
-          ctx.fillStyle = lsc.bg;
-          ctx.fillRect(0, 0, W, H);
+          const scale = Math.max(H / bmp.width, W / bmp.height);
+          const dw = bmp.width * scale;
+          const dh = bmp.height * scale;
+          ctx.save();
+          ctx.translate(W / 2, H / 2);
+          ctx.rotate(Math.PI / 2);
+          ctx.drawImage(bmp, -dw / 2, -dh / 2, dw, dh);
+          ctx.restore();
+        } finally {
+          if (bmp) bmp.close();
+          processing = false;
         }
+        return;
+      }
 
-        bmp.close();
+      const nowTs = performance.now();
+      const runInference = poseWorkerReady && landmarker && !poseWorkerBusy &&
+                           smoother && drawSkeleton && exMap &&
+                           (nowTs - lastInferenceTs >= INFERENCE_INTERVAL_MS);
+      if (!runInference) return;
+
+      processing = true;
+      let bmp = null;
+      try {
+        try { bmp = await createImageBitmap(blob); } catch { return; }
+        if (cancelled) return;
+        inferCtx.clearRect(0, 0, 176, 240);
+        inferCtx.save();
+        inferCtx.translate(176, 0);
+        inferCtx.rotate(Math.PI / 2);
+        inferCtx.drawImage(bmp, 0, 0, 240, 176);
+        inferCtx.restore();
+
+        lastInferenceTs = performance.now();
+        poseWorkerBusy  = true;
+        const imgData = inferCtx.getImageData(0, 0, 176, 240);
+        poseWorker.postMessage(
+          { type: "undistort", pixBuf: imgData.data.buffer, ts: lastInferenceTs },
+          [imgData.data.buffer]
+        );
       } finally {
+        if (bmp) bmp.close();
         processing = false;
       }
     }
+
+    // ── Skeleton render loop — shared by WiFi and BLE, 20 fps interpolation ─────
+    // Pure draw only: no WASM, no createImageBitmap. Runs regardless of transport.
+    let lastRenderTs2 = 0;
+    (function renderLoop(ts = 0) {
+      renderRafId = requestAnimationFrame(renderLoop);
+      if (cancelled) return;
+      if (ts - lastRenderTs2 < 40) return; // 20 fps cap — smooth interpolation over 5fps inference results
+      lastRenderTs2 = ts;
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const W = canvas.offsetWidth || 300, H = canvas.offsetHeight || 400;
+      if (canvas.width !== W) canvas.width = W;
+      if (canvas.height !== H) canvas.height = H;
+      const ctx = canvas.getContext("2d");
+      const lsc = (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).skeleton;
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = lsc.bg;
+      ctx.fillRect(0, 0, W, H);
+
+      if (!lastDisplayLm || !drawSkeleton) return;
+
+      hudFrame += 1;
+      _renderFrames++;
+      const nowTs = performance.now();
+      const intervalMs = lastResultTs - prevResultTs;
+      // Forward extrapolation: immediately show latest result, then predict ahead by velocity.
+      // Old formula interpolated prev→current, meaning display lagged one full interval behind.
+      const interpLm = (prevDisplayLm && intervalMs > 5 && intervalMs < 800)
+        ? (() => {
+            const elapsed = nowTs - lastResultTs;
+            // Extrapolate up to 70% of one interval ahead to avoid overshoot jitter.
+            const tPos = Math.max(0, Math.min(elapsed / intervalMs, 0.7));
+            return lastDisplayLm.map((lm, i) => {
+              const p = prevDisplayLm[i];
+              const vis = Math.min(lm.visibility ?? 1, p.visibility ?? 1);
+              const tw = tPos * Math.pow(vis, 0.5);
+              // velocity = lm - p; extrapolate forward from lm
+              return { x: lm.x + tw*(lm.x-p.x), y: lm.y + tw*(lm.y-p.y),
+                       z: lm.z + tw*(lm.z-p.z), visibility: lm.visibility ?? 1 };
+            });
+          })()
+        : lastDisplayLm;
+
+      const effW = 176, effH = 240;
+      const skScale = Math.max(W / effW, H / effH);
+      const vt = { dx: (W - effW*skScale)/2, dy: (H - effH*skScale)/2, dw: effW*skScale, dh: effH*skScale };
+      const activeRulesForRender = activeExerciseId ? exMap?.[activeExerciseId] : exRules;
+      const hudOpts = {
+        dtw: lastDtwScore, comboActive, frame: hudFrame, targetProgress,
+        errorBoneSet: lastErrorBoneSet,
+        keyJoints: (activeRulesForRender?.displayAngles ?? []).map((a) => a.joint).filter(Boolean),
+        colors: (THEME_COLORS[theme] ?? THEME_COLORS.deep_space).renderer,
+      };
+      drawSkeleton(ctx, vt, interpLm, lastErrorBoneSet, hudOpts);
+      if (!cardioMode && drawAngle && activeRulesForRender?.displayAngles?.length) {
+        drawAngle(ctx, vt, interpLm, activeRulesForRender, hudOpts);
+      }
+    })();
 
     // ── Start camera stream immediately (raw feed before MP loads) ────────────
     if (conn.mode === "ble" && conn.bleTxChar && conn.bleRxChar) {
@@ -8260,90 +8121,86 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
       }
 
     } else if (conn.mode === "wifi" && conn.url) {
-      // 50 ms delay avoids React StrictMode double-mount closing a CONNECTING socket.
-      const WIFI_CAM = "res=320x240&q=40&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0&vflip=1&hmirror=0";
+      // HTTPS → ws:// is blocked as mixed content on both Safari and Firefox iOS.
+      const WIFI_CAM = "res=240x176&q=20&brightness=0&contrast=1&saturation=0&sharpness=1&ae_level=0&vflip=1&hmirror=0";
       const wsToken = localStorage.getItem("kl-ws-token") || "";
       const wsUrl = conn.url.replace(/^http(s?):\/\//i, (_, s) => `ws${s}://`) + "/ws" + (wsToken ? `?token=${wsToken}` : "");
 
-      // Latest-frame ref: onmessage just stores the newest blob; rAF drain loop consumes it.
-      const latestBlobRef = { current: null };
-      let sock = null;
-      let frameTimeoutId = null;
-      let retryCount = 0;
-
-      function openSock() {
-        if (cancelled) return;
-        // HTTPS → ws:// is blocked as mixed content on both Safari and Firefox iOS.
-        if (window.location.protocol === "https:" && wsUrl.startsWith("ws://")) {
-          setHint("HTTPS blocks camera stream (ws://). Use BLE or open the app over HTTP.");
-          return;
-        }
-        try {
-          sock = new WebSocket(wsUrl);
-        } catch {
-          setHint("WebSocket blocked (mixed content). Try BLE or serve app over HTTP.");
-          return;
-        }
-        sock.binaryType = "arraybuffer";
-
-        let lastFrameAt = 0; // tracks actual frame receipt time (latestBlobRef is cleared by drainLoop)
-
-        sock.onopen = () => {
-          // Re-send cam config — the /cam fetch before WS open may arrive before camera is ready.
-          fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
-          // If no frame arrives within 10 s, retry the WebSocket.
-          clearTimeout(frameTimeoutId);
-          frameTimeoutId = setTimeout(() => {
-            if (cancelled || lastFrameAt > 0) return;
-            retryCount++;
-            sock.onmessage = sock.onerror = sock.onclose = null;
-            sock.close();
-            if (retryCount <= 2) {
-              setHint(retryCount === 1 ? "Camera starting… retrying stream" : "Stream slow — reconnecting…");
-              setTimeout(openSock, 800);
-            } else {
-              setHint("No video from camera. Check device WiFi, then go Back and retry.");
-            }
-          }, 10000);
-        };
-
-        sock.onmessage = ({ data }) => {
-          lastFrameAt = performance.now(); // first frame — stream is healthy
-          clearTimeout(frameTimeoutId);
-          latestBlobRef.current = new Blob([data], { type: "image/jpeg" });
-        };
-        sock.onerror = () => { if (!cancelled) console.warn("[LiveScreen] WS error"); };
+      if (window.location.protocol === "https:" && wsUrl.startsWith("ws://")) {
+        setHint("HTTPS blocks camera stream (ws://). Use BLE or open the app over HTTP.");
+        return;
       }
 
-      const wsTimer = setTimeout(() => {
-        if (cancelled) return;
-        fetch(`${conn.url}/cam?${WIFI_CAM}`, { signal: AbortSignal.timeout(3000) }).catch(() => {});
-        openSock();
-      }, 50);
+      // Latest-frame ref: worker.onmessage stores newest blob; rAF drain loop consumes it.
+      const latestBlobRef = { current: null };
+      let worker = null;
+      const camConfigUrl = `${conn.url}/cam?${WIFI_CAM}`;
 
-      // rAF drain — picks up only the newest frame when main thread is free
+      // rAF drain — no-ops until camera WS opens (latestBlobRef stays null during MP init)
       (function drainLoop() {
         if (!cancelled) requestAnimationFrame(drainLoop);
         const blob = latestBlobRef.current;
-        if (blob && !processing && !cancelled) {
-          latestBlobRef.current = null;
-          onFrame(blob);
+        if (blob && !cancelled) {
+          if (processing) {
+            _drainDrop++;
+          } else {
+            latestBlobRef.current = null;
+            _drain++;
+            onFrame(blob);
+          }
         }
       })();
 
+      // Camera WS is opened by loadMP() AFTER MediaPipe setGraph resolves (~10s freeze).
+      // Opening here would cause WS timeout during the freeze, accumulating stale ESP32 streams.
+      startCameraStream = () => {
+        if (cancelled) return;
+        worker = new Worker(
+          new URL("../workers/camera-stream.worker.js", import.meta.url),
+          { type: "module" }
+        );
+        worker.onmessage = ({ data: msg }) => {
+          if (cancelled) return;
+          switch (msg.type) {
+            case "open": break; // /cam config sent by worker on WS open
+            case "frame":
+              latestBlobRef.current = new Blob([msg.buffer], { type: "image/jpeg" });
+              _wsRx++;
+              break;
+            case "retry":
+              setHint(msg.count === 1 ? "Camera starting… retrying stream" : "Stream slow — reconnecting…");
+              break;
+            case "no_frame":
+              setHint("No video from camera. Check device WiFi, then go Back and retry.");
+              break;
+            case "error":
+              console.warn("[LiveScreen] WS error");
+              break;
+            case "close":
+              _wsCloses++;
+              console.warn(`[LiveScreen] WS close code=${msg.code} clean=${msg.clean} reason=${msg.reason}`);
+              break;
+          }
+        };
+        worker.postMessage({ type: "connect", wsUrl, camConfigUrl });
+      };
+
       streamCleanup = () => {
-        clearTimeout(wsTimer);
-        clearTimeout(frameTimeoutId);
         latestBlobRef.current = null;
-        if (sock) {
-          sock.onmessage = sock.onerror = sock.onclose = null;
-          if (sock.readyState === WebSocket.OPEN || sock.readyState === WebSocket.CONNECTING) sock.close();
+        if (worker) {
+          // Capture reference before nulling — postMessage + terminate in same tick causes a
+          // race where terminate() kills the worker before disconnect can send the WS close frame,
+          // leaving ESP32 with a stale open connection. Give the worker 300ms to flush.
+          const w = worker;
+          worker = null;
+          w.postMessage({ type: "disconnect" });
+          setTimeout(() => w.terminate(), 300);
         }
         if (hintTimer) clearTimeout(hintTimer);
       };
     }
 
-    // ── Load MediaPipe + libs in parallel (never blocks raw feed) ────────────
+    // ── Load exercise libs + launch pose inference Worker ────────────────────
     async function loadMP() {
       const [{ EXERCISES: EX_MAP }, { createSmoother }, { drawSkeleton: ds, drawAngleOnCanvas: da }] = await Promise.all([
         import("../../lib/exercise-rules.js"),
@@ -8353,38 +8210,236 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
       if (cancelled) return;
       exMap        = EX_MAP;
       exRules      = exercise?.id ? EX_MAP[exercise.id] : null;
-      smoother     = createSmoother(0.45);
+      smoother     = createSmoother(0.72); // tuned for 5fps: τ≈157ms vs 334ms at 0.45
       drawSkeleton = ds;
       drawAngle    = da;
 
+      // Load MediaPipe on main thread (can't bundle it into a Worker with Vite)
       if (!_mpLandmarkerPromise) {
         const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
         const vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
         _mpLandmarkerPromise = PoseLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: "/mediapipe/models/pose_landmarker_lite.task", delegate: "GPU" },
+          baseOptions: { modelAssetPath: "/mediapipe/models/pose_landmarker_full.task", delegate: "GPU" },
           runningMode: "VIDEO",
           numPoses: 1,
         });
       }
       const lm = await _mpLandmarkerPromise;
-      if (cancelled) return; // singleton — never close
+      if (cancelled) return;
       landmarker = lm;
       landmarkerRef.current = lm;
       setMpStatus("ready");
+
+      // Launch undistortion Worker BEFORE opening camera stream so poseWorkerReady=true
+      // by the time the first camera frame arrives. Previously, early frames were silently
+      // discarded because poseWorkerBusy/poseWorkerReady checks failed on first frames.
+      poseWorker = new Worker(
+        new URL("../workers/pose-inference.worker.js", import.meta.url),
+        { type: "module" }
+      );
+
+      poseWorker.onerror = (e) => console.error("[PoseWorker]", e.message);
+
+      poseWorker.onmessage = ({ data: msg }) => {
+        if (cancelled) return;
+
+        if (msg.type === "ready") {
+          poseWorkerReady = true;
+          return;
+        }
+
+        if (msg.type !== "undistorted") return;
+
+        // Undistorted pixels back from Worker — run detectForVideo on main thread
+        _undistCtx.putImageData(
+          new ImageData(new Uint8ClampedArray(msg.pixBuf), 176, 240), 0, 0
+        );
+
+        const _t0 = performance.now();
+        const result = landmarker.detectForVideo(_undistCanvas, nextMpTs());
+        _mpMsSum += performance.now() - _t0;
+        _mpFrames++;
+
+        poseWorkerBusy = false; // ready for next frame after WASM completes
+
+        if (!result.landmarks?.length) return;
+
+        const rawLm    = result.landmarks[0];
+        const smoothLm = smoother.smooth(rawLm);
+        const noseY    = smoothLm[0]?.y ?? 0;
+        const hipMidY  = ((smoothLm[23]?.y ?? 0) + (smoothLm[24]?.y ?? 0)) / 2;
+        const flipped  = noseY > hipMidY + 0.05;
+        const displayLm = flipped ? smoothLm.map(p => ({ ...p, y: 1 - p.y })) : smoothLm;
+        const now = performance.now();
+
+        if (autoMode && !cardioMode) {
+          const nextClass = classifyMotionWindow(classifierStatsRef.current, rawLm, exMap, now);
+          if (nextClass.id !== activeExerciseId) {
+            activeExerciseId = nextClass.id;
+            exRules = activeExerciseId ? exMap[activeExerciseId] : null;
+            repPhase = "rest"; chargeProgress = 0; chargeLocked = false;
+            const carryProgress = autoDisplayProgress(activeExerciseId, 0);
+            lastProgressUiValue = carryProgress;
+            setRepCharge({ value: carryProgress, resetting: false });
+            publishAutoGate(activeExerciseId, 0);
+            publishAutoActionRow(activeExerciseId, 0, true);
+          }
+          const uiClass = {
+            id: activeExerciseId,
+            confidence: nextClass.confidence,
+            status: activeExerciseId ? "matched" : nextClass.status,
+          };
+          const prev = classificationRef.current;
+          // Throttle to ≤2fps: setClassification triggers a full React re-render which
+          // delays TCP drain and causes ESP32 backpressure_skips at 5fps inference rate.
+          if ((prev.id !== uiClass.id || prev.status !== uiClass.status || Math.abs(prev.confidence - uiClass.confidence) >= 4)
+              && (now - lastClassUiAt > 500)) {
+            lastClassUiAt = now;
+            classificationRef.current = uiClass;
+            setClassification(uiClass);
+          }
+        }
+
+        const activeRules  = activeExerciseId ? exMap[activeExerciseId] : exRules;
+        const errorBoneSet = new Set();
+        if (activeRules) {
+          const keyAngle = activeRules.getKeyAngle(rawLm);
+          if (++angleFrameN % 3 === 0 && keyAnglesRef.current.length < 300) {
+            keyAnglesRef.current.push(Math.round(keyAngle));
+          }
+          targetProgress = movementProgress(activeExerciseId, keyAngle);
+          publishAutoGate(activeExerciseId, chargeProgress);
+          publishAutoActionRow(activeExerciseId, chargeProgress);
+          if (!chargeLocked) {
+            chargeProgress = Math.max(chargeProgress, targetProgress);
+            const displayCharge = autoDisplayProgress(activeExerciseId, chargeProgress);
+            publishAutoActionRow(activeExerciseId, chargeProgress);
+            if (chargeProgress >= 0.98) {
+              chargeLocked = true; chargeProgress = 1;
+              const lockedDisplayCharge = autoDisplayProgress(activeExerciseId, 1);
+              lastProgressUiAt = now; lastProgressUiValue = lockedDisplayCharge;
+              setRepCharge({ value: lockedDisplayCharge, resetting: false });
+              publishAutoActionRow(activeExerciseId, 1, true);
+              if (chargeResetTimer) clearTimeout(chargeResetTimer);
+              if (!autoMode || getAutoConfirmations(activeExerciseId) >= AUTO_REP_CONFIRMATIONS_REQUIRED) {
+                chargeResetTimer = setTimeout(() => { lastProgressUiValue = 0; setRepCharge({ value: 0, resetting: true }); }, 260);
+              }
+            } else if (now - lastProgressUiAt > 110 && Math.abs(displayCharge - lastProgressUiValue) > 0.018) {
+              lastProgressUiAt = now; lastProgressUiValue = displayCharge;
+              setRepCharge({ value: displayCharge, resetting: false });
+            }
+          } else if (targetProgress < 0.25) {
+            chargeLocked = false; chargeProgress = 0;
+            const displayCharge = autoDisplayProgress(activeExerciseId, 0);
+            if (now - lastProgressUiAt > 110 && Math.abs(displayCharge - lastProgressUiValue) > 0.018) {
+              lastProgressUiAt = now; lastProgressUiValue = displayCharge;
+              setRepCharge({ value: displayCharge, resetting: false });
+              publishAutoActionRow(activeExerciseId, 0);
+            }
+          }
+          if (repPhase === "rest" && activeRules.workCond(keyAngle)) repPhase = "work";
+          else if (repPhase === "work" && activeRules.restCond(keyAngle)) {
+            repPhase = "rest";
+            let shouldCountRep = Boolean(activeExerciseId);
+            if (autoMode && activeExerciseId) {
+              const confirmed = getAutoConfirmations(activeExerciseId);
+              shouldCountRep = confirmed >= AUTO_REP_CONFIRMATIONS_REQUIRED;
+              if (!shouldCountRep) {
+                const nextConfirmed = Math.min(AUTO_REP_CONFIRMATIONS_REQUIRED, confirmed + 1);
+                autoConfirmationsByExercise[activeExerciseId] = nextConfirmed;
+                if (nextConfirmed >= AUTO_REP_CONFIRMATIONS_REQUIRED) {
+                  const credit = AUTO_REP_CONFIRMATIONS_REQUIRED;
+                  repsByExerciseRef.current[activeExerciseId] = (repsByExerciseRef.current[activeExerciseId] ?? 0) + credit;
+                  setReps((r) => { if (navigator.vibrate) navigator.vibrate(50); return r + credit; });
+                }
+                publishAutoGate(activeExerciseId, 0); publishAutoActionRow(activeExerciseId, 0, true);
+                const dc = autoDisplayProgress(activeExerciseId, 0);
+                lastProgressUiValue = dc; setRepCharge({ value: dc, resetting: false });
+              } else {
+                lastProgressUiValue = 0; setRepCharge({ value: 0, resetting: true });
+              }
+            }
+            if (shouldCountRep && activeExerciseId) {
+              repsByExerciseRef.current[activeExerciseId] = (repsByExerciseRef.current[activeExerciseId] ?? 0) + 1;
+              publishAutoActionRow(activeExerciseId, 0, true);
+              setReps((r) => { if (navigator.vibrate) navigator.vibrate(50); return r + 1; });
+            }
+          }
+          const activeHints = [];
+          let frameErr = false;
+          for (const check of (activeRules.checks ?? [])) {
+            if (!check.valid(check.getVal(rawLm), repPhase)) {
+              check.bones.forEach(([a, b]) => errorBoneSet.add(`${Math.min(a,b)}_${Math.max(a,b)}`));
+              activeHints.push(check.hint); frameErr = true;
+            }
+          }
+          consecErrFrames = frameErr ? Math.min(consecErrFrames + 1, ERR_DEBOUNCE) : 0;
+          if (consecErrFrames >= ERR_DEBOUNCE && activeHints.length) {
+            setHint(activeHints[0]);
+            if (hintTimer) clearTimeout(hintTimer);
+            hintTimer = setTimeout(() => setHint(null), 3000);
+          }
+          const rawDtw = frameErr ? 0.42 : 0.82;
+          lastDtwScore = lastDtwScore * 0.85 + rawDtw * 0.15;
+          highDtwStreak = lastDtwScore > 0.88 ? Math.min(6, highDtwStreak + 1) : Math.max(0, highDtwStreak - 1);
+          comboActive = highDtwStreak >= 5;
+          if (now - lastDtwUiAt > 180 || Math.abs(lastDtwScore - lastDtwUiValue) > 0.08) {
+            lastDtwUiAt = now; lastDtwUiValue = lastDtwScore; setDtw(lastDtwScore);
+          }
+        } else {
+          targetProgress = 0;
+          chargeProgress = Math.max(0, chargeProgress * 0.92);
+          if (now - lastProgressUiAt > 180 && lastProgressUiValue !== 0) {
+            lastProgressUiAt = now; lastProgressUiValue = 0;
+            setRepCharge({ value: 0, resetting: false });
+          }
+        }
+        if (cardioMode && onMotionChangeRef.current) {
+          if (prevCardioLm) {
+            const KEY_LM = [15, 16, 23, 24, 27, 28];
+            let disp = 0;
+            for (const i of KEY_LM) {
+              if (rawLm[i] && prevCardioLm[i])
+                disp += Math.abs(rawLm[i].x - prevCardioLm[i].x) + Math.abs(rawLm[i].y - prevCardioLm[i].y);
+            }
+            if (disp / KEY_LM.length > 0.028) {
+              onMotionChangeRef.current(true);
+              clearTimeout(cardioStaleTimer);
+              cardioStaleTimer = setTimeout(() => onMotionChangeRef.current?.(false), 2500);
+            }
+          }
+          prevCardioLm = rawLm;
+        }
+        prevDisplayLm = lastDisplayLm; prevResultTs = lastResultTs;
+        lastResultTs  = performance.now();
+        lastDisplayLm = displayLm;    lastErrorBoneSet = errorBoneSet;
+        // renderLoop picks up the new landmarks within 100 ms (next 10 fps tick).
+      };
+
+      // Open camera stream AFTER poseWorker is ready — early frames are no longer discarded.
+      // poseWorker posts "ready" within ~1 ms (LUT build); camera WS takes seconds to connect.
+      startCameraStream();
     }
 
-    loadMP().catch((e) => {
-      console.error("[LiveScreen] MP load:", e);
-      _mpLandmarkerPromise = null; // reset so next mount can retry
-    });
+    if (LIVE_STREAM_ONLY_DIAGNOSTIC) {
+      setMpStatus("ready");
+      console.warn("[LiveScreen] stream-only diagnostic mode: MediaPipe disabled");
+    } else {
+      loadMP().catch((e) => {
+        console.error("[LiveScreen] MP load:", e);
+        setMpStatus("error");
+      });
+    }
 
     return () => {
       cancelled = true;
+      cancelAnimationFrame(renderRafId);
+      clearInterval(_perfInterval);
       streamCleanup();
       if (chargeResetTimer) clearTimeout(chargeResetTimer);
       if (cardioStaleTimer) clearTimeout(cardioStaleTimer);
-      _undistWorker.terminate();
-      landmarkerRef.current = null; // singleton lives at module level — never close
+      if (poseWorker) { poseWorker.terminate(); poseWorker = null; }
+      landmarkerRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -8415,12 +8470,15 @@ function LiveScreen({ exercise, onFinish, onVisualState, iotConnRef, theme, home
             <div className="cam-init-overlay">
               <div className={`cam-init-spinner ${mpStatus === "loading" ? "active" : "dim"}`} />
               <div className="cam-init-label">
-                {mpStatus === "loading" ? "Initializing Kinetic Vision…" : "Connecting stream…"}
+                {mpStatus === "error" ? "Vision model failed to load" : mpStatus === "loading" ? "Initializing Kinetic Vision…" : "Connecting stream…"}
               </div>
               {mpStatus === "loading" && (
                 <div className="cam-init-sub">AI vision model loading · first launch only</div>
               )}
-              {mpStatus !== "loading" && (
+              {mpStatus === "error" && (
+                <button className="cam-init-retry" onClick={() => onFinish?.({ reps: 0, dtw: 0, elapsed: 0 })}>Go Back</button>
+              )}
+              {mpStatus !== "loading" && mpStatus !== "error" && (
                 <div className="cam-init-sub">Waiting for camera feed · ensure same WiFi</div>
               )}
             </div>
@@ -9223,6 +9281,7 @@ function CoreMessageCard({ message, onExecutePlan }) {
 }
 
 function CoreScreen({ messages, onSend, onExecutePlan, onQuickPlan, isThinking = false }) {
+  const lottieAiCore = useLottieData(() => import("../assets/ai-core.json"));
   const [draft, setDraft] = useState("");
   const timelineRef = useRef(null);
   const visibleMessages = messages.length ? messages : [
@@ -9262,7 +9321,7 @@ function CoreScreen({ messages, onSend, onExecutePlan, onQuickPlan, isThinking =
           ))}
           {isThinking && (
             <div className="core-thinking-row">
-              <Lottie animationData={lottieAiCore} loop={true} style={{ width:120, height:120 }} />
+              {lottieAiCore && <Lottie animationData={lottieAiCore} loop={true} style={{ width:120, height:120 }} />}
               <span className="core-thinking-label">Kinetic Core thinking...</span>
             </div>
           )}
@@ -9706,6 +9765,22 @@ export default function KineticLifeApp() {
   useEffect(() => { saveConnMode(connMode, currentUser); }, [connMode, currentUser]);
   useEffect(() => { saveTheme(theme, currentUser); }, [theme, currentUser]);
 
+  // Pre-warm MediaPipe when user first reaches Dashboard so the ~10s setGraph freeze
+  // happens here (while user is idle on Dashboard) instead of when entering LiveScreen.
+  useEffect(() => {
+    if (screen !== "dashboard" || _mpLandmarkerPromise) return;
+    import("@mediapipe/tasks-vision").then(({ FilesetResolver, PoseLandmarker }) =>
+      FilesetResolver.forVisionTasks("/mediapipe/wasm").then(vision => {
+        if (!_mpLandmarkerPromise) {
+          _mpLandmarkerPromise = PoseLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: "/mediapipe/models/pose_landmarker_full.task", delegate: "GPU" },
+            runningMode: "VIDEO", numPoses: 1,
+          });
+        }
+      })
+    ).catch(() => {});
+  }, [screen]);
+
   const NAV_SCREENS = ["dashboard", "core", "nexus", "profile", "settings"];
   const showNav = NAV_SCREENS.includes(screen);
 
@@ -9935,8 +10010,8 @@ export default function KineticLifeApp() {
   }
 
   function handleHomeCollectReward() {
-    // Post AI Core summary before clearing ctx
-    if (homeWorkoutCtx) {
+    // Post AI Core summary before clearing ctx — only when a route was actually started
+    if (homeWorkoutCtx && homeWorkoutCtx.routeId) {
       const route = HOME_ROUTES[homeWorkoutCtx.routeId];
       const totalReps = homeWorkoutCtx.totalReps ?? 0;
       const elapsed   = homeWorkoutCtx.startTime ? Math.round((Date.now() - homeWorkoutCtx.startTime) / 1000) : 0;
@@ -9977,7 +10052,18 @@ export default function KineticLifeApp() {
   // If already connected, skip ConnectScreen entirely and go straight to live.
   function goLive(ex) {
     setExercise(ex);
-    if (iotConnRef.current) {
+    const conn = iotConnRef.current;
+    if (conn) {
+      // BLE: verify GATT is still alive; if not, clear stale ref and re-connect
+      if (conn.mode === "ble") {
+        const gatt = conn.bleTxChar?.service?.device?.gatt;
+        if (!gatt?.connected) {
+          clearActiveConnection();
+          setScreen("connect");
+          setVisualState("searching");
+          return;
+        }
+      }
       setScreen("live");
       setVisualState("connected");
       setTimeout(() => setVisualState("idle"), 600);
@@ -10361,7 +10447,7 @@ export default function KineticLifeApp() {
     <>
       <style>{css}</style>
       <div className="ath-root" data-theme={theme}>
-        <AetherisWorld visualState={visualState} theme={theme} />
+        <AetherisWorld visualState={visualState} theme={theme} paused={screen === "live"} />
 
         <div ref={screenLayerRef} className="ath-screen-host">
           <AnimatePresence mode="wait">

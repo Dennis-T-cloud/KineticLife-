@@ -436,6 +436,29 @@ void loop() {
     status_led_handle();
     reset_clear_handle();
 
+    // WiFi watchdog: if disconnected for 60 s, reboot to reconnect cleanly.
+    // Inline reconnect is unsafe here — connect_wifi() blocks ~30 s and stalls WS.
+    {
+        static unsigned long s_wifi_lost_ms = 0;
+        if (WiFi.status() != WL_CONNECTED) {
+            if (s_wifi_lost_ms == 0) s_wifi_lost_ms = millis();
+            else if (millis() - s_wifi_lost_ms >= 60000) {
+                kl_logf("[wifi] lost_for_60s action=restart heap_kb=%lu\n",
+                        (unsigned long)(ESP.getFreeHeap() / 1024));
+                ESP.restart();
+            }
+        } else {
+            s_wifi_lost_ms = 0;
+        }
+    }
+
+    // Heap watermark watchdog: restart before OOM corrupts state.
+    if (ESP.getFreeHeap() < 30 * 1024) {
+        kl_logf("[heap] critical_low_kb=%lu action=restart\n",
+                (unsigned long)(ESP.getFreeHeap() / 1024));
+        ESP.restart();
+    }
+
     static unsigned long last_status_ms = 0;
     if (millis() - last_status_ms >= 60000) {
         last_status_ms = millis();

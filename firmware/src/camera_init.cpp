@@ -186,7 +186,9 @@ bool camera_init() {
     // fb_count=2 in PSRAM eliminates DMA bus contention between camera and WiFi.
     // XCLK=20MHz — FNK0085B board limit; 24MHz causes tearing regardless of sensor.
     // Quality is fixed at WIFI_JPEG_QUALITY (config.h) and not overridable via /cam.
-    return camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_QVGA, WIFI_JPEG_QUALITY, 2,
+    // HQVGA (240×176): rotated to 176×240 portrait for inference — height 240/256=93.75% of MediaPipe native.
+    // 2.25× more pixels than QQVGA at q=20 ≈ 4-6 KB/frame = ~20-30 KB/s at 5fps.
+    return camera_init_with(PIXFORMAT_JPEG, FRAMESIZE_HQVGA, WIFI_JPEG_QUALITY, 2,
                             CAMERA_FB_IN_PSRAM);
 }
 

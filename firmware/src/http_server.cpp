@@ -23,12 +23,13 @@ static String      s_ws_token;
 static uint32_t    s_ws_client_ids[DEFAULT_MAX_WS_CLIENTS] = {0};
 static size_t      s_ws_client_count = 0;
 
-// Push rate: 100 ms = 10 fps.
-// 15 fps (67 ms) overflows the iOS WebKit TCP receive buffer (~128 KB) in ~2.7 s
-// when the client can only consume ~3-5 fps (Firefox/Safari on iPhone).
-// 10 fps halves the net fill rate and eliminates the multi-second stall at startup.
-static const uint32_t FRAME_MS    = 100;
+// Push rate: 200 ms = 5 fps.
+// 160×120 at q=25: ~2.2 KB/frame = 11 KB/s — stable zero-backpressure baseline at RSSI -40 dBm.
+static const uint32_t FRAME_MS    = 200;
 static const uint32_t PERF_LOG_MS = 5000;
+
+// Timestamp of last successful ready-client check; used to evict stale half-open sockets.
+static uint32_t s_last_ready_ms = 0;
 
 // Rolling perf counters, reset each PERF_LOG_MS window
 static uint32_t s_perf_sent       = 0;
@@ -209,51 +210,50 @@ static void on_ws_event(AsyncWebSocket*, AsyncWebSocketClient* client,
 
 // ── REST handlers (async) ─────────────────────────────────────────────────
 static void handle_hello(AsyncWebServerRequest* req) {
-    String j = "{\"v\":1";
-    j += ",\"device_id\":\"" + device_id() + "\"";
-    j += ",\"fw_version\":\"" + String(s_fw_version) + "\"";
-    j += ",\"mac\":\"" + mac_string() + "\"";
-    j += ",\"board_model\":\"" + String(s_board_model) + "\"";
-    j += ",\"cam_model\":\"" + String(s_cam_model) + "\"";
-    j += ",\"state\":\"" + String(status_led_state_name()) + "\"";
-    j += ",\"ws_clients\":" + String(ws.count());
-    j += ",\"uptime_s\":" + String(millis() / 1000);
-    j += ",\"free_psram_kb\":" + String(ESP.getFreePsram() / 1024);
-    j += ",\"ws_token\":\"" + s_ws_token + "\"";
-    j += "}";
+    char buf[384];
+    snprintf(buf, sizeof(buf),
+        "{\"v\":1,\"device_id\":\"%s\",\"fw_version\":\"%s\""
+        ",\"mac\":\"%s\",\"board_model\":\"%s\",\"cam_model\":\"%s\""
+        ",\"state\":\"%s\",\"ws_clients\":%u,\"uptime_s\":%lu"
+        ",\"free_psram_kb\":%lu,\"ws_token\":\"%s\"}",
+        device_id().c_str(), s_fw_version, mac_string().c_str(),
+        s_board_model, s_cam_model, status_led_state_name(),
+        (unsigned)ws.count(), (unsigned long)(millis() / 1000),
+        (unsigned long)(ESP.getFreePsram() / 1024), s_ws_token.c_str());
     kl_logf("[http] GET /hello remote=%s\n",
             req->client()->remoteIP().toString().c_str());
-    req->send(200, "application/json", j);
+    req->send(200, "application/json", buf);
 }
 
 static void handle_status(AsyncWebServerRequest* req) {
-    String j = "{\"state\":\"" + String(status_led_state_name()) + "\"";
-    j += ",\"device_id\":\"" + device_id() + "\"";
-    j += ",\"fw_version\":\"" + String(s_fw_version) + "\"";
-    j += ",\"cam_model\":\"" + String(s_cam_model) + "\"";
-    j += ",\"camera_mode\":\"" + String(camera_mode_name()) + "\"";
-    j += ",\"pixel_format\":\"" + String(camera_pixel_format_name()) + "\"";
-    j += ",\"frame_size\":\"" + String(camera_frame_size_name()) + "\"";
-    j += ",\"jpeg_quality\":" + String(camera_jpeg_quality());
-    j += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
-    j += ",\"rssi_dbm\":" + String(WiFi.RSSI());
-    j += ",\"wifi_quality\":" + String(wifi_quality_percent(WiFi.RSSI()));
-    j += ",\"wifi_channel\":" + String(WiFi.channel());
-    j += ",\"wifi_bssid\":\"" + WiFi.BSSIDstr() + "\"";
-    j += ",\"wifi_status\":" + String((int)WiFi.status());
-    j += ",\"wifi_status_name\":\"" + String(wifi_status_name(WiFi.status())) + "\"";
-    j += ",\"stream_count\":" + String(s_stream_count);
-    j += ",\"ws_clients\":" + String(ws.count());
-    j += ",\"uptime_s\":" + String(millis() / 1000);
-    j += ",\"cpu_mhz\":" + String(ESP.getCpuFreqMHz());
-    j += ",\"free_heap_kb\":" + String(ESP.getFreeHeap() / 1024);
-    j += ",\"min_free_heap_kb\":" + String(ESP.getMinFreeHeap() / 1024);
-    j += ",\"largest_heap_block_kb\":" + String(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024);
-    j += ",\"free_psram_kb\":" + String(ESP.getFreePsram() / 1024);
-    j += ",\"psram_size_kb\":" + String(ESP.getPsramSize() / 1024);
-    j += ",\"largest_psram_block_kb\":" + String(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
-    j += "}";
-    req->send(200, "application/json", j);
+    char buf[768];
+    snprintf(buf, sizeof(buf),
+        "{\"state\":\"%s\",\"device_id\":\"%s\",\"fw_version\":\"%s\""
+        ",\"cam_model\":\"%s\",\"camera_mode\":\"%s\",\"pixel_format\":\"%s\""
+        ",\"frame_size\":\"%s\",\"jpeg_quality\":%d"
+        ",\"ip\":\"%s\",\"rssi_dbm\":%d,\"wifi_quality\":%d"
+        ",\"wifi_channel\":%d,\"wifi_bssid\":\"%s\""
+        ",\"wifi_status\":%d,\"wifi_status_name\":\"%s\""
+        ",\"stream_count\":%lu,\"ws_clients\":%u,\"uptime_s\":%lu"
+        ",\"cpu_mhz\":%lu,\"free_heap_kb\":%lu,\"min_free_heap_kb\":%lu"
+        ",\"largest_heap_block_kb\":%lu,\"free_psram_kb\":%lu"
+        ",\"psram_size_kb\":%lu,\"largest_psram_block_kb\":%lu}",
+        status_led_state_name(), device_id().c_str(), s_fw_version,
+        s_cam_model, camera_mode_name(), camera_pixel_format_name(),
+        camera_frame_size_name(), camera_jpeg_quality(),
+        WiFi.localIP().toString().c_str(), WiFi.RSSI(),
+        wifi_quality_percent(WiFi.RSSI()), WiFi.channel(),
+        WiFi.BSSIDstr().c_str(), (int)WiFi.status(),
+        wifi_status_name(WiFi.status()),
+        (unsigned long)s_stream_count, (unsigned)ws.count(),
+        (unsigned long)(millis() / 1000), (unsigned long)ESP.getCpuFreqMHz(),
+        (unsigned long)(ESP.getFreeHeap() / 1024),
+        (unsigned long)(ESP.getMinFreeHeap() / 1024),
+        (unsigned long)(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024),
+        (unsigned long)(ESP.getFreePsram() / 1024),
+        (unsigned long)(ESP.getPsramSize() / 1024),
+        (unsigned long)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
+    req->send(200, "application/json", buf);
 }
 
 // Deferred cam config — parsed in async callback, applied in http_server_handle()
@@ -416,18 +416,39 @@ void http_server_handle() {
 }
 
 void http_server_push_frame() {
-    if (ws.count() == 0) return;
-
-    // Rate-limit to FRAME_MS
+    // Rate-limit first, regardless of client count.
+    // This keeps esp_camera_fb_get() called at FRAME_MS even when idle so the OV2640
+    // DMA pipeline (fb_count=2) never stalls — a stalled pipeline causes slow/corrupt
+    // first frames after reconnection following long idle periods.
     static uint32_t last_ms = 0;
     const uint32_t now = millis();
     if (now - last_ms < FRAME_MS) return;
+    last_ms = now;
+
+    if (ws.count() == 0) {
+        // No clients — drain and discard one frame to keep camera DMA warm.
+        camera_fb_t* fb = esp_camera_fb_get();
+        if (fb) esp_camera_fb_return(fb);
+        return;
+    }
+
     if (!ws_has_ready_client()) {
         s_perf_dropped++;
         s_perf_backpressure_skips += ws.count();
-        last_ms = now;
+        // Stale socket eviction: if clients exist but none has been ready for
+        // 20 s, they are half-open (browser closed, TCP RST missed, 1006, etc.).
+        // 20 s avoids false eviction during legitimate backpressure bursts (brief WiFi dips);
+        // client auto-reconnects within 2 s after receiving the close frame.
+        if (ws.count() > 0 && s_last_ready_ms > 0 &&
+            now - s_last_ready_ms >= 20000) {
+            kl_logf("[ws] stale_evict clients=%u not_ready_ms=%lu action=closeAll\n",
+                    (unsigned)ws.count(), now - s_last_ready_ms);
+            ws.closeAll();
+            s_last_ready_ms = now; // reset so we don't evict again immediately
+        }
         return;
     }
+    s_last_ready_ms = now;
 
     const uint32_t cap_t0 = millis();
     camera_fb_t* fb = esp_camera_fb_get();
@@ -452,7 +473,6 @@ void http_server_push_frame() {
                                                      &skipped_clients);
     const size_t jpeg_len = fb->len;
     esp_camera_fb_return(fb); // safe: binary() already copied/enqueued the data
-    last_ms = now;
     s_perf_backpressure_skips += skipped_clients;
     if (sent_clients == 0) {
         s_perf_dropped++;

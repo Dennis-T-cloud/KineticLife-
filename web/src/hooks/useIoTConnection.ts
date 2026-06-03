@@ -303,6 +303,7 @@ export function useIoTConnection(
   const repsTargetRef     = useRef(3);
   const lastTsRef         = useRef(-1);
   const rAFRef            = useRef(0);
+  const inferTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const throttleTsRef     = useRef(0);
   const vidTransformRef   = useRef({ dx: 0, dy: 0, dw: 640, dh: 480 });
 
@@ -617,7 +618,7 @@ export function useIoTConnection(
     }
   }
 
-  // ── Main RAF tick — render at 60fps, MediaPipe inference capped ────────
+  // ── Main RAF tick — render only at 60fps ─────────────────────────────
   function tick(now: number) {
     rAFRef.current = requestAnimationFrame(tick);
 
@@ -625,8 +626,6 @@ export function useIoTConnection(
     const ss     = sessionRef.current;
     if (!canvas) return;
 
-    // Size drawing buffer to match the canvas element's actual layout pixels.
-    // Using window dimensions would create a mismatch with the cam-area container.
     const cw = canvas.offsetWidth  || window.innerWidth;
     const ch = canvas.offsetHeight || window.innerHeight;
     if (canvas.width  !== cw) canvas.width  = cw;
@@ -637,15 +636,13 @@ export function useIoTConnection(
     const W   = canvas.width, H = canvas.height;
     const ctx = canvas.getContext('2d')!;
 
-    // Portrait virtual dims — HQVGA rotated 90° CW (176×240)
     const vw = 176, vh = 240;
     const scale = Math.max(W / vw, H / vh);
     const dw = vw * scale, dh = vh * scale;
     const dx = (W - dw) / 2, dy = (H - dh) / 2;
     vidTransformRef.current = { dx, dy, dw, dh };
 
-    // ── Render phase (60 fps) — always draw last known pose ──────────────
-    ctx.fillStyle = 'rgba(5,9,5,0.12)';   // lower alpha = longer trail = smoother
+    ctx.fillStyle = 'rgba(5,9,5,0.12)';
     ctx.fillRect(0, 0, W, H);
 
     const lm = displayLmRef.current;
@@ -657,94 +654,102 @@ export function useIoTConnection(
         fxRef.current?.draw(ctx, now, vidTransformRef.current, lm, ss.displayErrSet);
       }
     }
+  }
 
-    // ── Inference phase (capped at FPS_CAP_MS ~25 fps) ───────────────────
-    if (!landmarkerRef.current || !frameRef.current) return;
-    if (now - lastTsRef.current < FPS_CAP_MS) return;
-    lastTsRef.current = now;
+  // ── Inference loop — runs in its own setTimeout task, NOT inside RAF ──
+  // Keeping inference out of the RAF callback ensures the main thread yields
+  // between inference calls, allowing WebSocket onmessage events to drain the
+  // TCP buffer and prevent ESP32-side backpressure.
+  function inferenceLoop() {
+    const now = performance.now();
+    const ss  = sessionRef.current;
 
-    // Lazy-init portrait inference canvas (176×240 — HQVGA rotated 90° CW)
-    if (!inferCanvasRef.current) {
-      const c = document.createElement('canvas');
-      c.width = 176; c.height = 240;
-      inferCanvasRef.current = c;
-      inferCtxRef.current    = c.getContext('2d');
-    }
-    const inferCanvas = inferCanvasRef.current;
-    const inferCtx    = inferCtxRef.current!;
+    if (ss.appState === 'recording' && landmarkerRef.current && frameRef.current
+        && now - lastTsRef.current >= FPS_CAP_MS) {
+      lastTsRef.current = now;
 
-    // Rotate BLE landscape frame (240×176) 90° CW → portrait (176×240)
-    inferCtx.save();
-    inferCtx.translate(inferCanvas.width, 0);
-    inferCtx.rotate(Math.PI / 2);
-    inferCtx.drawImage(frameRef.current, 0, 0, inferCanvas.height, inferCanvas.width);
-    inferCtx.restore();
+      if (!inferCanvasRef.current) {
+        const c = document.createElement('canvas');
+        c.width = 176; c.height = 240;
+        inferCanvasRef.current = c;
+        inferCtxRef.current    = c.getContext('2d');
+      }
+      const inferCanvas = inferCanvasRef.current;
+      const inferCtx    = inferCtxRef.current!;
 
-    const result = landmarkerRef.current.detectForVideo(inferCanvas, now);
-    if (!result.landmarks.length) return;
+      inferCtx.save();
+      inferCtx.translate(inferCanvas.width, 0);
+      inferCtx.rotate(Math.PI / 2);
+      inferCtx.drawImage(frameRef.current, 0, 0, inferCanvas.height, inferCanvas.width);
+      inferCtx.restore();
 
-    const rawLm     = result.landmarks[0];
-    const displayLm = smootherRef.current.smooth(rawLm);
-    displayLmRef.current = displayLm;
+      const result = landmarkerRef.current.detectForVideo(inferCanvas, now);
+      if (result.landmarks.length) {
+        const rawLm     = result.landmarks[0];
+        const displayLm = smootherRef.current.smooth(rawLm);
+        displayLmRef.current = displayLm;
 
-    const ex = (EXERCISES as Record<string, any>)[exerciseKeyRef.current];
-    if (!ex) return;
-    const keyAngle = ex.getKeyAngle(rawLm);
+        const ex = (EXERCISES as Record<string, any>)[exerciseKeyRef.current];
+        if (ex) {
+          const keyAngle = ex.getKeyAngle(rawLm);
 
-    ss.totalFrames++;
-    if (ss.totalFrames % 2 === 0) {
-      ss.keyAngleBuffer.push(keyAngle);
-      ss.jointAngleFrames.push(compute14Angles(rawLm));
-    }
+          ss.totalFrames++;
+          if (ss.totalFrames % 2 === 0) {
+            ss.keyAngleBuffer.push(keyAngle);
+            ss.jointAngleFrames.push(compute14Angles(rawLm));
+          }
 
-    const repBefore = ss.repCount;
-    updateSM(keyAngle, ex);
-    if (ss.repCount > repBefore && fxRef.current) {
-      fxRef.current.onRepCounted({
-        repCount:     ss.repCount,
-        lm:           displayLm,
-        vidTransform: vidTransformRef.current,
-        now,
-      });
-    }
+          const repBefore = ss.repCount;
+          updateSM(keyAngle, ex);
+          if (ss.repCount > repBefore && fxRef.current) {
+            fxRef.current.onRepCounted({
+              repCount:     ss.repCount,
+              lm:           displayLm,
+              vidTransform: vidTransformRef.current,
+              now,
+            });
+          }
 
-    // Form checks
-    const errorBoneSet = new Set<string>();
-    let frameHasErr    = false;
-    for (const check of ex.checks) {
-      if (!check.valid(check.getVal(rawLm), ss.repPhase)) {
-        check.bones.forEach(([a, b]: [number, number]) => errorBoneSet.add(boneKey(a, b)));
-        ss.hintCounts[check.hint] = (ss.hintCounts[check.hint] ?? 0) + 1;
-        frameHasErr = true;
+          const errorBoneSet = new Set<string>();
+          let frameHasErr    = false;
+          for (const check of ex.checks) {
+            if (!check.valid(check.getVal(rawLm), ss.repPhase)) {
+              check.bones.forEach(([a, b]: [number, number]) => errorBoneSet.add(boneKey(a, b)));
+              ss.hintCounts[check.hint] = (ss.hintCounts[check.hint] ?? 0) + 1;
+              frameHasErr = true;
+            }
+          }
+          if (frameHasErr) {
+            ss.errorFrames++;
+            ss.consecErrFrames = Math.min(ss.consecErrFrames + 1, ERR_DEBOUNCE);
+          } else {
+            ss.consecErrFrames = Math.max(ss.consecErrFrames - 1, 0);
+          }
+          if (ss.consecErrFrames >= ERR_DEBOUNCE) ss.displayErrSet = errorBoneSet;
+          else if (ss.consecErrFrames === 0)       ss.displayErrSet = new Set();
+
+          const activeHints: string[] = ss.consecErrFrames >= ERR_DEBOUNCE
+            ? ex.checks
+                .filter((check: any) =>
+                  [...ss.displayErrSet].some((k: string) =>
+                    check.bones.some(([a, b]: [number, number]) => k === boneKey(a, b))))
+                .map((check: any) => check.hint as string)
+            : [];
+
+          pushSensor({
+            repCount:  ss.repCount,
+            formScore: ss.totalFrames > 0
+              ? Math.round((1 - ss.errorFrames / ss.totalFrames) * 100) : 100,
+            phase:   ss.repPhase,
+            hints:   activeHints,
+            elapsed: Math.round((now - ss.tsStart) / 1000),
+          });
+        }
       }
     }
-    if (frameHasErr) {
-      ss.errorFrames++;
-      ss.consecErrFrames = Math.min(ss.consecErrFrames + 1, ERR_DEBOUNCE);
-    } else {
-      ss.consecErrFrames = Math.max(ss.consecErrFrames - 1, 0);
-    }
-    if (ss.consecErrFrames >= ERR_DEBOUNCE) ss.displayErrSet = errorBoneSet;
-    else if (ss.consecErrFrames === 0)       ss.displayErrSet = new Set();
 
-    // Collect active hints
-    const activeHints: string[] = ss.consecErrFrames >= ERR_DEBOUNCE
-      ? ex.checks
-          .filter((check: any) =>
-            [...ss.displayErrSet].some((k: string) =>
-              check.bones.some(([a, b]: [number, number]) => k === boneKey(a, b))))
-          .map((check: any) => check.hint as string)
-      : [];
-
-    // Throttled React state update (≤ 10/sec)
-    pushSensor({
-      repCount:  ss.repCount,
-      formScore: ss.totalFrames > 0
-        ? Math.round((1 - ss.errorFrames / ss.totalFrames) * 100) : 100,
-      phase:   ss.repPhase,
-      hints:   activeHints,
-      elapsed: Math.round((now - ss.tsStart) / 1000),
-    });
+    // Schedule next inference tick — yields to event loop between calls
+    inferTimerRef.current = setTimeout(inferenceLoop, FPS_CAP_MS);
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
@@ -757,11 +762,13 @@ export function useIoTConnection(
       })
       .catch(() => { /* non-fatal — will retry in startSession */ });
 
-    rAFRef.current = requestAnimationFrame(tick);
+    rAFRef.current        = requestAnimationFrame(tick);
+    inferTimerRef.current = setTimeout(inferenceLoop, FPS_CAP_MS);
 
     return () => {
       // Strict Mode safe: cancel RAF and close connections on unmount
       cancelAnimationFrame(rAFRef.current);
+      if (inferTimerRef.current) clearTimeout(inferTimerRef.current);
       wsRef.current?.close(); wsRef.current = null;
       if (wsRetryRef.current) clearTimeout(wsRetryRef.current);
       (bleDeviceRef.current as any)?.gatt?.disconnect();
