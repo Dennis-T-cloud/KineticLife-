@@ -47,7 +47,6 @@ const MUSCLE_INTENSITY_BY_EXERCISE = {
   barbell_squat_side: { quads: 1, hamstrings: 0.78, core: 0.58, lower_back: 0.46, front_calves: 0.42, rear_calves: 0.42 },
   deadlift_side: { hamstrings: 1, lower_back: 0.9, core: 0.72, quads: 0.38, rear_calves: 0.28, upper_back: 0.46 },
   both_bicep_curl: { biceps: 1, shoulders: 0.28, core: 0.18 },
-  deadlift: { hamstrings: 1, lower_back: 0.9, core: 0.72, quads: 0.38, rear_calves: 0.28, upper_back: 0.46 },
 };
 
 const EXERCISES = [
@@ -158,11 +157,11 @@ const NEXUS_MOODS = [
 const NEXUS_MOOD_BY_ID = Object.fromEntries(NEXUS_MOODS.map((mood) => [mood.id, mood]));
 
 const NEXUS_MOCK_CHECKINS = [
-  { id: "mock_0x4f", name: "Athlete_0x4F", exerciseId: "lateral_raise", reps: 14, dtwAvg: 91, mood: "satisfied", resonance: 8, x: 18, y: 30 },
-  { id: "mock_0xa2", name: "Athlete_0xA2", exerciseId: "both_bicep_curl", reps: 18, dtwAvg: 84, mood: "tired", resonance: 5, x: 75, y: 24 },
-  { id: "mock_0xc9", name: "Athlete_0xC9", exerciseId: "deadlift_side", reps: 9, dtwAvg: 88, mood: "happy", resonance: 11, x: 82, y: 63 },
-  { id: "mock_0x71", name: "Athlete_0x71", exerciseId: "squat", reps: 16, dtwAvg: 93, mood: "laughing", resonance: 15, x: 28, y: 72 },
-  { id: "mock_0xbd", name: "Athlete_0xBD", exerciseId: "bicep_curl", reps: 12, dtwAvg: 79, mood: "sleepy", resonance: 3, x: 52, y: 18 },
+  { id: "mock_0x4f", name: "SkyRunner92", exerciseId: "lateral_raise", reps: 14, dtwAvg: 91, mood: "satisfied", resonance: 8, x: 18, y: 30 },
+  { id: "mock_0xa2", name: "IronPulse", exerciseId: "both_bicep_curl", reps: 18, dtwAvg: 84, mood: "tired", resonance: 5, x: 75, y: 24 },
+  { id: "mock_0xc9", name: "NightHawk", exerciseId: "deadlift_side", reps: 9, dtwAvg: 88, mood: "happy", resonance: 11, x: 82, y: 63 },
+  { id: "mock_0x71", name: "VoltStorm", exerciseId: "squat", reps: 16, dtwAvg: 93, mood: "laughing", resonance: 15, x: 28, y: 72 },
+  { id: "mock_0xbd", name: "BladeRush", exerciseId: "bicep_curl", reps: 12, dtwAvg: 79, mood: "sleepy", resonance: 3, x: 52, y: 18 },
 ];
 
 // large = 2-3 days rest, small = 1 day rest
@@ -233,7 +232,7 @@ const HOME_ROUTES = {
     accentColor: "#A855F7",
     steps: [
       { type: "exercise", exerciseId: "squat",    sets: 3, reps: 6 },
-      { type: "exercise", exerciseId: "deadlift", sets: 3, reps: 6 },
+      { type: "exercise", exerciseId: "deadlift_side", sets: 3, reps: 6 },
       { type: "cardio",   duration: 30, label: "Squat Kicks", lottie: "squat_kick" },
     ],
     muscles: { quads: 1.0, hamstrings: 0.9, lower_back: 0.75, core: 0.55, rear_calves: 0.3 },
@@ -2438,6 +2437,7 @@ h2.ath-title {
   gap: 10px;
 }
 
+/* ── Bento entry cards ── */
 .bento-hero {
   background: rgba(15,16,20,0.24);
   grid-column: 1;
@@ -2447,6 +2447,11 @@ h2.ath-title {
   overflow: hidden;
   transition: transform 0.2s var(--spring-heavy);
   min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0.88rem 1rem;
+  border-top: 1.5px solid rgba(var(--em-a-rgb), 0.28);
 }
 .bento-hero:active { transform: scale(0.99); }
 
@@ -2458,6 +2463,10 @@ h2.ath-title {
   overflow: hidden;
   transition: transform 0.2s var(--spring-heavy), border-color 0.2s;
   min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0.88rem 1rem;
 }
 .bento-card:hover { transform: scale(1.015); border-color: var(--gb-hi); }
 .bento-card:active { transform: scale(0.98); }
@@ -2466,44 +2475,46 @@ h2.ath-title {
 [data-theme="sunset"] .bento-card {
   background: rgba(255,232,208,0.24);
 }
-
-/* Full-bleed illustration fills the card */
-.bento-illus {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  display: block; pointer-events: none;
-  opacity: 1;
+[data-theme="sunset"] .bento-hero {
+  border-top-color: rgba(var(--em-a-rgb), 0.40);
 }
 
-.bento-illus-img {
-  object-fit: cover;
-  object-position: center;
-  user-select: none;
-  -webkit-user-drag: none;
+/* Card layout rows */
+.bento-top-row {
+  display: flex;
+  align-items: center;
+  gap: 0.48rem;
+}
+.bento-mid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.bento-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.bento-illus-plan,
-.bento-illus-home {
-  transform: scale(1.02);
+/* Icon badge (inline in top row) */
+.bento-icon-tl {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid rgba(var(--em-a-rgb), 0.28);
+  background: rgba(var(--em-a-rgb), 0.07);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--em-b);
+  flex-shrink: 0;
 }
+.bento-icon-tl-svg { width: 17px; height: 17px; display: block; }
 
-/* Text overlay at bottom of card */
-.bento-overlay {
-  position: absolute; bottom: 0; left: 0; right: 0;
-  padding: 0.7rem 0.9rem;
-  background: linear-gradient(transparent, rgba(0,0,0,0.32) 90%);
-  z-index: 2;
-  display: flex; flex-direction: column; gap: 0.18rem;
-}
-[data-theme="sunset"] .bento-overlay {
-  background:
-    linear-gradient(180deg, rgba(255,248,238,0) 0%, rgba(255,235,214,0.16) 38%, rgba(255,176,128,0.34) 100%);
-  box-shadow: inset 0 -1px 0 rgba(255,244,230,0.18);
-}
-.bento-overlay-top {
-  position: absolute; top: 0; left: 0; right: 0;
-  padding: 0.6rem 0.9rem;
-  z-index: 2;
+[data-theme="sunset"] .bento-icon-tl {
+  border-color: rgba(var(--em-a-rgb), 0.38);
+  background: rgba(var(--em-a-rgb), 0.09);
+  color: var(--em-a);
 }
 
 /* Keep .bento-icon for Edge Node row */
@@ -2537,27 +2548,60 @@ h2.ath-title {
   display: block;
 }
 
+/* Category label next to icon */
 .bento-tag {
-  font-size: 0.58rem;
+  font-size: 0.56rem;
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: rgba(255,255,255,0.55);
+  color: rgba(255,255,255,0.38);
 }
-[data-theme="sunset"] .bento-tag {
-  color: var(--em-a);
-  text-shadow: 0 1px 8px rgba(60,14,0,0.35);
-}
+[data-theme="sunset"] .bento-tag { color: rgba(80,38,14,0.50); }
 
+/* Main entry title */
 .bento-label {
-  font-size: 1.35rem;
+  font-size: 1.28rem;
   font-weight: 800;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: rgba(255,255,255,0.92);
   line-height: 1.1;
 }
-[data-theme="sunset"] .bento-label { color: rgba(255,235,210,0.96); }
+[data-theme="sunset"] .bento-label { color: rgba(22,8,2,0.90); }
+
+/* Supporting description */
+.bento-desc {
+  font-size: 0.68rem;
+  color: var(--text-m);
+  line-height: 1.35;
+}
+[data-theme="sunset"] .bento-desc { color: rgba(80,38,14,0.62); }
+
+/* Bottom-left stat chip */
+.bento-stat-pill {
+  font-family: var(--mono);
+  font-size: 0.57rem;
+  color: var(--text-d);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--gb);
+  border-radius: 999px;
+  padding: 0.13rem 0.48rem;
+  letter-spacing: 0.03em;
+}
+[data-theme="sunset"] .bento-stat-pill {
+  background: rgba(160,64,16,0.05);
+  border-color: rgba(160,64,16,0.14);
+  color: rgba(80,38,14,0.48);
+}
+
+/* Bottom-right CTA */
+.bento-cta-arrow {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--em-b);
+}
+[data-theme="sunset"] .bento-cta-arrow { color: var(--em-a); }
 
 .stats-strip {
   display: flex;
@@ -3967,6 +4011,7 @@ h2.ath-title {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  will-change: transform;
   animation: nexus-float 4.8s ease-in-out infinite;
 }
 
@@ -3979,14 +4024,14 @@ h2.ath-title {
   background: color-mix(in srgb, var(--mood) 18%, transparent);
   filter: blur(18px);
   opacity: 0.75;
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition: opacity 0.18s ease;
+  will-change: opacity;
   animation: nexus-breathe-glow 3.8s ease-in-out infinite;
 }
 
 .nexus-node.active::before,
 .nexus-node.mine::before {
   opacity: 1;
-  transform: scale(1.22);
   animation: none;
 }
 
@@ -4010,8 +4055,8 @@ h2.ath-title {
   100% { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
 }
 @keyframes nexus-breathe-glow {
-  0%, 100% { transform: scale(1);    opacity: 0.6; }
-  50%       { transform: scale(1.35); opacity: 0.92; }
+  0%, 100% { opacity: 0.52; }
+  50%       { opacity: 0.90; }
 }
 
 .nexus-node .mood-avatar {
@@ -4143,8 +4188,8 @@ h2.ath-title {
 }
 
 @keyframes nexus-float {
-  0%, 100% { margin-top: 0; }
-  50% { margin-top: -10px; }
+  0%, 100% { transform: translate(-50%, -50%); }
+  50%       { transform: translate(-50%, calc(-50% - 9px)); }
 }
 
 /* ── DTW-based node tiers ── */
@@ -4212,12 +4257,13 @@ h2.ath-title {
   position: absolute; inset: 0;
   border-radius: inherit; pointer-events: none; z-index: 0;
   background: radial-gradient(circle at 50% 50%,
-    rgba(0,219,233,0.09), transparent 52%);
+    rgba(0,219,233,0.10), transparent 52%);
   animation: nexus-ambient-breathe 5.4s ease-in-out infinite;
+  will-change: opacity;
 }
 @keyframes nexus-ambient-breathe {
-  0%, 100% { opacity: 0.42; transform: scale(0.88); }
-  50%       { opacity: 1;    transform: scale(1.12); }
+  0%, 100% { opacity: 0.35; }
+  50%       { opacity: 0.92; }
 }
 
 /* Resonate button firing flash */
@@ -4235,6 +4281,152 @@ h2.ath-title {
          box-shadow: 0 0 30px 10px color-mix(in srgb, var(--mood) 60%, transparent); }
   100% { transform: scale(1);
          box-shadow: 0 0 18px  4px color-mix(in srgb, var(--mood) 22%, transparent); }
+}
+
+/* ── Nexus Leaderboard ── */
+.nexus-leaderboard {
+  padding: 0.8rem 1rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.nexus-lb-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.nexus-lb-sub {
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  color: var(--text-d);
+  letter-spacing: 0.04em;
+}
+
+.nexus-lb-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.36rem 0.2rem;
+  border-radius: 9px;
+  border: none;
+  background: transparent;
+  font-family: var(--font);
+  color: var(--text);
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease;
+  border-bottom: 1px solid var(--gb);
+}
+.nexus-lb-row:last-child { border-bottom: none; }
+.nexus-lb-row:active { transform: scale(0.98); }
+
+.nexus-lb-row.mine {
+  background: color-mix(in srgb, var(--em-b) 10%, transparent);
+  border-radius: 9px;
+}
+.nexus-lb-row.active:not(.mine) {
+  background: color-mix(in srgb, var(--em-a) 8%, transparent);
+}
+
+.nexus-lb-rank {
+  width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.nexus-lb-crown { color: var(--am-a); filter: drop-shadow(0 0 4px color-mix(in srgb, var(--am-a) 60%, transparent)); }
+.nexus-lb-silver { color: var(--text-m); }
+.nexus-lb-bronze { color: var(--am-b); }
+.nexus-lb-num {
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  color: var(--text-d);
+  font-weight: 700;
+}
+
+.nexus-lb-name {
+  flex: 1;
+  font-size: 0.72rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.nexus-lb-row.mine .nexus-lb-name { color: var(--em-b); }
+
+.nexus-lb-dtw {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.nexus-lb-boosted {
+  font-family: var(--mono);
+  font-size: 0.56rem;
+  color: var(--am-a);
+  background: color-mix(in srgb, var(--am-a) 14%, transparent);
+  border-radius: 5px;
+  padding: 0.1rem 0.28rem;
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+/* Credit hint above resonate button */
+.nexus-credit-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  font-size: 0.68rem;
+  color: var(--am-a);
+  background: color-mix(in srgb, var(--am-a) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--am-a) 28%, transparent);
+  border-radius: 9px;
+  padding: 0.42rem 0.75rem;
+  line-height: 1.35;
+}
+.nexus-credit-hint svg { flex-shrink: 0; }
+
+/* Power boost button state */
+.nexus-resonate.has-credits {
+  border-color: color-mix(in srgb, var(--am-a) 55%, transparent);
+  background: color-mix(in srgb, var(--am-a) 14%, rgba(255,255,255,0.02));
+  box-shadow: 0 0 22px color-mix(in srgb, var(--am-a) 24%, transparent);
+}
+
+/* ── Sunset overrides: Leaderboard ── */
+[data-theme="sunset"] .nexus-lb-row.mine {
+  background: color-mix(in srgb, var(--em-a) 12%, transparent);
+}
+[data-theme="sunset"] .nexus-lb-row.active:not(.mine) {
+  background: color-mix(in srgb, var(--em-b) 10%, transparent);
+}
+[data-theme="sunset"] .nexus-lb-row.mine .nexus-lb-name { color: var(--em-a); }
+[data-theme="sunset"] .nexus-lb-crown { color: #D08000; filter: drop-shadow(0 0 3px rgba(200,120,0,0.50)); }
+[data-theme="sunset"] .nexus-lb-silver { color: rgba(80,38,14,0.60); }
+[data-theme="sunset"] .nexus-lb-bronze { color: #A05800; }
+[data-theme="sunset"] .nexus-lb-num { color: rgba(80,38,14,0.42); }
+[data-theme="sunset"] .nexus-lb-dtw { color: rgba(32,14,6,0.82); }
+[data-theme="sunset"] .nexus-lb-sub { color: rgba(80,38,14,0.45); }
+[data-theme="sunset"] .nexus-lb-boosted {
+  color: #B06000;
+  background: rgba(200,100,0,0.12);
+}
+[data-theme="sunset"] .nexus-credit-hint {
+  color: #B05800;
+  background: rgba(200,100,0,0.10);
+  border-color: rgba(200,100,0,0.28);
+}
+[data-theme="sunset"] .nexus-resonate.has-credits {
+  border-color: rgba(200,100,0,0.55);
+  background: rgba(200,100,0,0.14);
 }
 
 @media (max-width: 420px) {
@@ -6257,18 +6449,12 @@ function AuthScreen({ onEnter, profile }) {
 
 // ─── Bento Artwork ───────────────────────────────────────────────────────────
 
-function BentoArtwork({ type, theme }) {
-  const themeKey = theme === "sunset" ? "sunset" : "deep_space";
-  const src = HOME_ENTRY_IMAGES[themeKey][type];
+function BentoArtwork({ type }) {
+  const Icon = type === "jump" ? IconJumpIn : type === "plan" ? IconAIPlan : IconHomeMode;
   return (
-    <img
-      className={`bento-illus bento-illus-img bento-illus-${type}`}
-      src={src}
-      alt=""
-      aria-hidden="true"
-      decoding="async"
-      draggable="false"
-    />
+    <span className="bento-icon-tl" aria-hidden="true">
+      <Icon className="bento-icon-tl-svg" />
+    </span>
   );
 }
 
@@ -6307,6 +6493,7 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice,
         </div>
 
         <div className="bento-grid">
+          {/* ── Jump In ── */}
           <motion.div
             className="glass bento-hero"
             custom={3} variants={panelVariants} initial="hidden" animate="visible"
@@ -6314,13 +6501,21 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice,
             whileHover={{ scale: 1.015 }}
             whileTap={{ scale: 0.99 }}
           >
-            <BentoArtwork type="jump" theme={theme} />
-            <div className="bento-overlay">
-              <div className="bento-tag">Jump-In · Auto Detect</div>
-              <div className="bento-label">Start Instantly</div>
+            <div className="bento-top-row">
+              <span className="bento-icon-tl"><IconJumpIn className="bento-icon-tl-svg" /></span>
+              <span className="bento-tag">Quick Start · Auto Detect</span>
+            </div>
+            <div className="bento-mid">
+              <div className="bento-label">Jump In</div>
+              <div className="bento-desc">Real-time form scoring · movement auto-detected</div>
+            </div>
+            <div className="bento-foot">
+              <span className="bento-stat-pill">{profile?.sessionsCount ?? 0} sessions logged</span>
+              <span className="bento-cta-arrow">Start ▶</span>
             </div>
           </motion.div>
 
+          {/* ── AI Plan ── */}
           <motion.div
             className="glass bento-card"
             custom={4} variants={panelVariants} initial="hidden" animate="visible"
@@ -6328,13 +6523,21 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice,
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
           >
-            <BentoArtwork type="plan" theme={theme} />
-            <div className="bento-overlay">
-              <div className="bento-tag">AI Plan</div>
+            <div className="bento-top-row">
+              <span className="bento-icon-tl"><IconAIPlan className="bento-icon-tl-svg" /></span>
+              <span className="bento-tag">AI · Adaptive</span>
+            </div>
+            <div className="bento-mid">
               <div className="bento-label">Training Plan</div>
+              <div className="bento-desc">Recovery-aware · personalized to your goals</div>
+            </div>
+            <div className="bento-foot">
+              <span className="bento-stat-pill">{profile?.streakDays ?? 0}d streak</span>
+              <span className="bento-cta-arrow">Open →</span>
             </div>
           </motion.div>
 
+          {/* ── Home Mode ── */}
           <motion.div
             className="glass bento-card"
             custom={5} variants={panelVariants} initial="hidden" animate="visible"
@@ -6342,10 +6545,17 @@ function DashboardScreen({ profile, onJumpIn, onPlan, onHomeWorkout, lastDevice,
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
           >
-            <BentoArtwork type="home" theme={theme} />
-            <div className="bento-overlay">
-              <div className="bento-tag">Home Mode</div>
+            <div className="bento-top-row">
+              <span className="bento-icon-tl"><IconHomeMode className="bento-icon-tl-svg" /></span>
+              <span className="bento-tag">Home · No Equipment</span>
+            </div>
+            <div className="bento-mid">
               <div className="bento-label">Home Workout</div>
+              <div className="bento-desc">{Object.keys(HOME_ROUTES).length} programs · guided rep-by-rep</div>
+            </div>
+            <div className="bento-foot">
+              <span className="bento-stat-pill">{profile?.averageForm ?? 0}% avg form</span>
+              <span className="bento-cta-arrow">Browse →</span>
             </div>
           </motion.div>
         </div>
@@ -6791,20 +7001,6 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
           </motion.div>
         )}
 
-        <motion.div custom={2} variants={panelVariants} initial="hidden" animate="visible">
-          <MuscleBodyMap
-            muscleStatus={muscleStatus}
-            targetMuscles={targetMap}
-            selectedMuscles={selectedMuscles}
-            onToggle={toggleFocus}
-            title="Target Muscle Map"
-            subtitle={`${selectedEx?.label ?? "Exercise"} target preview. Tap regions to add AI focus.`}
-            theme={theme}
-          />
-        </motion.div>
-
-        <div className="spacer" />
-
         <div>
           <div className="sys-label" style={{ marginBottom: "0.5rem" }}>Selected Exercise</div>
           <div className="ex-grid" style={{ marginBottom: "1rem" }}>
@@ -6824,6 +7020,20 @@ function PlanConfigScreen({ onBegin, onBack, muscleStatus, theme, userName, onPl
             One-Tap Start →
           </button>
         </div>
+
+        <div className="spacer" />
+
+        <motion.div custom={2} variants={panelVariants} initial="hidden" animate="visible">
+          <MuscleBodyMap
+            muscleStatus={muscleStatus}
+            targetMuscles={targetMap}
+            selectedMuscles={selectedMuscles}
+            onToggle={toggleFocus}
+            title="Target Muscle Map"
+            subtitle={`${selectedEx?.label ?? "Exercise"} target preview. Tap regions to add AI focus.`}
+            theme={theme}
+          />
+        </motion.div>
       </div>
     </div>
   );
@@ -9414,9 +9624,10 @@ function MoodAvatar({ mood = "satisfied", size = 54, className = "" }) {
   );
 }
 
-function NexusCheckInScreen({ checkins, onBack }) {
+function NexusCheckInScreen({ checkins, onBack, boostCredits = 0, onBoostUsed }) {
   const [selectedId, setSelectedId] = useState(() => checkins[0]?.id ?? NEXUS_MOCK_CHECKINS[0].id);
   const [boosts, setBoosts] = useState({});
+  const [dtwBoosts, setDtwBoosts] = useState({});
   const [tapId, setTapId] = useState(null);
   const [resonateKey, setResonateKey] = useState(0);
   const [resonatingTo, setResonatingTo] = useState(null);
@@ -9450,6 +9661,10 @@ function NexusCheckInScreen({ checkins, onBack }) {
   function resonate(id) {
     const target = nodes.find((n) => n.id === id);
     setBoosts((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+    if (boostCredits > 0) {
+      setDtwBoosts((prev) => ({ ...prev, [id]: Math.min((prev[id] ?? 0) + 2, 8) }));
+      onBoostUsed?.();
+    }
     setBtnFiring(true);
     setTimeout(() => setBtnFiring(false), 600);
     if (target && mine) {
@@ -9527,8 +9742,9 @@ function NexusCheckInScreen({ checkins, onBack }) {
             const mood = NEXUS_MOOD_BY_ID[node.mood] ?? NEXUS_MOOD_BY_ID.satisfied;
             const ex = exerciseById(node.exerciseId);
             const active = node.id === selected?.id;
-            const needsBoost = !node.isMine && (node.dtwAvg ?? 100) < 82;
-            const shining = !node.isMine && (node.dtwAvg ?? 0) >= 88;
+            const effectiveDtw = (node.dtwAvg ?? 0) + (dtwBoosts[node.id] ?? 0);
+            const needsBoost = !node.isMine && effectiveDtw < 82;
+            const shining = !node.isMine && effectiveDtw >= 88;
             return (
               <button
                 key={node.id}
@@ -9552,31 +9768,74 @@ function NexusCheckInScreen({ checkins, onBack }) {
                 <span className={`nexus-node-burst ${burstIds[node.id] ? "active" : ""}`} style={{ "--mood": mood.tone }} />
                 {needsBoost && <span className="nexus-boost-badge" />}
                 <NexusNodeAvatar id={node.id} mood={node.mood} size={node.isMine ? 70 : 58} isMine={!!node.isMine} />
-                <span className="nexus-node-name">{node.isMine ? "You" : node.name.replace("Athlete_", "")}</span>
-                <span className="nexus-node-meta">{ex.short} · {node.dtwAvg}%</span>
+                <span className="nexus-node-name">{node.isMine ? "You" : node.name}</span>
+                <span className="nexus-node-meta">{ex.short} · {effectiveDtw}%</span>
               </button>
             );
           })}
         </motion.div>
 
+        {/* Leaderboard */}
         {(() => {
-          const targetNeedsBoost = !selected?.isMine && (selected?.dtwAvg ?? 100) < 82;
-          const resonateLabel = selected?.isMine
-            ? "Your check-in"
-            : targetNeedsBoost ? "Boost Signal" : "Send Resonance";
+          const allNodesSorted = [...nodes].sort((a, b) => {
+            const aEff = (a.dtwAvg ?? 0) + (dtwBoosts[a.id] ?? 0);
+            const bEff = (b.dtwAvg ?? 0) + (dtwBoosts[b.id] ?? 0);
+            return bEff - aEff;
+          });
+          return (
+            <motion.div className="glass nexus-leaderboard" custom={0.6} variants={panelVariants} initial="hidden" animate="visible">
+              <div className="nexus-lb-header">
+                <span className="sys-label-em">Form Rankings</span>
+                <span className="nexus-lb-sub">Today's avg accuracy</span>
+              </div>
+              {allNodesSorted.map((node, idx) => {
+                const rank = idx + 1;
+                const eff = (node.dtwAvg ?? 0) + (dtwBoosts[node.id] ?? 0);
+                const bumped = dtwBoosts[node.id] ?? 0;
+                return (
+                  <button
+                    key={node.id}
+                    type="button"
+                    className={`nexus-lb-row ${node.isMine ? "mine" : ""} ${selectedId === node.id ? "active" : ""}`}
+                    onClick={() => handleNodeClick(node.id)}
+                  >
+                    <div className="nexus-lb-rank">
+                      {rank === 1
+                        ? <svg className="nexus-lb-crown" width="15" height="13" viewBox="0 0 15 13" fill="none"><path d="M1 11h13M2 11L1 4.5l3.5 3 3-6 3 6 3.5-3-1 6.5H2z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                        : rank === 2
+                        ? <svg className="nexus-lb-silver" width="13" height="14" viewBox="0 0 13 14" fill="none"><path d="M6.5 1L1.5 3.2v4.3C1.5 10.6 3.8 12.4 6.5 13c2.7-.6 5-2.4 5-5.5V3.2L6.5 1z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/></svg>
+                        : rank === 3
+                        ? <svg className="nexus-lb-bronze" width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 1.5l5 9H1.5l5-9z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/></svg>
+                        : <span className="nexus-lb-num">#{rank}</span>}
+                    </div>
+                    <NexusNodeAvatar id={node.id} mood={node.mood} size={26} isMine={!!node.isMine} />
+                    <span className="nexus-lb-name">{node.isMine ? "You" : node.name}</span>
+                    <span className="nexus-lb-dtw">{eff}%</span>
+                    {bumped > 0 && <span className="nexus-lb-boosted">+{bumped}</span>}
+                  </button>
+                );
+              })}
+            </motion.div>
+          );
+        })()}
+
+        {/* Detail panel */}
+        {(() => {
+          const selectedEffectiveDtw = (selected?.dtwAvg ?? 0) + (dtwBoosts[selected?.id] ?? 0);
+          const targetNeedsBoost = !selected?.isMine && selectedEffectiveDtw < 82;
           const resonateBtnLabel = targetNeedsBoost ? "Send Boost" : "Send Resonance";
           const supportHint = targetNeedsBoost
-            ? `${selected?.dtwAvg ?? 0}% form — a signal keeps the chain going.`
+            ? `${selectedEffectiveDtw}% form — a signal keeps the chain going.`
             : selected?.isMine
               ? `Your signal. ${selectedResonance} resonance received.`
-              : `${selected?.dtwAvg ?? 0}% form — strong session.`;
+              : `${selectedEffectiveDtw}% form — strong session.`;
           return (
             <motion.div className="glass nexus-detail" custom={1} variants={panelVariants} initial="hidden" animate="visible">
               <div className="nexus-detail-main">
                 <MoodAvatar mood={selected?.mood} size={58} />
                 <div>
                   <div className="nexus-detail-name">
-                    {selected?.isMine ? "Your check-in" : (selected?.name?.replace("Athlete_", "") ?? "—")}
+                    {selected?.isMine ? "Your check-in" : (selected?.name ?? "—")}
                     {targetNeedsBoost && <span className="nexus-boost-tag">Needs Boost</span>}
                   </div>
                   <div className="nexus-detail-sub">{selectedExercise.label} · {selected?.reps ?? 0} reps</div>
@@ -9588,14 +9847,24 @@ function NexusCheckInScreen({ checkins, onBack }) {
                 <span>{selectedResonance} resonance</span>
               </div>
               {!selected?.isMine && (
-                <button
-                  className={`nexus-resonate ${btnFiring ? "firing" : ""} ${targetNeedsBoost ? "boost-mode" : ""}`}
-                  type="button"
-                  style={{ "--mood": targetNeedsBoost ? "#FFB800" : selectedMood.tone }}
-                  onClick={() => resonate(selected.id)}
-                >
-                  {resonateBtnLabel}
-                </button>
+                <>
+                  {boostCredits > 0 && (
+                    <div className="nexus-credit-hint">
+                      <svg width="11" height="14" viewBox="0 0 11 14" fill="none" aria-hidden="true"><path d="M6.5 1L1 8h4.5L4 13l6-7H5.5L6.5 1z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      {boostCredits} power boost{boostCredits !== 1 ? "s" : ""} available — raises their accuracy
+                    </div>
+                  )}
+                  <button
+                    className={`nexus-resonate ${btnFiring ? "firing" : ""} ${targetNeedsBoost ? "boost-mode" : ""} ${boostCredits > 0 ? "has-credits" : ""}`}
+                    type="button"
+                    style={{ "--mood": targetNeedsBoost ? "#FFB800" : selectedMood.tone }}
+                    onClick={() => resonate(selected.id)}
+                  >
+                    {boostCredits > 0
+                      ? `Power Boost (${boostCredits} left)`
+                      : resonateBtnLabel}
+                  </button>
+                </>
               )}
             </motion.div>
           );
@@ -9758,6 +10027,7 @@ export default function KineticLifeApp() {
   const [aiMessages, setAiMessages] = useState(() => loadAiMessages());
   const [aiUnread, setAiUnread] = useState(() => loadAiUnread());
   const [nexusCheckins, setNexusCheckins] = useState(() => loadNexusCheckins());
+  const [nexusBoostCredits, setNexusBoostCredits] = useState(0);
   const iotConnRef = useRef(null);
   const screenLayerRef = useRef(null);
 
@@ -10181,6 +10451,7 @@ export default function KineticLifeApp() {
     const next = [checkIn, ...nexusCheckins].slice(0, 6);
     setNexusCheckins(next);
     saveNexusCheckins(next, currentUser);
+    setNexusBoostCredits(2);
     setScreen("nexus");
     setNavTab("nexus");
     setVisualState("idle");
@@ -10411,6 +10682,8 @@ export default function KineticLifeApp() {
           <NexusCheckInScreen
             checkins={nexusCheckins}
             onBack={handleDone}
+            boostCredits={nexusBoostCredits}
+            onBoostUsed={() => setNexusBoostCredits(c => Math.max(0, c - 1))}
           />
         );
       case "core":

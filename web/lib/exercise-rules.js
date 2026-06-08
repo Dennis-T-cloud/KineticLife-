@@ -235,7 +235,7 @@ export const EXERCISES = {
     ],
   },
 
-  deadlift: {
+  deadlift_side: {
     label:    'Traditional Deadlift',
     getKeyAngle: lm => (calcAngle(lm[11], lm[23], lm[25]) + calcAngle(lm[12], lm[24], lm[26])) / 2,
     restCond: a => a > 160,   // data p90=165°
